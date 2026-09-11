@@ -1,0 +1,5 @@
+#!/bin/zsh
+set -euo pipefail
+bridge_directory="${0:A:h}"
+bridge_python="$(/usr/libexec/PlistBuddy -c 'Print :PythonExecutable' "$bridge_directory/../Info.plist")"
+exec "$bridge_python" -B "$bridge_directory/provider_bridge.py" "$@"

@@ -1,0 +1,19 @@
+# Local builds and Python caches
+.DS_Store
+__pycache__/
+*.py[cod]
+*.app/
+vendor/
+.venv/
+
+# Credentials, local account state, and diagnostic artifacts
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+preferences.json
+picker-selection.json
+*.log
+Backups/
+work/
