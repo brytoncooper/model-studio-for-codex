@@ -1,6 +1,9 @@
 import AppKit
 import Darwin
 import ApplicationServices
+import ModelDeckPresentation
+import ModelDeckPlatform
+import ModelDeckClient
 
 enum StudioPalette {
     static let indigo = NSColor.systemIndigo
@@ -9,65 +12,6 @@ enum StudioPalette {
         let value = UInt64(hex, radix: 16) ?? 0x7357E8
         return NSColor(srgbRed: Double((value >> 16) & 255) / 255,
                        green: Double((value >> 8) & 255) / 255, blue: Double(value & 255) / 255, alpha: 1)
-    }
-}
-
-struct ProviderPreset: Decodable {
-    let id: String
-    let name: String
-    let base_url: String
-    let wire: String
-    let billing: String
-    let billing_note: String
-    let symbol: String
-    let color: String
-    let key_url: String
-    let default_models: [String]
-    static func bundled() -> [ProviderPreset] {
-        struct Document: Decodable { let version: Int; let providers: [ProviderPreset] }
-        guard let url = Bundle.main.url(forResource: "provider_presets", withExtension: "json"),
-              let bytes = try? Data(contentsOf: url),
-              let document = try? JSONDecoder().decode(Document.self, from: bytes), document.version == 1 else { return [] }
-        return document.providers
-    }
-}
-
-struct CatalogModel: Equatable {
-    let id: String
-    let name: String
-    let suggested: Bool
-    static func matches(_ query: String, text: String) -> Bool {
-        let haystack = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        return query.split(whereSeparator: { $0.isWhitespace }).allSatisfy {
-            haystack.contains(String($0).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current))
-        }
-    }
-}
-
-/// Selection belongs to a connection, while filtering only changes its visible projection.
-struct ModelBrowserState {
-    private(set) var route = ""
-    private(set) var generation = UUID()
-    var entries: [CatalogModel] = []
-    var selected = Set<String>()
-    var query = ""
-    var visible: [CatalogModel] { entries.filter { CatalogModel.matches(query, text: $0.id + " " + $0.name) } }
-    mutating func begin(route nextRoute: String) -> UUID {
-        if route != nextRoute { entries = []; selected = []; query = "" }
-        route = nextRoute
-        generation = UUID()
-        return generation
-    }
-    mutating func receive(_ models: [CatalogModel], generation responseGeneration: UUID) -> Bool {
-        guard generation == responseGeneration else { return false }
-        var seen = Set<String>()
-        entries = models.filter { !$0.id.isEmpty && seen.insert($0.id).inserted }.sorted {
-            $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
-        return true
-    }
-    mutating func toggle(_ id: String) {
-        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
     }
 }
 
@@ -205,38 +149,6 @@ final class SearchablePicker: NSControl, NSTableViewDataSource, NSTableViewDeleg
 }
 
 /// An endpoint: where added models run. OpenRouter by default; any OpenAI-compatible server otherwise.
-struct SavedAccount: Codable {
-    var id: String
-    var name: String
-    var baseURL: String? = nil     // nil means OpenRouter
-    var wire: String? = nil        // "auto" (nil), "responses", or "chat"
-    var hasKey: Bool? = nil        // nil means yes (accounts saved before endpoints existed)
-
-    static let openRouterURL = "https://openrouter.ai/api/v1"
-    static let cursorURL = "https://api.cursor.com"
-    var isCursor: Bool { wire == "cursor" }
-    var resolvedBaseURL: String { (baseURL?.isEmpty == false ? baseURL! : Self.openRouterURL).trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
-    var isOpenRouter: Bool {
-        guard let host = URL(string: resolvedBaseURL)?.host?.lowercased() else { return false }
-        return host == "openrouter.ai" || host.hasSuffix(".openrouter.ai")
-    }
-    var keyed: Bool { hasKey ?? true }
-    var resolvedWire: String { ["responses", "chat", "cursor"].contains(wire ?? "") ? wire! : "auto" }
-}
-
-struct SavedPreferences: Codable {
-    var accounts: [SavedAccount] = []
-    var models: [String] = []
-    var selectedAccount: String = ""
-    var selectedModel: String = "openai/gpt-6-astra"
-}
-
-enum SettingsError: LocalizedError {
-    case message(String)
-    var errorDescription: String? {
-        switch self { case .message(let message): return message }
-    }
-}
 
 enum KeychainCredentials {
     static func run(_ arguments: [String], input: Data? = nil, timeout: TimeInterval) throws -> Data {
@@ -514,260 +426,12 @@ final class TokenActivityChart: NSView {
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
 }
 
-enum CompanionGeometry {
-    static func appKitFrame(position: CGPoint, size: CGSize, primaryTop: CGFloat) -> NSRect {
-        NSRect(x: position.x, y: primaryTop - position.y - size.height, width: size.width, height: size.height)
-    }
-    static func shouldTrack(enabled: Bool, trusted: Bool, activeBundle: String?, ownBundle: String,
-                            hostAvailable: Bool, hidden: Bool, minimized: Bool) -> Bool {
-        enabled && trusted && hostAvailable && !hidden && !minimized &&
-            (activeBundle == "com.openai.codex" || activeBundle == ownBundle)
-    }
-}
+
 
 func modelStudioBrandImage() -> NSImage {
     if let image = NSImage(named: "ModelStudio") { return image }
     if let url = Bundle.main.url(forResource: "ModelStudio", withExtension: "png"), let image = NSImage(contentsOf: url) { return image }
     return NSImage(systemSymbolName: "square.stack.3d.up.fill", accessibilityDescription: "Model Deck")!
-}
-
-enum WindowReservation {
-    struct WriteReceipt { let mutated: Bool; let complete: Bool }
-    struct Outcome { let accepted: NSRect?; let pendingOwnedFrame: NSRect? }
-    static func matches(_ first: NSRect, _ second: NSRect) -> Bool {
-        abs(first.minX - second.minX) <= 2 && abs(first.minY - second.minY) <= 2 &&
-        abs(first.width - second.width) <= 2 && abs(first.height - second.height) <= 2
-    }
-    static func target(current: NSRect, reserved: CGFloat, desired: CGFloat) -> NSRect? {
-        let width = current.width + reserved - desired
-        guard width > 0 else { return nil }
-        return NSRect(x: current.minX, y: current.minY, width: width, height: current.height)
-    }
-    static func couldBeOurResize(_ candidate: NSRect, current: NSRect, target: NSRect) -> Bool {
-        abs(candidate.minX - current.minX) <= 2 && abs(candidate.minY - current.minY) <= 2 &&
-        abs(candidate.height - current.height) <= 2 &&
-        candidate.width >= min(current.width, target.width) - 2 &&
-        candidate.width <= max(current.width, target.width) + 2
-    }
-    // An admitted transaction completes and records ownership even if cancellation arrives.
-    // Cancellation prevents new transactions; serialized release handles any pending owned frame.
-    static func change(current: NSRect, reserved: CGFloat, desired: CGFloat,
-                       read: () -> NSRect?, write: (NSRect) -> WriteReceipt) -> Outcome {
-        guard let target = target(current: current, reserved: reserved, desired: desired),
-              let before = read(), matches(before, current) else { return Outcome(accepted: nil, pendingOwnedFrame: nil) }
-        let receipt = write(target)
-        guard receipt.mutated else { return Outcome(accepted: nil, pendingOwnedFrame: nil) }
-        guard let accepted = read() else { return Outcome(accepted: nil, pendingOwnedFrame: target) }
-        if receipt.complete && matches(accepted, target) { return Outcome(accepted: accepted, pendingOwnedFrame: nil) }
-        guard couldBeOurResize(accepted, current: current, target: target) else {
-            return Outcome(accepted: nil, pendingOwnedFrame: nil)
-        }
-        if let stillCurrent = read(), matches(accepted, stillCurrent) {
-            let rollback = write(current)
-            if rollback.complete, let restored = read(), matches(restored, current) {
-                return Outcome(accepted: nil, pendingOwnedFrame: nil)
-            }
-        }
-        return Outcome(accepted: nil, pendingOwnedFrame: accepted)
-    }
-}
-
-final class TrackingGeneration {
-    private let lock = NSLock()
-    private var value = 0
-    func advance() -> Int { lock.lock(); defer { lock.unlock() }; value += 1; return value }
-    func matches(_ candidate: Int) -> Bool { lock.lock(); defer { lock.unlock() }; return candidate == value }
-}
-
-// Shared by the AX tracker and synthetic fixtures; unresolved cleanup remains owned.
-final class WindowReservationRecovery<Window> {
-    struct Ownership {
-        let window: Window
-        let frame: NSRect
-        let reservedWidth: CGFloat
-    }
-    enum ReleaseResult: Equatable { case released, manualChange, pending }
-    private let sameWindow: (Window, Window) -> Bool
-    private(set) var ownership: Ownership?
-    private var alternateOwnership: Ownership?
-    private(set) var cleanupPending = false
-    private var failedWindow: Window?
-
-    init(sameWindow: @escaping (Window, Window) -> Bool) { self.sameWindow = sameWindow }
-
-    func owns(_ window: Window) -> Bool { ownership.map { sameWindow($0.window, window) } ?? false }
-    func blocksPolling(_ window: Window) -> Bool {
-        cleanupPending || (failedWindow.map { sameWindow($0, window) } ?? false)
-    }
-    func recordSuccess(window: Window, frame: NSRect, reserved: CGFloat) {
-        ownership = Ownership(window: window, frame: frame, reservedWidth: reserved)
-        alternateOwnership = nil
-        cleanupPending = false
-        failedWindow = nil
-    }
-    func recordFailure(window: Window, current: NSRect, priorReserved: CGFloat, outcome: WindowReservation.Outcome) {
-        failedWindow = window
-        if let pending = outcome.pendingOwnedFrame {
-            ownership = Ownership(window: window, frame: pending,
-                                  reservedWidth: priorReserved + current.width - pending.width)
-            alternateOwnership = Ownership(window: window, frame: current, reservedWidth: priorReserved)
-            cleanupPending = true
-        }
-    }
-    private func clearOwnership() {
-        ownership = nil
-        alternateOwnership = nil
-        cleanupPending = false
-        failedWindow = nil
-    }
-
-    @discardableResult
-    func release(read: (Window) -> NSRect?, write: (Window, NSRect) -> WindowReservation.WriteReceipt,
-                 allowed: () -> Bool) -> ReleaseResult {
-        guard let owned = ownership else { clearOwnership(); return .released }
-        guard allowed(), let current = read(owned.window) else {
-            cleanupPending = true
-            return .pending
-        }
-        let baseline: Ownership
-        if WindowReservation.matches(current, owned.frame) { baseline = owned }
-        else if let alternate = alternateOwnership, WindowReservation.matches(current, alternate.frame) { baseline = alternate }
-        else if alternateOwnership != nil {
-            // A failed readback leaves multiple possible owned states; never guess that cleanup succeeded.
-            cleanupPending = true
-            return .pending
-        } else {
-            // A verified ownership frame was changed manually; relinquish without writing a stale restore.
-            clearOwnership()
-            return .manualChange
-        }
-        guard allowed() else { cleanupPending = true; return .pending }
-        if abs(baseline.reservedWidth) <= 2 { clearOwnership(); return .released }
-        let outcome = WindowReservation.change(current: current, reserved: baseline.reservedWidth, desired: 0,
-            read: { read(baseline.window) }, write: { write(baseline.window, $0) })
-        if outcome.accepted != nil { clearOwnership(); return .released }
-        if let pending = outcome.pendingOwnedFrame {
-            ownership = Ownership(window: baseline.window, frame: pending,
-                                  reservedWidth: baseline.reservedWidth + current.width - pending.width)
-            alternateOwnership = Ownership(window: baseline.window, frame: current, reservedWidth: baseline.reservedWidth)
-        } else {
-            ownership = baseline
-            alternateOwnership = nil
-        }
-        cleanupPending = true
-        failedWindow = baseline.window
-        return .pending
-    }
-}
-
-// Created only after the new opt-in and system permission. No text, title, child, or pixel reads.
-final class HostWindowTracker {
-    struct Update {
-        let frame: NSRect?
-        let reservedWidth: CGFloat
-        let error: String?
-    }
-    private var focusedWindow: AXUIElement?
-    private var focusedPID: pid_t?
-    private let recovery = WindowReservationRecovery<AXUIElement>(sameWindow: { CFEqual($0, $1) })
-    private var reservedWidth: CGFloat { recovery.ownership?.reservedWidth ?? 0 }
-
-    private func value(_ element: AXUIElement, _ attribute: CFString) -> CFTypeRef? {
-        var result: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &result) == .success else { return nil }
-        return result
-    }
-
-    private func read(_ window: AXUIElement, primaryTop: CGFloat) -> NSRect? {
-        AXUIElementSetMessagingTimeout(window, 0.08)
-        guard value(window, kAXRoleAttribute as CFString) as? String == kAXWindowRole,
-              value(window, kAXSubroleAttribute as CFString) as? String == kAXStandardWindowSubrole,
-              let minimized = value(window, kAXMinimizedAttribute as CFString) as? Bool, !minimized,
-              let positionValue = value(window, kAXPositionAttribute as CFString),
-              let sizeValue = value(window, kAXSizeAttribute as CFString),
-              CFGetTypeID(positionValue) == AXValueGetTypeID(), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
-        var position = CGPoint.zero, size = CGSize.zero
-        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
-              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
-              position.x.isFinite, position.y.isFinite, size.width.isFinite, size.height.isFinite,
-              size.width > 0, size.height > 0 else { return nil }
-        return CompanionGeometry.appKitFrame(position: position, size: size, primaryTop: primaryTop)
-    }
-
-    private func write(_ frame: NSRect, window: AXUIElement, primaryTop: CGFloat) -> WindowReservation.WriteReceipt {
-        guard AXIsProcessTrusted() else { return .init(mutated: false, complete: false) }
-        var size = frame.size
-        guard let sizeValue = AXValueCreate(.cgSize, &size),
-              AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue) == .success else { return .init(mutated: false, complete: false) }
-        var position = CGPoint(x: frame.minX, y: primaryTop - frame.maxY)
-        guard let positionValue = AXValueCreate(.cgPoint, &position) else { return .init(mutated: true, complete: false) }
-        return .init(mutated: true, complete: AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, positionValue) == .success)
-    }
-
-    @discardableResult
-    func release(primaryTop: CGFloat, allowed: () -> Bool) -> WindowReservationRecovery<AXUIElement>.ReleaseResult {
-        let result = recovery.release(read: { self.read($0, primaryTop: primaryTop) },
-            write: { self.write($1, window: $0, primaryTop: primaryTop) }, allowed: allowed)
-        if result != .pending { focusedWindow = nil; focusedPID = nil }
-        return result
-    }
-
-    func update(pid: pid_t, refreshFocus: Bool, primaryTop: CGFloat, desiredWidth: CGFloat,
-                explicitResize: Bool, allowed: () -> Bool) -> Update {
-        guard allowed() && AXIsProcessTrusted() else { return Update(frame: nil, reservedWidth: 0, error: nil) }
-        if refreshFocus || focusedPID != pid {
-            let application = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(application, 0.08)
-            guard let focused = value(application, kAXFocusedWindowAttribute as CFString),
-                  CFGetTypeID(focused) == AXUIElementGetTypeID() else { return Update(frame: nil, reservedWidth: reservedWidth, error: nil) }
-            focusedWindow = (focused as! AXUIElement)
-            focusedPID = pid
-        }
-        guard let window = focusedWindow, let current = read(window, primaryTop: primaryTop) else {
-            return Update(frame: nil, reservedWidth: reservedWidth, error: nil)
-        }
-        if recovery.blocksPolling(window) && !explicitResize {
-            return Update(frame: nil, reservedWidth: reservedWidth,
-                          error: "Window attachment or cleanup is unresolved. Retry explicitly; no attachment is claimed and polling will not resize the window.")
-        }
-        let newWindow = !recovery.owns(window)
-        if newWindow {
-            if recovery.ownership != nil {
-                guard release(primaryTop: primaryTop, allowed: allowed) != .pending else {
-                    return Update(frame: nil, reservedWidth: reservedWidth,
-                                  error: "The previous window’s reserved space could not be released. It remains tracked for cleanup; the new window was not changed.")
-                }
-                focusedWindow = window
-                focusedPID = pid
-            }
-        } else if recovery.cleanupPending {
-            guard release(primaryTop: primaryTop, allowed: allowed) != .pending else {
-                return Update(frame: nil, reservedWidth: reservedWidth, error: "Reserved-space cleanup is still unresolved. No attachment is claimed.")
-            }
-            focusedWindow = window
-            focusedPID = pid
-            // Cleanup changed the host frame. Wait for a fresh explicit update rather than resizing stale geometry.
-            recovery.recordFailure(window: window, current: current, priorReserved: 0,
-                                   outcome: .init(accepted: nil, pendingOwnedFrame: nil))
-            return Update(frame: nil, reservedWidth: 0, error: "Cleanup completed. Enable window following again to attach from the current window size.")
-        }
-        if newWindow || explicitResize {
-            guard allowed() else { return Update(frame: nil, reservedWidth: reservedWidth, error: nil) }
-            let priorReserved = newWindow ? 0 : reservedWidth
-            let outcome = WindowReservation.change(current: current, reserved: priorReserved,
-                desired: desiredWidth, read: { self.read(window, primaryTop: primaryTop) },
-                write: { self.write($0, window: window, primaryTop: primaryTop) })
-            guard let accepted = outcome.accepted else {
-                recovery.recordFailure(window: window, current: current, priorReserved: priorReserved, outcome: outcome)
-                return Update(frame: nil, reservedWidth: reservedWidth,
-                              error: "ChatGPT/Codex did not accept the required window size. Any partial change was rolled back when safe. Enlarge the window and retry; no sidebar attachment is claimed.")
-            }
-            recovery.recordSuccess(window: window, frame: accepted, reserved: desiredWidth)
-            return Update(frame: accepted, reservedWidth: reservedWidth, error: nil)
-        }
-        // Manual moves/resizes are followed, never corrected by the polling loop.
-        return Update(frame: current, reservedWidth: reservedWidth, error: nil)
-    }
 }
 
 final class CompanionPanel: NSPanel {
@@ -1026,6 +690,7 @@ final class CompanionPanelController: NSObject {
     @objc private func requestFollowing() { enableFollowing?() }
 }
 
+@MainActor
 final class OpenRouterSettingsApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private var window: NSWindow!
     private let accounts = SearchablePicker()
@@ -1035,7 +700,7 @@ final class OpenRouterSettingsApp: NSObject, NSApplicationDelegate, NSWindowDele
     private let endpointURL = NSTextField()
     private let endpointFormat = NSPopUpButton()
     private let endpointKind = SearchablePicker()
-    private let providerPresets = ProviderPreset.bundled()
+    private let providerPresets = ProviderPreset.bundledFromMainBundle()
     private let endpointHint = NSTextField(wrappingLabelWithString: "")
     private let cursorSDKStatus = NSTextField(wrappingLabelWithString: "Check the SDK to see whether Cursor is ready on this Mac.")
     private var cursorSetupCard: NSView!
@@ -1057,6 +722,21 @@ final class OpenRouterSettingsApp: NSObject, NSApplicationDelegate, NSWindowDele
     private var catalogEmptyState: NSView!
     private var catalogListHeight: NSLayoutConstraint?
     private var catalogState = ModelBrowserState()
+    private let modelCatalogPresenter = ModelCatalogPresenter()
+    private lazy var modelCatalogService: ModelCatalogServing = {
+        ModelCatalogBootstrap.makeService(
+            legacyRequestHandler: { [weak self] request, completion in
+                guard let self else {
+                    completion(["ok": false, "error": "Settings unavailable."])
+                    return
+                }
+                self.configure(request, blocksUI: false, completion: completion)
+            },
+            engineTransportFactory: { descriptor in
+                UnixSocketEngineTransport(socketPath: descriptor.socketPath)
+            }
+        )
+    }()
     private var catalogLoading = false
     private var registrationInProgress = false
     private var catalogFailures: [String: String] = [:]
@@ -2962,15 +2642,22 @@ final class OpenRouterSettingsApp: NSObject, NSApplicationDelegate, NSWindowDele
         guard !registrationInProgress else { return }
         guard !renderingPreview, !attachedPreview else { reloadCatalogRows(); return }
         guard let account = currentAccount() else {
+            modelCatalogPresenter.cancel()
+            modelCatalogService.cancel()
             _ = catalogState.begin(route: "")
+            catalogLoading = false
+            catalogProgress.stopAnimation(nil)
             catalogStatus.stringValue = "Save a connection in Connections to start adding models."
+            catalogStatus.textColor = .secondaryLabelColor
+            catalogRetryButton.isHidden = true
+            catalogAuthorizeButton.isHidden = true
             reloadCatalogRows()
             return
         }
         let route = account.id + "|" + account.resolvedBaseURL + "|" + account.resolvedWire
         let changed = catalogState.route != route
-        let generation = catalogState.begin(route: route)
         if changed { catalogSearch.stringValue = ""; catalogFailures = [:]; catalogAdded = [] }
+        let generation = catalogState.begin(route: route)
         catalogLoading = true
         catalogProgress.startAnimation(nil)
         catalogStatus.stringValue = "Loading \(account.name) models…"
@@ -2978,30 +2665,43 @@ final class OpenRouterSettingsApp: NSObject, NSApplicationDelegate, NSWindowDele
         catalogRetryButton.isHidden = true
         catalogAuthorizeButton.isHidden = true
         updateCatalogAddedModels()
-        let request: [String: Any] = ["action": account.isCursor ? "cursor_models" : "endpoint_models",
-            "account": account.id, "base_url": account.resolvedBaseURL, "wire": account.resolvedWire,
-            "has_key": account.keyed, "executable": Bundle.main.executableURL!.path]
-        configure(request, blocksUI: false) { result in
-            guard self.catalogState.generation == generation else { return }
+        let connection = ModelCatalogConnectionRequest(
+            accountID: account.id,
+            accountName: account.name,
+            baseURL: account.resolvedBaseURL,
+            wire: account.resolvedWire,
+            hasKey: account.keyed,
+            isCursor: account.isCursor,
+            executablePath: Bundle.main.executableURL!.path
+        )
+        modelCatalogPresenter.load(connection: connection, service: modelCatalogService) { outcome in
+            guard outcome.applied else { return }
+            if let models = outcome.models {
+                _ = self.catalogState.receive(models, generation: generation)
+            }
             self.catalogLoading = false
             self.catalogProgress.stopAnimation(nil)
-            let suggested = result["source"] as? String == "suggested"
-            let entries = (result["models"] as? [[String: Any]] ?? []).compactMap { value -> CatalogModel? in
-                guard let id = value["id"] as? String else { return nil }
-                return CatalogModel(id: id, name: value["name"] as? String ?? value["display_name"] as? String ?? id, suggested: suggested)
+            self.catalogStatus.stringValue = outcome.statusMessage
+            switch outcome.phase {
+            case .ready:
+                self.catalogStatus.textColor = .secondaryLabelColor
+                self.catalogRetryButton.isHidden = true
+                self.catalogAuthorizeButton.isHidden = !account.keyed
+            case .empty:
+                self.catalogStatus.textColor = .secondaryLabelColor
+                self.catalogRetryButton.isHidden = false
+                self.catalogAuthorizeButton.isHidden = !account.keyed
+            case .failure, .unavailable:
+                self.catalogStatus.textColor = .systemOrange
+                self.catalogRetryButton.isHidden = false
+                self.catalogAuthorizeButton.isHidden = !account.keyed
+            case .loading, .idle:
+                break
             }
-            let ok = result["ok"] as? Bool == true
-            if ok {
-                _ = self.catalogState.receive(entries, generation: generation)
-                self.catalogStatus.stringValue = suggested
-                    ? "Suggested IDs · Availability and authentication are unverified. " + (result["note"] as? String ?? "")
-                    : "\(entries.count) models from \(account.name). " + (result["note"] as? String ?? "")
-            } else {
-                self.catalogStatus.stringValue = result["error"] as? String ?? result["message"] as? String ?? "Could not load this connection’s models. Retry or use an exact model ID."
+            if outcome.suggested {
+                self.catalogStatus.textColor = .systemOrange
+                self.catalogRetryButton.isHidden = false
             }
-            self.catalogStatus.textColor = ok && !suggested ? .secondaryLabelColor : .systemOrange
-            self.catalogRetryButton.isHidden = ok && !suggested
-            self.catalogAuthorizeButton.isHidden = !account.keyed || (ok && !suggested)
             self.reloadCatalogRows()
         }
     }
@@ -3481,8 +3181,10 @@ if CommandLine.arguments.contains("--self-test-usage") {
     exit(UsageDashboardView.selfTest() ? 0 : 1)
 }
 
-let application = NSApplication.shared
-let delegate = OpenRouterSettingsApp()
-application.setActivationPolicy(.regular)
-application.delegate = delegate
-application.run()
+MainActor.assumeIsolated {
+    let application = NSApplication.shared
+    let delegate = OpenRouterSettingsApp()
+    application.setActivationPolicy(.regular)
+    application.delegate = delegate
+    application.run()
+}

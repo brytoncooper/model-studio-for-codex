@@ -1,125 +1,7 @@
 import AppKit
 import CoreFoundation
 
-// Provider totals and the bounded local request ledger deliberately keep separate scopes.
-private enum UsageValues {
-    private static let fractionalDateParser: ISO8601DateFormatter = {
-        let parser = ISO8601DateFormatter()
-        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return parser
-    }()
-    private static let dateParser = ISO8601DateFormatter()
-    static func number(_ value: Any?) -> Double? {
-        guard let value = value as? NSNumber,
-              CFGetTypeID(value) != CFBooleanGetTypeID() else { return nil }
-        let amount = value.doubleValue
-        return amount.isFinite && amount >= 0 ? amount : nil
-    }
-
-    static func count(_ value: Double) -> String {
-        if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
-        if value >= 10_000 { return String(format: "%.1fK", value / 1_000) }
-        return NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
-    }
-
-    static func dollars(_ value: Double?) -> String {
-        guard let value else { return "Not reported" }
-        return String(format: value > 0 && value < 0.01 ? "$%.4f" : "$%.2f", value)
-    }
-
-    static func date(_ value: Any?) -> Date? {
-        guard let text = value as? String else { return nil }
-        return fractionalDateParser.date(from: text) ?? dateParser.date(from: text)
-    }
-
-    static func reset(_ value: Any?) -> String {
-        guard let seconds = number(value) else { return "Reset time unavailable" }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return "Resets " + formatter.string(from: Date(timeIntervalSince1970: seconds))
-    }
-
-    static func color(_ key: String) -> NSColor {
-        switch key {
-        case "chatgpt": return .systemTeal
-        case "openrouter": return .systemIndigo
-        case "cursor": return .systemBlue
-        default: return .systemOrange
-        }
-    }
-}
-
-private struct UsageRecord {
-    let providerKey: String
-    let providerName: String
-    let date: Date?
-    let model: String
-    let agent: String
-    let tokens: Double?
-    let cost: Double?
-    let status: Int?
-    var isSubscription: Bool { providerKey == "chatgpt" }
-
-    init(_ entry: [String: Any]) {
-        let route = entry["route"] as? String ?? "unknown"
-        let endpoint = (entry["endpoint"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        switch route {
-        case "openai": providerKey = "chatgpt"; providerName = "ChatGPT"
-        case "openrouter": providerKey = "openrouter"; providerName = "OpenRouter"
-        case "cursor": providerKey = "cursor"; providerName = "Cursor"
-        case "endpoint": providerKey = "endpoint:" + (endpoint ?? "Unnamed endpoint"); providerName = endpoint ?? "Unnamed endpoint"
-        default: providerKey = "route:" + route; providerName = endpoint ?? "Unknown provider"
-        }
-        date = UsageValues.date(entry["timestamp"])
-        model = entry["model"] as? String ?? "Unknown model"
-        let agentPath = entry["agent_name"] as? String ?? ""
-        agent = agentPath == "/root" ? "Lead agent" : agentPath.split(separator: "/").last.map(String.init) ?? "Agent"
-        let usage = entry["usage"] as? [String: Any] ?? [:]
-        if let total = UsageValues.number(usage["total_tokens"]) {
-            tokens = total
-        } else if let input = UsageValues.number(usage["input_tokens"]), let output = UsageValues.number(usage["output_tokens"]), (input + output).isFinite {
-            tokens = input + output
-        } else { tokens = nil }
-        cost = route == "openai" ? nil : UsageValues.number(route == "cursor" ? entry["cost"] : usage["cost"])
-        if let code = UsageValues.number(entry["status"]), code < Double(Int.max), code.rounded() == code {
-            status = Int(code)
-        } else { status = nil }
-    }
-}
-
-private struct UsageTotals {
-    let count: Int
-    let reportedCost: Double?
-    let unknownCosts: Int
-    let subscriptionCount: Int
-    let reportedTokens: Double?
-    let tokenCoverage: Int
-    let failedCount: Int
-
-    init(_ records: [UsageRecord]) {
-        count = records.count
-        let costs = records.compactMap(\.cost)
-        let costSum = costs.reduce(0, +)
-        reportedCost = costs.isEmpty || !costSum.isFinite ? nil : costSum
-        unknownCosts = records.filter { !$0.isSubscription && $0.cost == nil }.count
-        subscriptionCount = records.filter(\.isSubscription).count
-        let tokens = records.compactMap(\.tokens)
-        let tokenSum = tokens.reduce(0, +)
-        reportedTokens = tokens.isEmpty || !tokenSum.isFinite ? nil : tokenSum
-        tokenCoverage = tokens.count
-        failedCount = records.filter { ($0.status ?? 0) >= 400 }.count
-    }
-}
-
-private struct UsageProvider {
-    let id: String
-    let name: String
-    let localKey: String
-    let accountID: String?
-    let saved: Bool
-    var color: NSColor { UsageValues.color(localKey) }
-}
+import ModelDeckPresentation
 
 private enum UsageViewStyle {
     static func label(_ text: String, size: CGFloat = 12, weight: NSFont.Weight = .regular, color: NSColor = .secondaryLabelColor) -> NSTextField {
@@ -542,7 +424,7 @@ final class UsageDashboardView: NSView, NSSearchFieldDelegate {
         return records.filter { record in record.date.map { $0 >= start && $0 <= now } ?? false }
     }
 
-    private var periodRecords: [UsageRecord] { Self.filteredRecords(records, days: [1, 7, 30][max(0, min(2, period.indexOfSelectedItem))], now: Date()) }
+    private var periodRecords: [UsageRecord] { UsageFiltering.filteredRecords(records, days: [1, 7, 30][max(0, min(2, period.indexOfSelectedItem))], now: Date()) }
     private var periodName: String { ["Today", "Last 7 days", "Last 30 days"][max(0, min(2, period.indexOfSelectedItem))] }
 
     private func rebuildContent() {
@@ -582,7 +464,7 @@ final class UsageDashboardView: NSView, NSSearchFieldDelegate {
 
     private func overviewViews() -> [NSView] {
         let windows = subscription["windows"] as? [[String: Any]] ?? []
-        let allowance = Self.overviewAllowance(windows)
+        let allowance = UsageFiltering.overviewAllowance(windows)
         let remaining = allowance.remaining
         var cards: [NSView] = [metricCard(name: "ChatGPT", value: remaining.map { String(format: "%.0f%%", $0) } ?? "Unavailable", caption: allowance.name, detail: remaining == nil ? (isRefreshing ? "Loading subscription limits" : "See Providers for details") : "Allowance left · subscription", key: "chatgpt", remaining: remaining)]
         let local = periodRecords
@@ -761,7 +643,7 @@ final class UsageDashboardView: NSView, NSSearchFieldDelegate {
     private func activityViews() -> [NSView] {
         let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = periodRecords.filter { record in
-            (selectedActivityKey == "all" || record.providerKey == selectedActivityKey) && Self.matchesSearch(record, query: query)
+            (selectedActivityKey == "all" || record.providerKey == selectedActivityKey) && UsageFiltering.matchesSearch(record, query: query)
         }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         let pageCount = max(1, Int(ceil(Double(filtered.count) / Double(pageSize))))
         activityPage = min(activityPage, pageCount - 1)
@@ -787,11 +669,6 @@ final class UsageDashboardView: NSView, NSSearchFieldDelegate {
         let undated = records.filter { $0.date == nil }.count
         let scope = "Showing \(filtered.count) matching records from recent local history, which may be incomplete. Local dates; Model Deck launches only." + (undated > 0 ? " \(undated) undated records are excluded from period totals." : "")
         return [UsageViewStyle.label("\(filtered.count) recorded requests · " + periodName.lowercased(), size: 12, weight: .medium), UsageViewStyle.card(rows), paging, UsageViewStyle.label(scope, size: 11)]
-    }
-
-    private static func matchesSearch(_ record: UsageRecord, query: String) -> Bool {
-        let haystack = (record.model + " " + record.agent + " " + record.providerName).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        return query.split(whereSeparator: \.isWhitespace).allSatisfy { haystack.contains(String($0).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)) }
     }
 
     private func activityRow(_ record: UsageRecord) -> NSView {
@@ -846,33 +723,6 @@ final class UsageDashboardView: NSView, NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) { activityPage = 0; rebuildContent() }
 
     static func selfTest() -> Bool {
-        guard UsageValues.number(true) == nil, UsageValues.number(-1) == nil,
-              UsageValues.number(Double.infinity) == nil, UsageValues.number(Double.nan) == nil,
-              UsageValues.number("12") == nil, UsageValues.number(0) == 0,
-              UsageValues.dollars(nil) == "Not reported", UsageValues.dollars(0) == "$0.00" else { return false }
-        let cursor = UsageRecord(["route": "cursor", "timestamp": "2026-09-11T12:00:00.123-0600", "model": "Test Model", "agent_name": "/root/reviewer", "cost": 0.25, "usage": ["cost": 9, "input_tokens": 10, "output_tokens": 5]])
-        let unknown = UsageRecord(["route": "cursor", "usage": ["cost": 10, "total_tokens": true]])
-        let openai = UsageRecord(["route": "openai", "timestamp": "2026-09-11T12:00:00-0600", "usage": ["cost": 100]])
-        let endpoint = UsageRecord(["route": "endpoint", "endpoint": "Lab", "usage": ["cost": 0, "total_tokens": 30]])
-        let router = UsageRecord(["route": "openrouter", "endpoint": "Lab", "usage": ["cost": Double.nan]])
-        let totals = UsageTotals([cursor, unknown, openai, endpoint, router])
-        let boundaryStatus = UsageRecord(["status": Double(Int.max)])
-        let allowance = overviewAllowance([["pool_id": "codex", "pool_name": "Codex", "used_percent": 20], ["pool_id": "spark", "pool_name": "Spark", "used_percent": 100]])
-        guard cursor.cost == 0.25, cursor.tokens == 15, cursor.date != nil,
-              boundaryStatus.status == nil, allowance.remaining == 80,
-              unknown.cost == nil, unknown.tokens == nil, openai.cost == nil,
-              endpoint.providerKey == "endpoint:Lab", router.providerKey == "openrouter",
-              totals.count == 5, totals.reportedCost == 0.25, totals.unknownCosts == 2,
-              totals.subscriptionCount == 1, totals.reportedTokens == 45, totals.tokenCoverage == 2,
-              UsageTotals([unknown]).reportedCost == nil, UsageTotals([openai]).reportedTokens == nil,
-              matchesSearch(cursor, query: "test REVIEWER"), !matchesSearch(cursor, query: "other") else { return false }
-        guard let now = UsageValues.date("2026-09-11T20:00:00Z") else { return false }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let yesterday = UsageRecord(["timestamp": "2026-09-10T23:59:59Z", "route": "cursor"])
-        let future = UsageRecord(["timestamp": "2026-09-12T01:00:00Z", "route": "cursor"])
-        let filtered = filteredRecords([cursor, openai, yesterday, future, unknown], days: 1, now: now, calendar: calendar)
-        guard filtered.count == 2, filteredRecords([yesterday], days: 7, now: now, calendar: calendar).count == 1 else { return false }
-        return true
+        UsageModelSelfTest.run()
     }
 }
