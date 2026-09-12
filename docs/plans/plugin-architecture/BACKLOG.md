@@ -238,6 +238,8 @@ Acceptance G3: all five states per page, generation races, stale usage, main act
 
 ### B26 — Finish packaging, compatibility wrappers and aggregate local gate
 
+Additional required B25 scope: [Codex configuration editor](CODEX-SETTINGS.md), including structured controls and full TOML editing. Its fixture adapter/parser can be developed alongside other host work; native integration follows the public host-settings contract. B26 acceptance includes this editor.
+
 Depends: B06, B11, B15, B16, B23, B25; B24 only if restricted mode is included. Owner: packaging/final integration.
 
 Build immutable staged app/engine/SDK artifacts with explicit outputs; include modules/resources/manifests; preserve legacy launch/token entrypoint compatibility and signed-helper bytes. Remove obsolete code only after references/contracts/tests show it unused. Run aggregate local suite once, then rerun only invalidated checks after repairs.

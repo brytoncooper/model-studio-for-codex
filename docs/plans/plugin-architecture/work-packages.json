@@ -133,7 +133,8 @@
       "conditional_dependencies": [],
       "status": "planned",
       "details": "BACKLOG.md",
-      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance.",
+      "additional_required_scope": "CODEX-SETTINGS.md: host-owned full config.toml GUI editor; B26 acceptance includes fixture-based editor proof."
     },
     {
       "id": "B11",
@@ -334,7 +335,8 @@
         "B25.attachment",
         "B25.extensions"
       ],
-      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance.",
+      "additional_required_scope": "CODEX-SETTINGS.md: host-owned full config.toml GUI editor; B26 acceptance includes fixture-based editor proof."
     },
     {
       "id": "B26",
@@ -353,7 +355,8 @@
       "condition": "B24 required only if restricted execution mode is included",
       "status": "planned",
       "details": "BACKLOG.md",
-      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance.",
+      "additional_required_scope": "CODEX-SETTINGS.md: host-owned full config.toml GUI editor; B26 acceptance includes fixture-based editor proof."
     },
     {
       "id": "B27",
