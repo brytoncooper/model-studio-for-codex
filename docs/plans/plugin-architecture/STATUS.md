@@ -32,7 +32,7 @@ commit counts or the number of task headings.
 | B09 Projections | Outbox, conditional files, renderer and consumer written | Compose committed resolvers; handle connection changes |
 | B10 Host bridge | Legacy bridge retained; new host helpers written | Extract and compose actual host bridge/launch policy |
 | B11 Migration | Preview supports preparation | Offline apply, recovery and rollback rehearsal |
-| B12 Sessions/runs | Durable fixture run path integrated | Startup recovery and complete run gate |
+| B12 Sessions/runs | Durable fixture run path and exclusive-lock startup recovery integrated | Complete run/provider gate |
 | B13 HTTP providers | Streaming and request helpers written | Actual HTTP execution, fallback and parity |
 | B14 Cursor provider | Execution coordinator written and tested | Actual SDK channel binding and parity |
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
@@ -74,6 +74,11 @@ read/preview/save against temporary TOML files and SQLite ledgers, durable previ
 and exact save replay across restart, one recoverable backup, stale edit rejection,
 authentication and unchanged defaults. Configured operator identity is injected
 by bootstrap; this is not per-client role enrollment or live settings discovery.
+
+Startup recovery follow-up: independent acceptance ran 40 recovery, transport and
+settings tests. Recovery occurs after the instance lock and before listening;
+claimed active runs interrupt without provider retry, accepted/terminal states
+remain, and a competing instance cannot mutate recovery state.
 
 ## Current independent work
 

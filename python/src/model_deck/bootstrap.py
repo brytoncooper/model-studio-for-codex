@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -242,11 +243,20 @@ def build_engine_server(
     def rendezvous_publish(payload: dict[str, Any]) -> None:
         publish_rendezvous_file(rendezvous_path, payload)
 
+    startup_callback = None
+    if run_repository is not None:
+        def recover_runs() -> None:
+            observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            run_repository.recover_after_restart(observed_at)
+
+        startup_callback = recover_runs
+
     server = EngineServer(
         instance_lock=instance_lock,
         socket_server=socket_server,
         rendezvous_payload_builder=rendezvous_payload_builder,
         rendezvous_publish=rendezvous_publish,
+        startup_callback=startup_callback,
     )
     return EngineRuntime(
         server=server,

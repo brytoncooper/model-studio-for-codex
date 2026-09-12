@@ -21,11 +21,13 @@ class EngineServer:
         socket_server: EngineSocketServer,
         rendezvous_payload_builder: Callable[[], dict[str, Any]],
         rendezvous_publish: Callable[[dict[str, Any]], None],
+        startup_callback: Callable[[], None] | None = None,
     ) -> None:
         self._lock = instance_lock
         self._server = socket_server
         self._rendezvous_payload_builder = rendezvous_payload_builder
         self._rendezvous_publish = rendezvous_publish
+        self._startup_callback = startup_callback
         self._lock_held = False
         self._listener_started = False
         self._stop_lock = threading.Lock()
@@ -41,6 +43,8 @@ class EngineServer:
             listener_started = False
             started_ok = False
             try:
+                if self._startup_callback is not None:
+                    self._startup_callback()
                 self._server.start()
                 listener_started = True
                 self._listener_started = True

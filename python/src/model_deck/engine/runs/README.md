@@ -119,6 +119,17 @@ Exposed as module constants:
 
 ## Invariants
 
+When bootstrap configures a run repository, `EngineServer.start()` invokes its
+durable recovery only after acquiring the exclusive engine instance lock and
+before starting the listener or publishing rendezvous. Construction does not
+recover runs, failed lock acquisition cannot recover another instance's work,
+and duplicate `start()` calls on an already running instance do not repeat
+recovery. Recovery failure aborts startup and releases the lock. The timestamp
+is current UTC at startup. Bootstrap deliberately calls the repository, not
+the coordinator's dispatching recovery helper: claimed nonterminal work becomes
+interrupted, terminal work stays terminal, and unclaimed accepted work remains
+available for explicit dispatch. Startup never retries provider execution.
+
 - Identity for replay is `(principal_id, operation_id, idempotency_key)`; the
   run's `request_hash` is compared separately and raises
   `RunAdmissionRequestHashConflictError` on mismatch.
@@ -174,6 +185,7 @@ Run from the Architecture `python` directory:
 PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_run_use_cases
 PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_session_run_ports
 PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_engine_run_dispatch
+PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_run_startup_recovery
 ```
 
 `test_run_use_cases` exercises validation, admission replay, dispatch and
@@ -187,7 +199,9 @@ Unix socket with the deterministic provider fixture.
 
 - No scheduler; provider work runs in the caller's thread or process. The
   `RunApplicationCoordinator` keeps provider handles in an in-process map and
-  cannot survive a restart — recovery is the only durable retry path.
+  cannot survive a restart. Bootstrap recovery interrupts claimed work without
+  provider retry; the coordinator's explicit recovery helper can dispatch
+  previously unclaimed accepted requests.
 - Storage is not implemented in this package. Authorization checks
   (`principal_id`, `host_context_ref`) are enforced at the repository layer;
   the use cases only forward.
@@ -202,9 +216,9 @@ Unix socket with the deterministic provider fixture.
   `(run_id, call_id, idempotency_key)` triple is allowed and returns the
   recorded receipt without re-dispatching to the provider, even when the run
   is already terminal.
-- `recovery_after_restart` is the only supported recovery flow. Process-level
-  supervisor behavior, graceful shutdown, or restart-time configuration reload
-  belong outside this package.
+- `recover_after_restart` is the supported durable recovery flow. Startup
+  sequencing belongs to `EngineServer` and bootstrap; graceful shutdown and
+  restart-time configuration reload are separate concerns.
 
 ### Tool definitions: unreleased v1 correction
 
