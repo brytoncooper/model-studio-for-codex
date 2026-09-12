@@ -309,6 +309,110 @@ class EngineCliSubprocessTests(unittest.TestCase):
             "engine serve process exited after second models list",
         )
 
+    def _run_fixture_text(
+        self,
+        fixture_cmd: list[str],
+        env: dict[str, str],
+        credential: str,
+    ) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                fixture_cmd,
+                cwd=str(REPO_ROOT),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=MODELS_LIST_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = self._redact(
+                (exc.stdout or b"").decode("utf-8", errors="replace")
+                if isinstance(exc.stdout, (bytes, bytearray))
+                else (exc.stdout or ""),
+                credential,
+            )
+            stderr = self._redact(
+                (exc.stderr or b"").decode("utf-8", errors="replace")
+                if isinstance(exc.stderr, (bytes, bytearray))
+                else (exc.stderr or ""),
+                credential,
+            )
+            self.fail(
+                "runs fixture-text timed out after "
+                f"{MODELS_LIST_TIMEOUT_SECONDS}s: stdout={stdout} stderr={stderr}"
+            )
+
+    def test_runs_fixture_text_reaches_fixture_output_over_real_cli(self) -> None:
+        state_root = self._temp_dir()
+        artifact_root = self._temp_dir()
+        socket_root = self._temp_dir()
+        validate_isolated_roots(
+            state_root,
+            artifact_root,
+            socket_root,
+            source_root=REPO_ROOT,
+        )
+        env = self._isolated_child_env(
+            state_root=state_root,
+            artifact_root=artifact_root,
+            socket_root=socket_root,
+        )
+        serve_cmd = [
+            *self._cli_base(),
+            "engine",
+            "serve",
+            "--state-root",
+            str(state_root),
+            "--artifact-root",
+            str(artifact_root),
+            "--socket-root",
+            str(socket_root),
+            "--legacy-agents-dir",
+            str(LEGACY_AGENTS_DIR),
+            "--default-connection-id",
+            DEFAULT_CONNECTION_ID,
+            "--enable-application-state",
+            "--enable-fixture-runs",
+        ]
+        self._owned_server = subprocess.Popen(
+            serve_cmd,
+            cwd=str(REPO_ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + READINESS_DEADLINE_SECONDS
+        rendezvous_path, credential_path = self._wait_for_engine_files(state_root, deadline)
+        credential = credential_path.read_text(encoding="utf-8").strip()
+        fixture_cmd = [
+            *self._cli_base(),
+            "runs",
+            "fixture-text",
+            "--rendezvous",
+            str(rendezvous_path),
+            "--credential",
+            str(credential_path),
+        ]
+        completed = self._run_fixture_text(fixture_cmd, env, credential)
+        if completed.returncode != 0:
+            stderr = self._redact(completed.stderr, credential)
+            stdout = self._redact(completed.stdout, credential)
+            self.fail(
+                "runs fixture-text failed: "
+                f"exit={completed.returncode} stdout={stdout} stderr={stderr}"
+            )
+        self.assertEqual(completed.stdout, "fixture text\n")
+        combined = self._redact(completed.stdout + completed.stderr, credential)
+        self.assertNotIn(credential, combined)
+        self.assertIsNotNone(self._owned_server)
+        self.assertIsNone(
+            self._owned_server.poll(),
+            "engine serve process exited after runs fixture-text disconnected",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
