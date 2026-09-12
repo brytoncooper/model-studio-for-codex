@@ -1,0 +1,575 @@
+{
+  "version": 1,
+  "scope": "planning only; current product and replaceable edges",
+  "max_concurrent_writers": 6,
+  "lead_and_finalizer": "one lead and one independent acceptance owner",
+  "packages": [
+    {
+      "id": "B00",
+      "title": "Make isolated development a supported operation",
+      "depends_on": [],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B01",
+      "title": "Freeze contract vocabulary and prove cross-language encoding",
+      "depends_on": [
+        "B00"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B02",
+      "title": "Prove a headless model-library vertical path",
+      "depends_on": [
+        "B01"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B03",
+      "title": "Establish architecture enforcement on the real vertical path",
+      "depends_on": [
+        "B02"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B04",
+      "title": "Package Swift without altering the visible app",
+      "depends_on": [
+        "B01"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "aggregate_requires": [
+        "B04.modules",
+        "B04.values",
+        "B04.geometry",
+        "B04.resources"
+      ],
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B05",
+      "title": "Connect Models screen to the typed engine client",
+      "depends_on": [
+        "B02",
+        "B04"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B06",
+      "title": "Converge MCP on application use cases",
+      "depends_on": [
+        "B02",
+        "B03"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B07",
+      "title": "Model connection/registration transactions",
+      "depends_on": [
+        "B01",
+        "B02",
+        "B03"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B08",
+      "title": "Deterministic legacy import preview",
+      "depends_on": [
+        "B07"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B09",
+      "title": "Host projection outbox and conflict-aware reconciliation",
+      "depends_on": [
+        "B07",
+        "B08"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B10",
+      "title": "Codex bridge as a host adapter",
+      "depends_on": [
+        "B03",
+        "B09"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B11",
+      "title": "Offline migration and rollback rehearsal",
+      "depends_on": [
+        "B08",
+        "B09",
+        "B10"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B12",
+      "title": "Extract run admission/state machine with fixture provider",
+      "depends_on": [
+        "B01",
+        "B03",
+        "B07"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B13",
+      "title": "Extract HTTP provider adapters and wire translation",
+      "depends_on": [
+        "B12",
+        "B10"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B14",
+      "title": "Extract Cursor execution adapter",
+      "depends_on": [
+        "B12",
+        "B10"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B15",
+      "title": "Continuation and compaction parity",
+      "depends_on": [
+        "B13",
+        "B14"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B16",
+      "title": "Usage, pricing and benchmark sources",
+      "depends_on": [
+        "B07",
+        "B12",
+        "B19"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B17",
+      "title": "Kernel registration and built-in composition",
+      "depends_on": [
+        "B01",
+        "B03",
+        "B12"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B18",
+      "title": "Supervised external plugin protocol",
+      "depends_on": [
+        "B17"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B19",
+      "title": "Brokered plugin data, jobs and events",
+      "depends_on": [
+        "B18"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "aggregate_requires": [
+        "B19.storage",
+        "B19.jobs",
+        "B19.events",
+        "B19.attachments"
+      ],
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B20",
+      "title": "External package lifecycle",
+      "depends_on": [
+        "B18",
+        "B19"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B21",
+      "title": "Declarative extension UI and management",
+      "depends_on": [
+        "B05",
+        "B18",
+        "B20"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B22",
+      "title": "Session Notebook as an independently packaged feature",
+      "depends_on": [
+        "B19",
+        "B20",
+        "B21"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B23",
+      "title": "Author SDK, tooling and second-language proof",
+      "depends_on": [
+        "B18",
+        "B20",
+        "B22"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B24",
+      "title": "Sandbox feasibility and optional restricted execution mode",
+      "depends_on": [
+        "B18",
+        "B20"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B25",
+      "title": "Complete native feature presenters and platform attachment",
+      "depends_on": [
+        "B05",
+        "B10",
+        "B15",
+        "B16",
+        "B21"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "aggregate_requires": [
+        "B25.library",
+        "B25.usage",
+        "B25.host_ui",
+        "B25.attachment",
+        "B25.extensions"
+      ],
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B26",
+      "title": "Finish packaging, compatibility wrappers and aggregate local gate",
+      "depends_on": [
+        "B06",
+        "B11",
+        "B15",
+        "B16",
+        "B23",
+        "B25"
+      ],
+      "conditional_dependencies": [
+        "B24"
+      ],
+      "condition": "B24 required only if restricted execution mode is included",
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B27",
+      "title": "Scheduled live migration and qualification",
+      "depends_on": [
+        "B26"
+      ],
+      "conditional_dependencies": [],
+      "status": "planned",
+      "details": "BACKLOG.md",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    }
+  ],
+  "leaf_packages": [
+    {
+      "id": "B04.modules",
+      "parent": "B04",
+      "depends_on": [
+        "B01"
+      ],
+      "owner_role": "Swift module wiring",
+      "owned_paths": [
+        "macos/Package.swift",
+        "macos/Sources/ModelDeckApp/",
+        "OpenRouterSettings.swift"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B04.values",
+      "parent": "B04",
+      "depends_on": [
+        "B04.modules"
+      ],
+      "owner_role": "Swift value/state extraction",
+      "owned_paths": [
+        "macos/Sources/ModelDeckPresentation/Models/",
+        "macos/Tests/ModelDeckPresentationTests/Models/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B04.geometry",
+      "parent": "B04",
+      "depends_on": [
+        "B04.modules"
+      ],
+      "owner_role": "Window geometry/recovery extraction",
+      "owned_paths": [
+        "macos/Sources/ModelDeckPlatform/Geometry/",
+        "macos/Tests/ModelDeckPlatformTests/Geometry/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B04.resources",
+      "parent": "B04",
+      "depends_on": [
+        "B04.values",
+        "B04.geometry"
+      ],
+      "owner_role": "Staged resource packaging",
+      "owned_paths": [
+        "scripts/package/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B19.storage",
+      "parent": "B19",
+      "depends_on": [
+        "B18"
+      ],
+      "owner_role": "Plugin-owned storage broker",
+      "owned_paths": [
+        "python/src/model_deck/engine/extensions/storage/",
+        "python/tests/extensions/storage/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B19.jobs",
+      "parent": "B19",
+      "depends_on": [
+        "B18"
+      ],
+      "owner_role": "Job lifecycle broker",
+      "owned_paths": [
+        "python/src/model_deck/engine/extensions/jobs/",
+        "python/tests/extensions/jobs/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B19.events",
+      "parent": "B19",
+      "depends_on": [
+        "B18"
+      ],
+      "owner_role": "Scoped event broker",
+      "owned_paths": [
+        "python/src/model_deck/engine/extensions/events/",
+        "python/tests/extensions/events/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B19.attachments",
+      "parent": "B19",
+      "depends_on": [
+        "B19.storage"
+      ],
+      "owner_role": "Owned attachment broker",
+      "owned_paths": [
+        "python/src/model_deck/engine/extensions/attachments/",
+        "python/tests/extensions/attachments/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B25.library",
+      "parent": "B25",
+      "depends_on": [
+        "B05",
+        "B07"
+      ],
+      "owner_role": "Model library and connection presenters",
+      "owned_paths": [
+        "macos/Sources/ModelDeckPresentation/Library/",
+        "macos/Sources/ModelDeckAppKit/Library/",
+        "macos/Tests/ModelDeckPresentationTests/Library/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B25.usage",
+      "parent": "B25",
+      "depends_on": [
+        "B05",
+        "B16"
+      ],
+      "owner_role": "Usage presentation",
+      "owned_paths": [
+        "macos/Sources/ModelDeckPresentation/Usage/",
+        "macos/Sources/ModelDeckAppKit/Usage/",
+        "macos/Tests/ModelDeckPresentationTests/Usage/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B25.host_ui",
+      "parent": "B25",
+      "depends_on": [
+        "B05",
+        "B10"
+      ],
+      "owner_role": "Host launch presentation",
+      "owned_paths": [
+        "macos/Sources/ModelDeckPresentation/Host/",
+        "macos/Sources/ModelDeckAppKit/Host/",
+        "macos/Tests/ModelDeckPresentationTests/Host/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B25.attachment",
+      "parent": "B25",
+      "depends_on": [
+        "B04"
+      ],
+      "owner_role": "Platform attachment implementation",
+      "owned_paths": [
+        "macos/Sources/ModelDeckPlatform/Attachment/",
+        "macos/Tests/ModelDeckPlatformTests/Attachment/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    },
+    {
+      "id": "B25.extensions",
+      "parent": "B25",
+      "depends_on": [
+        "B21"
+      ],
+      "owner_role": "Extension UI integration parity",
+      "owned_paths": [
+        "macos/Tests/ModelDeckAppKitTests/Extensions/"
+      ],
+      "status": "planned",
+      "contracts": "B01 frozen; shared API/entrypoint changes return to lead",
+      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+    }
+  ],
+  "scheduling_rule": "A parent is accepted only after depends_on and aggregate_requires are accepted; leaves use their own dependencies. All owned paths are proposed and must be checked for overlap before delegation.",
+  "documentation_required": "Every package/leaf owns a human-readable subsystem guide delta per DOCUMENTATION.md, with purpose, invariants, contracts, extension recipe and parent/catalog links."
+}
