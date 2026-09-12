@@ -1,0 +1,16 @@
+{
+  "endpoint": "LM Studio",
+  "matches": 1,
+  "billing": "none (local)",
+  "source": "remote",
+  "verified": true,
+  "note": "Listed by this endpoint. Inference and native agent compatibility have not been verified.",
+  "models": [
+    {
+      "id": "qwen2.5-0.5b-instruct-mlx",
+      "name": "qwen2.5-0.5b-instruct-mlx",
+      "endpoint": "LM Studio",
+      "price": "not listed"
+    }
+  ]
+}

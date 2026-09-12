@@ -1,0 +1,13 @@
+{
+  "models": [
+    {
+      "id": "qwen/test",
+      "name": "test",
+      "endpoint": "Fixture OpenRouter",
+      "billing": "OpenRouter credits",
+      "price": "in $0.1/M \u00b7 out $0.2/M",
+      "role": "openrouter_test"
+    }
+  ],
+  "how_to_use": "Pick a model in Codex's picker, or spawn_agent with model set to the exact id."
+}

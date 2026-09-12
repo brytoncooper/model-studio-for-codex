@@ -1,0 +1,16 @@
+{
+  "endpoint": "Fixture OpenRouter",
+  "matches": 1,
+  "billing": "OpenRouter credits",
+  "source": "cache",
+  "verified": false,
+  "note": "Results come from the local catalog cache. Live endpoint access and model availability are not verified.",
+  "models": [
+    {
+      "id": "openrouter/beta/two",
+      "name": "Beta Two",
+      "endpoint": "Fixture OpenRouter",
+      "price": "not listed"
+    }
+  ]
+}
