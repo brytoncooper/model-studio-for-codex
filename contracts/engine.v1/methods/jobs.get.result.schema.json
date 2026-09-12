@@ -15,7 +15,8 @@
         "running",
         "completed",
         "failed",
-        "cancelled"
+        "cancelled",
+        "interrupted"
       ]
     },
     "progress": {
