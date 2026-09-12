@@ -36,7 +36,7 @@ commit counts or the number of task headings.
 | B13 HTTP providers | Streaming and request helpers written | Actual HTTP execution, fallback and parity |
 | B14 Cursor provider | Execution coordinator written and tested | Actual SDK channel binding and parity |
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
-| B16 Usage/evidence | Legacy implementations retained; engine usage slice underway | Public query/event composition, pricing and refresh jobs |
+| B16 Usage/evidence | Genuine engine usage recording/query storage reviewed; legacy implementations retained | Public query/event composition, pricing and refresh jobs |
 | B17 Kernel | Generic registry written | Built-in composition and generic engine dispatch |
 | B18 External runtime | Manifest/lifecycle/process components and bidirectional provider channel reviewed | Provider proxy acceptance and real external provider proof |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
@@ -85,6 +85,12 @@ independent subprocess probes passed. One reader handles events and concurrent
 replies; strict matching, bounded queues, whole-batch rejection, deadlines and
 owned-child cleanup were verified. Run ownership and terminal semantics belong
 to the separate proxy review; no real external provider package is qualified yet.
+
+Usage records follow-up: parent ran 20 tests and six subtests after independent
+review repairs. Single-query bounds, exact fractional timestamp comparisons,
+schema-valid complete responses and optional-field presence/replay were verified.
+Records require genuine run/session IDs; legacy ledger IDs and costs are not
+invented. Event and public dispatch wiring remain pending.
 
 ## Current independent work
 

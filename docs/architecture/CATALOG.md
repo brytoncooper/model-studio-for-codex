@@ -17,6 +17,7 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | Routing port: resolves a registration to the provider/connection/model snapshot; concrete resolvers live in adapters | [routing port README](../../python/src/model_deck/engine/routing/README.md) |
 | Model library: registered-model read port, catalog-cache port, `models.list` use case | [model library README](../../python/src/model_deck/engine/model_library/README.md) |
 | Runs: application port and use cases for model runs bound to a session and route (`runs.start/get/cancel/submit_tool_result`) | [runs README](../../python/src/model_deck/engine/runs/README.md) |
+| Usage records: exact engine event recording, duplicate handling and bounded chronological queries | [usage README](../../python/src/model_deck/engine/usage/README.md) |
 | Host settings engine: generic settings engine owning authorization, schema validation, preview-token binding, save idempotency receipts; never touches filesystem/network/Git | [host settings README](../../python/src/model_deck/engine/host_settings/README.md) |
 
 ### Plugin jobs and authority
