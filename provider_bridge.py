@@ -1,4 +1,4 @@
-"""Native desktop JSON-RPC model routing. Does not proxy HTTP or handle API keys."""
+"""Native desktop JSON-RPC bridge plus the loopback model router. Never handles API keys itself."""
 import asyncio
 import copy
 import hashlib
@@ -8,19 +8,73 @@ from pathlib import Path
 import sys
 import uuid
 
+import pricing
+from local_router import LocalRouter
 from routing_registry import RoutingRegistry
 from codex_runtime import discover_runtime
+from spawn_benchmarks import model_choice_lines
 
-REAL_CODEX = '/Applications/Codex.app/Contents/Resources/codex'
 MODEL_FIELDS = {'model', 'model_reasoning_effort'}
 ROUTING_INSTRUCTIONS = (
-    'Mixed-provider routing: when delegating to an OpenAI model, select its explicit '
-    'subscription_* custom agent role (for example subscription_gpt_5_6_sol). '
-    'For an OpenRouter model, select its registered openrouter_* custom agent role. '
-    'Do not use a model-name override alone to cross providers: it can inherit the '
-    'parent provider. Preserve task ownership and permission boundaries. If the required '
-    'role is unavailable, report that instead of silently changing the billing route.'
+    'Mixed-provider routing: every model request is routed by model id. OpenAI models (gpt-*) '
+    'use the ChatGPT subscription. Models added in Model Deck run on the endpoint they were added '
+    'to: OpenRouter credits, Cursor SDK, another provider\'s API key, or a local server that bills nothing. '
+    'cursor/<SDK id> models use Cursor SDK pricing and the same request pools as IDE/Cloud Agents; '
+    'account limits and overages apply, with no free or unlimited guarantee. '
+    'To delegate work to another model, pass its exact model id in the spawn_agent model parameter, '
+    'or select its registered openrouter_* role. Unknown models fail with a clear error instead of '
+    'silently changing the billing route. Preserve task ownership and permission boundaries.'
 )
+MCP_INSTRUCTIONS = (
+    'The model_deck MCP tools (search_models, model_pricing, add_model, list_added_models) find '
+    'models on OpenRouter or any saved endpoint, show list prices, and add a model to Model Deck; '
+    'an added model can be picked or spawned on the next turn. Prefer the cheapest model that fits '
+    'the job; long contexts benefit from low cached-input prices. Use benchmark_status and refresh_benchmarks '
+    'to inspect benchmark freshness, and model_benchmarks, compare_models, and rank_models for '
+    'source-backed quality comparisons. The native spawn_agent description includes cached model choices, '
+    'prices, capabilities and benchmark evidence before delegation. Compare scores within the same '
+    'source, test and snapshot; benchmarks do not guarantee task success. '
+    'Unknown prices or missing benchmark scores are not zero.'
+)
+def routing_instructions(registry, price_table=None, benchmark_lines=None):
+    """The routing rules plus the same model evidence supplied on spawn_agent."""
+    parts = [ROUTING_INSTRUCTIONS]
+    try:
+        models = registry.load_models()
+    except Exception:
+        models = {}
+    roster = ['- ' + line for line in model_choice_lines(models, price_table, benchmark_lines).values()]
+    if roster:
+        parts.append('Models added in Model Deck, spawnable by exact id (USD list prices per million tokens; '
+                     'provider and routing tier can change cost; not settled task charges):\n' + '\n'.join(roster))
+    parts.append(MCP_INSTRUCTIONS)
+    return '\n\n'.join(parts)
+
+
+def toml_inline(value):
+    """A TOML inline value for a -c override. JSON string escapes are valid TOML basic strings."""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (int, float)):
+        return json.dumps(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, (list, tuple)):
+        return '[' + ', '.join(toml_inline(item) for item in value) + ']'
+    if isinstance(value, dict):
+        return '{' + ', '.join(f'{json.dumps(key)} = {toml_inline(item)}' for key, item in value.items()) + '}'
+    raise TypeError(f'Cannot express {type(value).__name__} in TOML')
+
+
+def mcp_server_arguments(script=None, python=None):
+    """Config override that registers Model Deck's MCP server for this Codex process only."""
+    script = Path(script) if script is not None else Path(__file__).resolve().with_name('model_deck_mcp.py')
+    if not script.is_file():
+        return []
+    table = {'command': python or sys.executable, 'args': ['-B', str(script)], 'enabled': True,
+             'startup_timeout_sec': 20, 'tool_timeout_sec': 120, 'default_tools_approval_mode': 'approve',
+             'tools': {'remove_model': {'approval_mode': 'prompt'}}}
+    return ['-c', 'mcp_servers.model_deck=' + toml_inline(table)]
 
 
 class BridgeError(Exception):
@@ -33,9 +87,10 @@ class BackendError(Exception):
 
 
 class ProviderBridge:
-    def __init__(self, registry, emit):
+    def __init__(self, registry, emit, router=None):
         self.registry = registry
         self.emit = emit
+        self.router = router
         self.pending = {}
         self.sequence = 0
         self.prefix = 'provider-bridge-' + uuid.uuid4().hex + '-'
@@ -72,34 +127,55 @@ class ProviderBridge:
                     else:
                         future.set_result(message.get('result'))
             else:
+                if message.get('method') == 'thread/started':
+                    self.remember(message.get('params'))
                 self.emit(message)
         for future in list(self.pending.values()):
             if not future.done():
                 future.set_exception(BridgeError('Codex backend stopped. Restart the integrated app.'))
 
     def route(self, model):
+        """Every routable model runs on the built-in openai provider; the router bills by name."""
         if not model:
             return None
         registered = self.registry.load_models()
         if model in registered:
-            definition = registered[model]['config']['model_providers']['openrouter-settings']
-            # Persist credential-route identity in native thread metadata, not API keys.
-            digest = hashlib.sha256(json.dumps(definition, sort_keys=True).encode()).hexdigest()[:16]
-            provider = 'openrouter-bridge-' + digest
-            return {'provider': provider, 'config': {'model_providers': {provider: definition}}}
+            endpoint = registered[model].get('endpoint') or {}
+            billing = 'cursor' if endpoint.get('cursor') else 'openrouter'
+            return {'provider': 'openai', 'billing': billing}
         if model in self.openai_models or model.startswith('gpt-'):
-            return {'provider': 'openai', 'config': {}}
+            return {'provider': 'openai', 'billing': 'subscription'}
         if '/' in model:
-            raise BridgeError('Register this OpenRouter model in OpenRouter Settings first.')
+            raise BridgeError('Register this model in Model Deck first.')
         return None
+
+    def legacy_route(self, model):
+        """Provider identity used by tasks created before the router existed."""
+        registered = self.registry.load_models()
+        if model not in registered:
+            return None
+        definition = registered[model]['config']['model_providers']['openrouter-settings']
+        digest = hashlib.sha256(json.dumps(definition, sort_keys=True).encode()).hexdigest()[:16]
+        provider = 'openrouter-bridge-' + digest
+        return {'provider': provider, 'config': {'model_providers': {provider: definition}}}
+
+    @staticmethod
+    def is_legacy_provider(provider):
+        return provider == 'openrouter-settings' or str(provider).startswith('openrouter-bridge-')
 
     def remember(self, result):
         if not isinstance(result, dict):
             return
         thread = result.get('thread') or {}
+        if not isinstance(thread, dict):
+            return
         provider = result.get('modelProvider') or thread.get('modelProvider')
         if thread.get('id') and provider:
             self.thread_providers[thread['id']] = provider
+        cwd = result.get('cwd') or thread.get('cwd')
+        remember_thread = getattr(self.router, 'remember_thread', None)
+        if thread.get('id') and isinstance(cwd, str) and cwd.strip() and remember_thread is not None:
+            remember_thread(thread['id'], cwd)
 
     async def provider_for_thread(self, thread_id):
         if thread_id not in self.thread_providers:
@@ -111,8 +187,14 @@ class ProviderBridge:
 
     async def validate_existing_selection(self, thread_id, model):
         route = self.route(model)
-        if route and route['provider'] != await self.provider_for_thread(thread_id):
-            raise BridgeError('Start a new task to change between OpenAI and OpenRouter. This task keeps its existing provider, history, and permissions.')
+        if route is None:
+            return
+        provider = await self.provider_for_thread(thread_id)
+        if not self.is_legacy_provider(provider):
+            return  # Router-backed tasks can switch freely; billing follows the model name.
+        legacy = self.legacy_route(model)
+        if legacy is None or legacy['provider'] != provider:
+            raise BridgeError('This older task is tied to its saved OpenRouter route. Start a new task to change models.')
 
     async def handle_config_write(self, method, params):
         edits = params.get('edits', []) if method == 'config/batchWrite' else [params]
@@ -134,9 +216,6 @@ class ProviderBridge:
         current = await self.request('config/read', {'includeLayers': True})
         if not selection.get('model'):
             selection['model'] = current['config'].get('model')
-        selected_route = self.route(selection['model'])
-        if selected_route and selected_route['provider'].startswith('openrouter-bridge-'):
-            selection['effort'] = 'low'
         user_layer = next((layer for layer in current.get('layers', [])
                            if layer.get('name', {}).get('type') == 'user'), None)
         version = user_layer.get('version', '') if user_layer else ''
@@ -154,12 +233,23 @@ class ProviderBridge:
         return result
 
     async def dispatch(self, method, params):
+        if method == 'turn/interrupt':
+            result = await self.request(method, params)
+            cancel_cursor_turn = getattr(self.router, 'cancel_cursor_turn', None)
+            if cancel_cursor_turn is not None:
+                try:
+                    await asyncio.to_thread(cancel_cursor_turn, params.get('threadId'), params.get('turnId'))
+                except Exception:
+                    # The backend owns the protocol result, including successful interruption.
+                    pass
+            return result
         if method == 'model/list':
             result = await self.request(method, params)
             self.openai_models.update(entry['model'] for entry in result['data'])
             if not result.get('nextCursor'):
                 existing = {entry['model'] for entry in result['data']}
-                result['data'].extend(entry for entry in self.registry.catalog_entries() if entry['model'] not in existing)
+                price_lines = getattr(self.router, 'price_lines', lambda: {})()
+                result['data'].extend(entry for entry in self.registry.catalog_entries(price_lines) if entry['model'] not in existing)
             selected = self.registry.selected().get('model')
             if selected:
                 for entry in result['data']:
@@ -170,10 +260,7 @@ class ProviderBridge:
             selected = self.registry.selected()
             if selected.get('model'):
                 result['config']['model'] = selected['model']
-                selected_route = self.route(selected['model'])
-                if selected_route and selected_route['provider'].startswith('openrouter-bridge-'):
-                    result['config']['model_reasoning_effort'] = 'low'
-                elif selected.get('effort') is not None:
+                if selected.get('effort') is not None:
                     result['config']['model_reasoning_effort'] = selected['effort']
             return result
         if method in ('config/value/write', 'config/batchWrite'):
@@ -181,47 +268,44 @@ class ProviderBridge:
                 return await self.handle_config_write(method, params)
         if method == 'thread/start':
             params = copy.deepcopy(params)
-            instructions = params.get('developerInstructions')
-            if instructions is None:
-                effective = await self.request('config/read', {'cwd': params.get('cwd'), 'includeLayers': False})
-                instructions = (params.get('config') or {}).get('developer_instructions',
-                    effective.get('config', {}).get('developer_instructions'))
-            params['developerInstructions'] = '\n\n'.join(filter(None, [instructions, ROUTING_INSTRUCTIONS]))
             selection = self.registry.selected()
             model = params.get('model') or selection.get('model')
             route = self.route(model)
             if route:
                 explicit_provider = params.get('modelProvider')
-                if explicit_provider not in (None, 'openai', 'openrouter-settings', route['provider']):
+                if explicit_provider not in (None, 'openai'):
                     raise BridgeError('This task uses another explicit provider; mixed-provider routing was not applied.')
                 params['model'] = model
-                params['modelProvider'] = route['provider']
-                config = params.setdefault('config', None) or {}
-                providers = dict(config.get('model_providers') or {})
-                providers.update(route['config'].get('model_providers') or {})
-                if providers:
-                    config['model_providers'] = providers
-                # The UI may carry an OpenAI effort from its prior selection.
-                if route['provider'].startswith('openrouter-bridge-'):
-                    config['model_reasoning_effort'] = 'low'
-                params['config'] = config
+            instructions = params.get('developerInstructions')
+            if instructions is None:
+                effective = await self.request('config/read', {'cwd': params.get('cwd'), 'includeLayers': False})
+                instructions = (params.get('config') or {}).get('developer_instructions',
+                    effective.get('config', {}).get('developer_instructions'))
+            price_table = getattr(self.router, 'price_table', lambda: {})()
+            benchmark_lines = getattr(self.router, 'benchmark_lines', lambda: {})()
+            params['developerInstructions'] = '\n\n'.join(filter(None, [instructions,
+                routing_instructions(self.registry, price_table, benchmark_lines)]))
+            wait_for_catalog = getattr(self.router, 'wait_for_catalog', None)
+            if wait_for_catalog is not None:
+                # Registered models are only spawnable once Codex has the injected catalog.
+                await asyncio.to_thread(wait_for_catalog, 8)
             result = await self.request(method, params)
             self.remember(result)
-            if route and result.get('modelProvider') != route['provider']:
-                raise BridgeError('Codex did not select the requested provider. No turn was started.')
+            if route and result.get('modelProvider') not in (None, 'openai'):
+                raise BridgeError('Codex did not use the OpenAI connection, so the model router was not applied. No turn was started.')
             return result
         if method == 'thread/resume':
             params = copy.deepcopy(params)
             thread_id = params.get('threadId')
             if params.get('model'):
                 await self.validate_existing_selection(thread_id, params['model'])
-            # Persisted OpenRouter tasks still need their command-auth provider definition.
+            # Tasks created before the router still carry their command-auth provider definition.
             provider = await self.provider_for_thread(thread_id)
-            if provider == 'openrouter-settings' or provider.startswith('openrouter-bridge-'):
+            if self.is_legacy_provider(provider):
                 models = self.registry.load_models()
                 if not models:
                     raise BridgeError('Register an OpenRouter model before reopening this task.')
-                routes = {self.route(model)['provider']: self.route(model) for model in models}
+                routes = {self.legacy_route(model)['provider']: self.legacy_route(model) for model in models}
                 if provider == 'openrouter-settings' and len(routes) == 1:
                     definition = next(iter(models.values()))['config']['model_providers']['openrouter-settings']
                     provider_config = {'model_providers': {provider: definition}}
@@ -243,7 +327,7 @@ class ProviderBridge:
                 if selected_model:
                     await self.validate_existing_selection(params['threadId'], selected_model)
             provider = await self.provider_for_thread(params['threadId'])
-            if provider.startswith('openrouter-bridge-'):
+            if str(provider).startswith('openrouter-bridge-'):
                 params = copy.deepcopy(params)
                 params['effort'] = 'low'
                 if params.get('collaborationMode'):
@@ -276,32 +360,46 @@ class ProviderBridge:
         except Exception:
             self.emit({'id': message['id'], 'error': {'code': -32000, 'message': 'Provider bridge failed safely. Check registered models and restart the integrated app.'}})
 
+    def backend_arguments(self, argv):
+        """The desktop's own arguments plus the overrides that send model traffic through the router
+        and register Model Deck's MCP server."""
+        if self.router is None:
+            return list(argv)
+        return list(argv) + self.router.codex_arguments() + mcp_server_arguments()
+
     async def run(self, argv):
         executable = discover_runtime()["executable_path"]
-        self.process = await asyncio.create_subprocess_exec(executable, *argv,
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=32 * 1024 * 1024)
-        reader = asyncio.StreamReader(limit=32 * 1024 * 1024)
-        await asyncio.get_running_loop().connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin.buffer)
-        backend_reader = asyncio.create_task(self.read_backend())
+        if self.router is None:
+            self.router = LocalRouter(self.registry, pricing_loader=pricing.load, refresh_benchmarks=True,
+                                      refresh_cursor_catalog=True)
+        self.router.start()
         try:
-            while line := await reader.readline():
-                message = json.loads(line)
-                task = asyncio.create_task(self.handle_client(message))
-                self.tasks.add(task)
-                task.add_done_callback(self.tasks.discard)
-        finally:
-            for task in self.tasks:
-                task.cancel()
-            self.process.stdin.close()
+            self.process = await asyncio.create_subprocess_exec(executable, *self.backend_arguments(argv),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=32 * 1024 * 1024)
+            reader = asyncio.StreamReader(limit=32 * 1024 * 1024)
+            await asyncio.get_running_loop().connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin.buffer)
+            backend_reader = asyncio.create_task(self.read_backend())
             try:
-                await asyncio.wait_for(self.process.wait(), timeout=3)
-            except asyncio.TimeoutError:
-                self.process.terminate()
+                while line := await reader.readline():
+                    message = json.loads(line)
+                    task = asyncio.create_task(self.handle_client(message))
+                    self.tasks.add(task)
+                    task.add_done_callback(self.tasks.discard)
+            finally:
+                for task in self.tasks:
+                    task.cancel()
+                self.process.stdin.close()
                 try:
-                    await asyncio.wait_for(self.process.wait(), timeout=2)
+                    await asyncio.wait_for(self.process.wait(), timeout=3)
                 except asyncio.TimeoutError:
-                    self.process.kill()
-            await backend_reader
+                    self.process.terminate()
+                    try:
+                        await asyncio.wait_for(self.process.wait(), timeout=2)
+                    except asyncio.TimeoutError:
+                        self.process.kill()
+                await backend_reader
+        finally:
+            self.router.stop()
 
 
 def main():

@@ -71,10 +71,26 @@ class BridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
     @patch.object(provider_bridge, "discover_runtime", return_value={"executable_path": "/fixture/current/codex"})
     @patch.object(provider_bridge.asyncio, "create_subprocess_exec", side_effect=RuntimeError("stop before process"))
     async def test_bridge_resolves_runtime_at_invocation(self, spawn, resolve):
-        bridge = provider_bridge.ProviderBridge(None, lambda message: None)
+        class Router:
+            started = stopped = False
+
+            def start(self):
+                self.started = True
+
+            def stop(self):
+                self.stopped = True
+
+            def codex_arguments(self):
+                return ["-c", 'openai_base_url="http://127.0.0.1:1/backend-api/codex"']
+
+        router = Router()
+        bridge = provider_bridge.ProviderBridge(None, lambda message: None, router=router)
         with self.assertRaisesRegex(RuntimeError, "stop before process"):
             await bridge.run(["app-server"])
-        self.assertEqual(spawn.call_args.args, ("/fixture/current/codex", "app-server"))
+        self.assertEqual(spawn.call_args.args[-2][:1] + spawn.call_args.args[-1][:23], "-mcp_servers.model_deck=")
+        self.assertEqual(spawn.call_args.args[:-2], ("/fixture/current/codex", "app-server",
+                                                "-c", 'openai_base_url="http://127.0.0.1:1/backend-api/codex"'))
+        self.assertTrue(router.started and router.stopped)
         resolve.assert_called_once()
 
 

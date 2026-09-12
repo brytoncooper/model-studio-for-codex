@@ -36,6 +36,8 @@ cp "$source_directory/cursor_sdk_runtime.py" "$app_directory/Contents/Resources/
 cp "$source_directory/model_benchmarks.py" "$app_directory/Contents/Resources/model_benchmarks.py"
 cp "$source_directory/spawn_benchmarks.py" "$app_directory/Contents/Resources/spawn_benchmarks.py"
 cp "$source_directory/model_deck_mcp.py" "$app_directory/Contents/Resources/model_deck_mcp.py"
+cp "$source_directory/local_router.py" "$app_directory/Contents/Resources/local_router.py"
+cp "$source_directory/cursor_agent.py" "$app_directory/Contents/Resources/cursor_agent.py"
 cp "$source_directory/codex_settings.py" "$app_directory/Contents/Resources/codex_settings.py"
 cp "$source_directory/provider_bridge.py" "$app_directory/Contents/Resources/provider_bridge.py"
 cp "$source_directory/routing_registry.py" "$app_directory/Contents/Resources/routing_registry.py"
