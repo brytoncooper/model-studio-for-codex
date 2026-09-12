@@ -38,7 +38,7 @@ commit counts or the number of task headings.
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
 | B16 Usage/evidence | Genuine engine usage recording/query storage reviewed; legacy implementations retained | Public query/event composition, pricing and refresh jobs |
 | B17 Kernel | Generic registry written | Built-in composition and generic engine dispatch |
-| B18 External runtime | Manifest/lifecycle/process components and bidirectional provider channel reviewed | Provider proxy acceptance and real external provider proof |
+| B18 External runtime | Process channel and provider proxy reviewed, including real coordinator tool transitions | Real external package and credential-scope proof |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
 | B20 Package lifecycle | Archive validation and immutable staging reviewed | Install/enable/update/remove coordinator and transactional pointers |
 | B21 Extension UI | Contracts exist | Declarative renderer and extension management |
@@ -104,6 +104,12 @@ reusing registry parsing and legacy output formatting/search. Captured account,
 URL and wire participate in opaque connection identity. Writes remain legacy.
 The Architecture entrypoint requires the engine package in source or staged
 vendor; the new packager must supply it, with no silent service bypass.
+
+Provider proxy follow-up: parent ran 19 tests after independent concurrency
+review and wire-to-engine translation repair. A real coordinator/SQLite test now
+proves waiting-for-tool, result submission, replay without duplicate forwarding,
+and one completed terminal. Slow sinks and blocked acknowledgements remain
+isolated per run. The archived external-process integration is still underway.
 
 ## Current independent work
 

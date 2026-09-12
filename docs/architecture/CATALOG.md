@@ -89,6 +89,7 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | Subsystem | Guide |
 |---|---|
 | Plugin contracts (`contracts/plugin.v1/`) | [contracts README](../../contracts/README.md) |
+| External provider proxy: activation/run ownership, tool state and ordered event delivery | [provider proxy guide](../../python/src/model_deck/plugins/provider_proxy/README.md) |
 | Manifest inspection: pure in-memory validation against the frozen manifest schema | [manifest inspection README](../../python/src/model_deck/plugins/manifest_inspection/README.md) |
 | Lifecycle session: pure in-memory activation state (`created -> hello_verified -> active -> draining -> inactive`, plus `failed`); no transport/process | [lifecycle session README](../../python/src/model_deck/plugins/lifecycle_session/README.md) |
 | Process runtime: bounded real-subprocess adapter driving lifecycle JSON-RPC over stdio | [process runtime README](../../python/src/model_deck/plugins/process_runtime/README.md) |

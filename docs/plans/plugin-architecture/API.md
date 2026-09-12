@@ -169,6 +169,13 @@ Private provider methods on the authenticated activation channel:
 - `plugin.v1.provider.event`: notification carrying adapter run handle, sequence and application event. Supervisor validates event schema, route/run ownership, flow-control credits and exactly-one-terminal rules.
 - `plugin.v1.provider.ack`: cumulative event acknowledgement/credit from supervisor; worker cannot bypass queue limits by publishing generic feature events.
 
+For each adapter run handle, the provider event sequence starts at zero and
+increments by one. The outer notification sequence and its embedded worker event
+sequence must agree. This sequence belongs to the provider channel; the engine
+assigns its own application sequence after accepting the event. A cumulative
+acknowledgement names only events already processed by the supervisor. A worker's
+reported credit cannot increase the supervisor's configured queue limits.
+
 Optional discovery and compaction ports are separately versioned descriptors; a provider need not implement them to generate text. Provider runs are not generic plugin background jobs: engine owns their lifecycle, tool states, accounting and billed-dispatch semantics. Unexpected provider worker exit marks its affected runs interrupted without automatic billed resubmission.
 
 B18 owns both this proxy binding and an external archive containing a deterministic provider. Install it through the fixture harness, register/select its model through the same model-library flow, exercise text/tools/cancel/errors, and run the same ProviderExecution conformance cases used for built-ins. Fixtures verify foreign connection credentials and another activation's run handles are refused. B20 later proves production archive lifecycle using the same package; B23 documents authoring. No private engine import or per-provider routing branch may be added to pass this proof.
