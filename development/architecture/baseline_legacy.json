@@ -1,0 +1,8 @@
+{
+  "files": [
+    {"relpath": "local_router.py", "enforce": false, "note": "legacy router authority until B10/B12 migration"},
+    {"relpath": "provider_bridge.py", "enforce": false, "note": "legacy bridge entry until host adapter cutover"},
+    {"relpath": "model_deck_mcp.py", "enforce": false, "note": "legacy MCP entry until B06 adapter"},
+    {"relpath": "routing_registry.py", "enforce": false, "note": "named baseline; ratchet to enforce when migrated"}
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "module_patterns": [
+    "model_deck.bootstrap.loader",
+    "model_deck.extensions.loader"
+  ],
+  "file_globs": [
+    "development/architecture/fixtures/positive/allowed_dynamic_loader.py"
+  ]
+}
