@@ -38,7 +38,7 @@ commit counts or the number of task headings.
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
 | B16 Usage/evidence | Legacy implementations retained; engine usage slice underway | Public query/event composition, pricing and refresh jobs |
 | B17 Kernel | Generic registry written | Built-in composition and generic engine dispatch |
-| B18 External runtime | Manifest/lifecycle/process components written | Bidirectional channel, provider proxy and external provider proof |
+| B18 External runtime | Manifest/lifecycle/process components and bidirectional provider channel reviewed | Provider proxy acceptance and real external provider proof |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
 | B20 Package lifecycle | Archive validation and immutable staging reviewed | Install/enable/update/remove coordinator and transactional pointers |
 | B21 Extension UI | Contracts exist | Declarative renderer and extension management |
@@ -79,6 +79,12 @@ Startup recovery follow-up: independent acceptance ran 40 recovery, transport an
 settings tests. Recovery occurs after the instance lock and before listening;
 claimed active runs interrupt without provider retry, accepted/terminal states
 remain, and a competing instance cannot mutate recovery state.
+
+Provider transport follow-up: 28 focused lifecycle/channel tests and three
+independent subprocess probes passed. One reader handles events and concurrent
+replies; strict matching, bounded queues, whole-batch rejection, deadlines and
+owned-child cleanup were verified. Run ownership and terminal semantics belong
+to the separate proxy review; no real external provider package is qualified yet.
 
 ## Current independent work
 

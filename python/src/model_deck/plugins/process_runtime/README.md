@@ -1,22 +1,92 @@
-# process runtime (B18)
+# Process runtime
 
-Bounded real-subprocess adapter for one supervised plugin activation.
-Spawns exactly one explicitly injected child argv (no shell) and drives
-`plugin.v1` lifecycle JSON-RPC (hello / activate / drain) over its stdio
-pipes using the accepted `lifecycle_session` + `stdio_codec` layers.
+Owns one explicitly injected subprocess and its bounded stdio channel. Lifecycle
+payload/state rules belong to `lifecycle_session`; framing belongs to
+`stdio_codec`. This package adds process ownership, response matching, provider
+schema checks, bounded queues, and cleanup. It does not install plugins or own
+engine runs, credentials, billing, or provider selection.
 
-## API
+## Public API
 
-- `ProcessRuntimeConfig(argv, package_dir, timeout_s=5.0, max_frames=16, max_stderr_bytes=65536)`: explicit launch + bounds. `argv` is used verbatim; `package_dir` must exist and becomes the child cwd.
-- `ProcessRuntime(config).spawn()`: launch the owned child. No shell, no downloads, no global/home discovery.
-- `run_hello(session, nonce) / run_activation(session) / run_drain(session, deadline_ms)`: one bounded exchange each. Payload build and result acceptance stay inside `LifecycleSession`; mismatched response ids are rejected (`id_mismatch`), codec failures surface as `transport`, over-limit frames as `frame_limit`, deadlines as `timeout`, and child exit/EOF without a matching response as `malformed_eof`.
-- `close()`: terminate the owned child, bounded-wait, kill on expiry, reap, and drain stderr up to `max_stderr_bytes`. `stderr_bytes_drained` reports the retained count.
-- `ProcessRuntimeError.code`: stable code, fixed detail; never carries the activation token or child stderr bytes.
+- `ProcessRuntimeConfig(argv, package_dir, timeout_s=5.0, max_frames=16,
+  max_stderr_bytes=65536, max_pending_requests=16)` specifies the executable,
+  working directory, and limits. No shell, downloads, or discovery.
+- `ProcessRuntime(config).spawn()` starts exactly one child. A runtime cannot
+  respawn after closing.
+- `run_hello(session, nonce)`, `run_activation(session)`, and
+  `run_drain(session, deadline_ms)` preserve the synchronous lifecycle API.
+  Hello and activation must succeed on this runtime with the same session object.
+- `provider_channel()` returns a `ProviderChannel` only after that activation.
+  Its `activation_id` identifies the binding. Constructing a facade directly
+  confers no authority: every operation checks the runtime's bound activation.
+- `channel.request(method, params, timeout_s=None)` returns the validated result
+  object. `ProviderMethod` enumerates the exact allowed wire names:
+  `plugin.v1.provider.start`, `.submit_tool_result`, `.cancel`, `.resume`, `.ack`.
+  The equivalent complete strings are accepted. No generic broker dispatch is
+  exposed. Params and results use the frozen provider schemas; no token or
+  context fields are added. `ack` is a request with a `credit` result.
+- `channel.receive_event(timeout_s=...)` returns detached `provider.event` params,
+  or `None` when its polling interval elapses. Events are notifications with no
+  request ID or response. The polling interval may be zero.
+- `close()` wakes pending callers, terminates/reaps only the recorded child,
+  and closes its pipes. `stderr_bytes_drained` reports bounded retained stderr
+  bytes; stderr contents are never included in errors or runtime repr.
 
-## Rules
+## Concurrency and failure rules
 
-Owns only the injected child it spawned; launches nothing else. Tests use synthetic `sys.executable -c` fixture children only. No plugin install, dispatch, or broker work lives here. Shared `LifecycleSession` / `StdioCodec` interfaces are reused unchanged.
+One stdout reader starts at spawn and owns the persistent decoder throughout
+hello, activation, provider traffic, and drain. It validates each complete batch
+before releasing results. Unknown or duplicate response IDs, boolean/noninteger
+IDs, invalid envelopes, unsolicited worker requests, and unrecognized
+notifications fail closed. Complete and partial trailing frames are not dropped.
+Provider events are forbidden before activation acceptance.
 
-## Limits
+Concurrent provider requests have separate pending IDs. Complete writes are
+serialized independently of response waiting; cancellation, tool-result
+submission, and event receipt can run concurrently. Lifecycle calls remain
+exclusive with each other. Draining refuses new start/resume admission while
+allowing existing-run traffic. Inactive or failed sessions invalidate the channel.
 
-One exchange at a time per runtime (reentrant calls rejected); one-use lifecycle (spawn once, no respawn after close). Stdin/stdout are nonblocking under a single monotonic deadline covering write + read, so a ~900KB write to a never-reading child times out instead of hanging. A daemon thread drains stderr continuously (retained tail capped at `max_stderr_bytes`); a 200KB pre-hello flood cannot deadlock the handshake. Response frames are strictly validated (`jsonrpc == "2.0"`, integer non-bool `id` exactly matching the request, exactly one of `result`/`error`, `result` an object); mismatches and malformed shapes fail closed. `StdioCodec` state persists across exchanges so trailing frames are never discarded. Any handshake/transport/`SessionError` failure auto-closes (terminates/reaps) the owned child. `close()` wait is capped at `min(timeout_s, 5s)` + 5s kill reap. Tests use an outer watchdog + `addCleanup(close)` harness; 11 focused tests cover handshake, EOF/id-mismatch cleanup, bundled-unsolicited-frame rejection, pre-exchange-exit cleanup, large-write timeout, stderr flood, strict shapes, identity fail-close, and config/one-use guards. Every decoded batch is fully validated before the match is accepted, so an unsolicited complete frame bundled with a valid response fails closed (`id_mismatch`) instead of being dropped; exchange preconditions run inside the guarded region so a pre-exchange child exit still terminates/reaps the owned child.
+Each command has one monotonic deadline covering write-lock acquisition, writing,
+and reply waiting. Timeout or invalid transport/protocol data fails the channel
+and closes its owned child, releasing all waiters. There is no retry, restart,
+or billed resubmission. A valid cancel result preserves the distinction between
+`accepted` and optional `confirmed`.
+
+Pending requests default to 16 and are capped by the validated configuration
+(maximum 1024). Queued provider events are capped at 256 events and 1 MiB of
+encoded frames, whichever comes first. Overflow closes the channel rather than
+silently dropping events. The codec independently caps each frame at 1 MiB.
+`max_frames` remains a per-lifecycle-exchange bound, not a provider lifetime cap.
+Stderr drains continuously with bounded retention. Child termination waits at
+most `min(timeout_s, 5)` seconds before kill, followed by a bounded reap and
+reader-thread joins.
+
+## Extension boundary and limitations
+
+The provider proxy must enforce route/run ownership, declared resume capability,
+event sequencing, credits, outstanding tool calls, and exactly-one-terminal
+transitions. A successfully authenticated channel does not authorize arbitrary
+connection credentials. Credential brokerage is a separate binding and is not
+implemented here. Events may precede their command reply; the proxy must correlate
+and validate them before exposing them to engine consumers.
+
+Shutdown does not claim provider-side cancellation confirmation or freeze later
+session mutation. Run interruption/accounting belongs to the engine proxy. A
+poll timeout is not a command failure. Returned payloads belong to the caller;
+no raw child error body is propagated. Error tracebacks suppress underlying
+schema/codec exception rendering; they are not a general local-variable scrubber.
+
+## Tests
+
+From `python/`, run the isolated modules:
+
+```sh
+PYTHONPATH=src python -B -m unittest tests.plugins.test_process_runtime tests.plugins.test_process_provider_channel
+```
+
+Tests launch only owned synthetic Python fixture children with outer watchdogs.
+Coverage includes lifecycle compatibility, binding, interleaved and partial
+frames, reversed concurrent replies, command/poll deadlines, EOF, close wakeups,
+queue/pending limits, schema failures, and secret-safe error rendering. No live
+app, network, installation, or credential configuration is exercised.
