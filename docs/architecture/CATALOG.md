@@ -80,6 +80,7 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | macOS client target (`ModelDeckClient`) | [client README](../../macos/Sources/ModelDeckClient/README.md) |
 | macOS platform target (`ModelDeckPlatform`) | [platform README](../../macos/Sources/ModelDeckPlatform/README.md) |
 | macOS presentation target (`ModelDeckPresentation`) | [presentation README](../../macos/Sources/ModelDeckPresentation/README.md) |
+| Native settings window and form/TOML controls | [settings window guide](../../macos/Sources/ModelDeckPresentation/HostSettingsWindow/README.md) |
 | MCP client adapter: model-read orchestration converged onto `model_library` use cases | [MCP client README](../../python/src/model_deck/integrations/clients/mcp/README.md) |
 | macOS host-settings service and wire notes | [HOST_SETTINGS_SERVICE](../../macos/Sources/ModelDeckClient/HOST_SETTINGS_SERVICE.md), [HOST_SETTINGS](../../macos/Sources/ModelDeckClient/HOST_SETTINGS.md) |
 

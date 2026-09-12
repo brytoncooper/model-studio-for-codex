@@ -1,5 +1,6 @@
 import Foundation
 import ModelDeckClient
+import ModelDeckContracts
 
 /// Public read-only UI state for the native host settings editor.
 ///
@@ -87,6 +88,9 @@ public struct HostSettingsEditorRow: Equatable, Sendable {
     public var secretConfigured: Bool
     public var hasPendingSecretChange: Bool
     public var displayValue: String?
+    /// Typed public enum metadata. Never populated for secret fields.
+    public var enumValue: JSONValue?
+    public var enumChoices: [HostConstraintChoice]
     public var isUnset: Bool
 
     public init(
@@ -100,6 +104,8 @@ public struct HostSettingsEditorRow: Equatable, Sendable {
         secretConfigured: Bool = false,
         hasPendingSecretChange: Bool = false,
         displayValue: String? = nil,
+        enumValue: JSONValue? = nil,
+        enumChoices: [HostConstraintChoice] = [],
         isUnset: Bool = false
     ) {
         self.fieldID = fieldID
@@ -112,6 +118,8 @@ public struct HostSettingsEditorRow: Equatable, Sendable {
         self.secretConfigured = secretConfigured
         self.hasPendingSecretChange = hasPendingSecretChange
         self.displayValue = displayValue
+        self.enumValue = enumValue
+        self.enumChoices = enumChoices
         self.isUnset = isUnset
     }
 }

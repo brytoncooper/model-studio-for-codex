@@ -39,6 +39,20 @@ final class HostSettingsEditorTests: XCTestCase {
                 applicationEffects: [.immediate], protectedProjectionChanges: false))
     }
 
+    func testPublicDisplayValuesAndPendingEditsArePlainAndLossless() {
+        let fake = FakeHostSettingsService()
+        fake.snapshot = makeSnapshot()
+        let presenter = HostSettingsEditorPresenter()
+        let loaded = expectation(description: "plain values")
+        presenter.start(hostID: "h", service: fake) { _ in loaded.fulfill() }
+        wait(for: [loaded], timeout: 5)
+        XCTAssertEqual(presenter.state.rows.first { $0.fieldID == "f1" }?.displayValue, "a")
+        for (value, expected) in [(JSONValue.bool(true), "true"), (.number(2.5), "2.5"), (.string("quoted \"word\""), "quoted \"word\""), (.array([.string("a,b"), .string("")]), "[\"a,b\",\"\"]")] {
+            presenter.setFieldValue(fieldID: "f1", entryID: nil, value: value)
+            XCTAssertEqual(presenter.state.rows.first { $0.fieldID == "f1" }?.displayValue, expected)
+        }
+    }
+
     func testStalePreviewSuppressed() {
         let fake = FakeHostSettingsService()
         let presenter = HostSettingsEditorPresenter()

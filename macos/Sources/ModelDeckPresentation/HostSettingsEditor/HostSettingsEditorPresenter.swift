@@ -735,6 +735,10 @@ public final class HostSettingsEditorPresenter {
                 if case .unset(let fieldID, _) = $0 { return fieldID == descriptor.fieldID }
                 return false
             })
+            let value = changes.reversed().compactMap { change -> JSONValue? in
+                if case .set(let fieldID, nil, let value) = change, fieldID == descriptor.fieldID { return value }
+                return nil
+            }.first ?? descriptor.value
             return HostSettingsEditorRow(
                 fieldID: descriptor.fieldID,
                 label: descriptor.label,
@@ -743,10 +747,28 @@ public final class HostSettingsEditorPresenter {
                 valueState: descriptor.valueState,
                 editability: descriptor.editability,
                 isSecret: false,
-                displayValue: descriptor.value.map { String(describing: $0) },
+                displayValue: value.map { descriptor.type == .enum ? jsonText($0) : displayValue($0) },
+                enumValue: descriptor.type == .enum ? value : nil,
+                enumChoices: descriptor.type == .enum ? descriptor.constraints?.choices ?? [] : [],
                 isUnset: pendingUnset || descriptor.valueState == .unset
             )
         }
+    }
+
+    private static func displayValue(_ value: JSONValue) -> String {
+        switch value {
+        case .string(let text): return text
+        case .bool(let enabled): return enabled ? "true" : "false"
+        case .number(let number): return String(number)
+        default: return jsonText(value)
+        }
+    }
+
+    private static func jsonText(_ value: JSONValue) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(value) else { return "" }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func entryGroups(of field: HostFieldDescriptor) -> [HostEntryGroup] {

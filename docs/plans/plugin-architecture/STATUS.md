@@ -45,7 +45,7 @@ commit counts or the number of task headings.
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
 | B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
 | B24 Restricted execution | No implementation found | Feasibility investigation and qualified OS enforcement |
-| B25 Native parity | Catalog path and settings components written; real settings persistence composed through authenticated engine | Native settings screen acceptance/app attachment and remaining native features |
+| B25 Native parity | Catalog path, authenticated settings persistence and native settings screen reviewed | App attachment and remaining native features |
 | B26 Distribution/docs | Legacy packaging remains; subsystem catalog written | Supported staged packaging, compatibility wrappers and aggregate gate |
 | B27 Live qualification | Not started | Complete staged readiness, then schedule protected-runtime cutover |
 
@@ -92,10 +92,15 @@ schema-valid complete responses and optional-field presence/replay were verified
 Records require genuine run/session IDs; legacy ledger IDs and costs are not
 invented. Event and public dispatch wiring remain pending.
 
+Native settings follow-up: a fresh independent library stage passed 31 tests,
+including control actions through actual Command-S, typed enum values, duplicate
+labels, unknown choices and secret metadata exclusion. Parent inspected the
+offscreen layout. This proves the reusable screen, not attachment to the running
+app or an end-to-end Swift-to-file session.
+
 ## Current independent work
 
-- Native settings rendering, secret editing, keyboard shortcut and layout repair.
-- Native settings screen independent acceptance and app attachment planning.
+- Native settings app attachment planning.
 - Bidirectional external provider process channel.
 - Engine usage recording from genuine run/session identities.
 - Independent usage-recording review and external provider proxy implementation.
