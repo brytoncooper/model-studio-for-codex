@@ -87,6 +87,14 @@
     {
       "file": "registered_model_minimal.json",
       "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/registered_model"
+    },
+    {
+      "file": "events_subscribe_run_topic.json",
+      "schema": "contracts/engine.v1/methods/events.subscribe.params.schema.json"
+    },
+    {
+      "file": "event_notification_content_delta.json",
+      "schema": "contracts/engine.v1/notifications/event.schema.json"
     }
   ],
   "invalid": [
@@ -153,6 +161,14 @@
     {
       "file": "connections_save_ambiguous_connection_revision.json",
       "schema": "contracts/engine.v1/methods/connections.save.params.schema.json"
+    },
+    {
+      "file": "events_subscribe_unscoped_topic.json",
+      "schema": "contracts/engine.v1/methods/events.subscribe.params.schema.json"
+    },
+    {
+      "file": "event_notification_with_id.json",
+      "schema": "contracts/engine.v1/notifications/event.schema.json"
     }
   ]
 }

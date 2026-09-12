@@ -8,9 +8,12 @@
       "type": "array",
       "items": {
         "type": "string",
-        "maxLength": 128
+        "pattern": "^run:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+        "minLength": 40,
+        "maxLength": 40
       },
-      "maxItems": 32
+      "minItems": 1,
+      "maxItems": 1
     },
     "initial_credit": {
       "type": "integer",

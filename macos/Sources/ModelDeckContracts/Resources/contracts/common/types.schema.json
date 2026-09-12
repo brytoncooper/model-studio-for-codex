@@ -13,7 +13,7 @@
     },
     "reverse_domain_id": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_-]*)+$",
       "minLength": 3,
       "maxLength": 256
     },

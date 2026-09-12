@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/notifications/event.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "jsonrpc",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "method": {
+      "const": "engine.v1.event"
+    },
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subscription_id",
+        "event"
+      ],
+      "properties": {
+        "subscription_id": {
+          "$ref": "../../common/types.schema.json#/definitions/uuid"
+        },
+        "event": {
+          "$ref": "../vocabulary.schema.json#/definitions/application_run_event"
+        }
+      }
+    }
+  }
+}
