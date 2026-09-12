@@ -20,3 +20,6 @@ work/
 
 # Machine-specific code-signing identity name for build.sh
 signing-identity
+
+# SwiftPM local build output
+macos/.build/
