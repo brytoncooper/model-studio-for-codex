@@ -1,0 +1,14 @@
+# Managed by OpenRouter Settings native-agent registration v1
+name = "openrouter_test"
+model = "qwen/test"
+model_provider = "openrouter-settings"
+[model_providers.openrouter-settings]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+wire_api = "responses"
+supports_websockets = false
+[model_providers.openrouter-settings.auth]
+command = "/Applications/OpenRouterCredentialHelper"
+args = ["--token", "12345678-1234-1234-1234-123456789abc"]
+timeout_ms = 5000
+refresh_interval_ms = 300000
