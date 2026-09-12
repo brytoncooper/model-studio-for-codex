@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
 import threading
+import uuid
+from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -29,9 +32,45 @@ from model_deck.engine.model_library.use_cases import (
     RenameModelUseCase,
     UnsupportedCollectionError,
 )
+from model_deck.engine.routing.ports import (
+    RegistrationNotFoundError,
+    UnknownCapabilityError,
+    UnsupportedCapabilityError,
+)
+from model_deck.engine.runs.ports import (
+    ApplicationRunEvent,
+    EventReplayOutcome,
+    GetRunCommand,
+    ReplaySubscriptionHandle,
+    RunAdmissionRequestHashConflictError,
+    RunEventReplayPort,
+    RunRepository,
+    RunAuthorizationMismatchError,
+    RunNotFoundError,
+    RunStateConflictError,
+    ToolCallNotOutstandingError,
+    ToolResultIdempotencyConflictError,
+)
+from model_deck.engine.runs.use_cases import (
+    CancelRunUseCase,
+    GetRunUseCase,
+    StartRunUseCase,
+    SubmitToolResultUseCase,
+)
+from model_deck.engine.sessions.ports import (
+    SessionActiveRunConflictError,
+    SessionNotFoundError,
+    SessionRevisionConflictError,
+)
+from model_deck.engine.sessions.use_cases import (
+    CreateSessionUseCase,
+    GetSessionUseCase,
+    SelectSessionModelUseCase,
+)
 
 SERVER_API = ApiVersion(1, 0)
 SERVER_FEATURES = {"tools": "unsupported", "compaction": "unknown"}
+_CLIENT_PRINCIPAL_NAME_PREFIX = "model-deck:client:"
 
 _BASE_IMPLEMENTED_METHODS = frozenset(
     {
@@ -51,6 +90,30 @@ _B07_METHODS = frozenset(
         "engine.v1.connections.list",
         "engine.v1.connections.save",
     }
+)
+
+_B12_METHODS = frozenset(
+    {
+        "engine.v1.sessions.create",
+        "engine.v1.sessions.get",
+        "engine.v1.sessions.select_model",
+        "engine.v1.runs.start",
+        "engine.v1.runs.get",
+        "engine.v1.runs.cancel",
+        "engine.v1.runs.submit_tool_result",
+    }
+)
+
+_EVENT_METHODS = frozenset(
+    {
+        "engine.v1.events.subscribe",
+        "engine.v1.events.ack",
+        "engine.v1.events.unsubscribe",
+    }
+)
+
+_RUN_TOPIC_PATTERN = re.compile(
+    r"^run:([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$"
 )
 
 _OPERATION_CATALOG: tuple[dict[str, str], ...] = (
@@ -114,7 +177,108 @@ _OPERATION_CATALOG: tuple[dict[str, str], ...] = (
         "output_schema_id": "contracts/engine.v1/methods/connections.save.result.schema.json",
         "effect": "write",
     },
+    {
+        "operation_id": "engine.v1.sessions.create",
+        "input_schema_id": "contracts/engine.v1/methods/sessions.create.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/sessions.create.result.schema.json",
+        "effect": "write",
+    },
+    {
+        "operation_id": "engine.v1.sessions.get",
+        "input_schema_id": "contracts/engine.v1/methods/sessions.get.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/sessions.get.result.schema.json",
+        "effect": "read",
+    },
+    {
+        "operation_id": "engine.v1.sessions.select_model",
+        "input_schema_id": "contracts/engine.v1/methods/sessions.select_model.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/sessions.select_model.result.schema.json",
+        "effect": "write",
+    },
+    {
+        "operation_id": "engine.v1.runs.start",
+        "input_schema_id": "contracts/engine.v1/methods/runs.start.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/runs.start.result.schema.json",
+        "effect": "write",
+    },
+    {
+        "operation_id": "engine.v1.runs.get",
+        "input_schema_id": "contracts/engine.v1/methods/runs.get.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/runs.get.result.schema.json",
+        "effect": "read",
+    },
+    {
+        "operation_id": "engine.v1.runs.cancel",
+        "input_schema_id": "contracts/engine.v1/methods/runs.cancel.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/runs.cancel.result.schema.json",
+        "effect": "write",
+    },
+    {
+        "operation_id": "engine.v1.runs.submit_tool_result",
+        "input_schema_id": "contracts/engine.v1/methods/runs.submit_tool_result.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/runs.submit_tool_result.result.schema.json",
+        "effect": "write",
+    },
+    {
+        "operation_id": "engine.v1.events.subscribe",
+        "input_schema_id": "contracts/engine.v1/methods/events.subscribe.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/events.subscribe.result.schema.json",
+        "effect": "write",
+    },
+    {
+        "operation_id": "engine.v1.events.ack",
+        "input_schema_id": "contracts/engine.v1/methods/events.ack.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/events.ack.result.schema.json",
+        "effect": "write",
+    },
+    {
+        "operation_id": "engine.v1.events.unsubscribe",
+        "input_schema_id": "contracts/engine.v1/methods/events.unsubscribe.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/events.unsubscribe.result.schema.json",
+        "effect": "write",
+    },
 )
+
+
+def principal_id_for_client_name(client_name: str, engine_instance_id: str) -> str:
+    namespace = uuid.UUID(engine_instance_id)
+    return str(uuid.uuid5(namespace, f"{_CLIENT_PRINCIPAL_NAME_PREFIX}{client_name}"))
+
+
+@dataclass(slots=True)
+class _ManagedSubscription:
+    subscription_id: str
+    run_id: str
+    principal_id: str
+    handle: ReplaySubscriptionHandle
+
+
+def _parse_run_topic(topic: str) -> str | None:
+    match = _RUN_TOPIC_PATTERN.match(topic)
+    if match is None:
+        return None
+    return str(uuid.UUID(match.group(1)))
+
+
+def _flatten_application_run_event(event: ApplicationRunEvent) -> dict[str, Any]:
+    flattened: dict[str, Any] = {
+        "kind": event.kind,
+        "run_id": event.run_id,
+        "session_id": event.session_id,
+        "sequence": event.sequence,
+        "event_schema_version": event.event_schema_version,
+        "observed_at": event.observed_at,
+    }
+    payload = event.payload
+    if payload is None:
+        return flattened
+    if not isinstance(payload, dict):
+        raise ValueError("application run event payload must be an object")
+    for key, value in payload.items():
+        if key in flattened:
+            raise ValueError(f"application run event payload collides with field {key}")
+        flattened[key] = value
+    return flattened
 
 
 class EngineInstanceIdentity(Protocol):
@@ -138,6 +302,15 @@ class EngineDispatch:
         remove_model: RemoveModelUseCase | None = None,
         list_connections: ListConnectionsUseCase | None = None,
         save_connection: SaveConnectionUseCase | None = None,
+        create_session: CreateSessionUseCase | None = None,
+        get_session: GetSessionUseCase | None = None,
+        select_session_model: SelectSessionModelUseCase | None = None,
+        start_run: StartRunUseCase | None = None,
+        get_run: GetRunUseCase | None = None,
+        cancel_run: CancelRunUseCase | None = None,
+        submit_tool_result: SubmitToolResultUseCase | None = None,
+        run_repository: RunRepository | None = None,
+        event_replay: RunEventReplayPort | None = None,
     ) -> None:
         self._list_models = list_models
         self._identity = identity
@@ -147,8 +320,21 @@ class EngineDispatch:
         self._remove_model = remove_model
         self._list_connections = list_connections
         self._save_connection = save_connection
+        self._create_session = create_session
+        self._get_session = get_session
+        self._select_session_model = select_session_model
+        self._start_run = start_run
+        self._get_run = get_run
+        self._cancel_run = cancel_run
+        self._submit_tool_result = submit_tool_result
+        self._run_repository = run_repository
+        self._event_replay = event_replay
         self._implemented_methods = self._build_implemented_methods()
         self._authenticated_sessions: set[int] = set()
+        self._connection_principals: dict[int, str] = {}
+        self._subscriptions: dict[str, _ManagedSubscription] = {}
+        self._subscription_last_acked: dict[str, int] = {}
+        self._notification_queues: dict[int, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
     def _build_implemented_methods(self) -> frozenset[str]:
@@ -163,11 +349,36 @@ class EngineDispatch:
             methods.add("engine.v1.connections.list")
         if self._save_connection is not None:
             methods.add("engine.v1.connections.save")
+        if self._create_session is not None:
+            methods.add("engine.v1.sessions.create")
+        if self._get_session is not None:
+            methods.add("engine.v1.sessions.get")
+        if self._select_session_model is not None:
+            methods.add("engine.v1.sessions.select_model")
+        if self._start_run is not None:
+            methods.add("engine.v1.runs.start")
+        if self._get_run is not None:
+            methods.add("engine.v1.runs.get")
+        if self._cancel_run is not None:
+            methods.add("engine.v1.runs.cancel")
+        if self._submit_tool_result is not None:
+            methods.add("engine.v1.runs.submit_tool_result")
+        if self._run_repository is not None and self._event_replay is not None:
+            methods.update(_EVENT_METHODS)
         return frozenset(methods)
+
+    def drain_notifications(self, connection_id: int) -> tuple[dict[str, Any], ...]:
+        with self._lock:
+            queued = self._notification_queues.pop(connection_id, None)
+        if not queued:
+            return ()
+        return tuple(queued)
 
     def disconnect(self, connection_id: int) -> None:
         with self._lock:
             self._authenticated_sessions.discard(connection_id)
+            self._connection_principals.pop(connection_id, None)
+            self._notification_queues.pop(connection_id, None)
 
     def handle(self, frame: dict[str, Any], connection_id: int) -> dict[str, Any] | None:
         if frame.get("jsonrpc") != "2.0":
@@ -176,7 +387,7 @@ class EngineDispatch:
         if not isinstance(method, str):
             return self._error(frame.get("id"), -32600, "invalid request")
         if method not in self._implemented_methods:
-            if method in _B07_METHODS:
+            if method in _B07_METHODS or method in _B12_METHODS or method in _EVENT_METHODS:
                 return self._domain_error(
                     frame.get("id"),
                     "unsupported_capability",
@@ -219,6 +430,26 @@ class EngineDispatch:
             return self._connections_list(frame.get("id"), params)
         if method == "engine.v1.connections.save":
             return self._connections_save(frame.get("id"), params)
+        if method == "engine.v1.sessions.create":
+            return self._sessions_create(frame.get("id"), params)
+        if method == "engine.v1.sessions.get":
+            return self._sessions_get(frame.get("id"), params)
+        if method == "engine.v1.sessions.select_model":
+            return self._sessions_select_model(frame.get("id"), params)
+        if method == "engine.v1.runs.start":
+            return self._runs_start(frame.get("id"), params, connection_id)
+        if method == "engine.v1.runs.get":
+            return self._runs_get(frame.get("id"), params)
+        if method == "engine.v1.runs.cancel":
+            return self._runs_cancel(frame.get("id"), params)
+        if method == "engine.v1.runs.submit_tool_result":
+            return self._runs_submit_tool_result(frame.get("id"), params, connection_id)
+        if method == "engine.v1.events.subscribe":
+            return self._events_subscribe(frame.get("id"), params, connection_id)
+        if method == "engine.v1.events.ack":
+            return self._events_ack(frame.get("id"), params, connection_id)
+        if method == "engine.v1.events.unsubscribe":
+            return self._events_unsubscribe(frame.get("id"), params, connection_id)
         return self._domain_error(frame.get("id"), "internal", "unhandled method")
 
     def _hello(self, request_id: Any, params: Mapping[str, Any], connection_id: int) -> dict[str, Any]:
@@ -226,6 +457,7 @@ class EngineDispatch:
             validate_schema_ref("contracts/engine.v1/methods/hello.params.schema.json", dict(params))
         except SchemaValidationError as exc:
             return self._error(request_id, -32602, str(exc))
+        client_name = str(params["client_name"])
         offered = ApiVersion.parse(params["offered_api"])
         required = params.get("required_capabilities") or []
         if not isinstance(required, list):
@@ -263,8 +495,13 @@ class EngineDispatch:
                 str(auth.get("instance_nonce")),
             ):
                 return self._domain_error(request_id, "capability_denied", "rendezvous mismatch")
+            principal_id = principal_id_for_client_name(
+                client_name,
+                self._identity.engine_instance_id,
+            )
             with self._lock:
                 self._authenticated_sessions.add(connection_id)
+                self._connection_principals[connection_id] = principal_id
             result = {
                 "authenticated": True,
                 "api_profile": {"major": SERVER_API.major, "minor": SERVER_API.minor},
@@ -283,7 +520,13 @@ class EngineDispatch:
             dict(entry) for entry in _OPERATION_CATALOG if entry["operation_id"] in self._implemented_methods
         ]
         result = {"operations": operations}
-        validate_schema_ref("contracts/engine.v1/methods/operations.list.result.schema.json", result)
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/operations.list.result.schema.json",
+                result,
+            )
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32603, str(exc))
         return self._success(request_id, result)
 
     def _models_list(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -350,6 +593,86 @@ class EngineDispatch:
             self._save_connection,
         )
 
+    def _sessions_create(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        return self._run_session_mutation(
+            request_id,
+            params,
+            "contracts/engine.v1/methods/sessions.create.params.schema.json",
+            "contracts/engine.v1/methods/sessions.create.result.schema.json",
+            self._create_session,
+        )
+
+    def _sessions_get(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        return self._run_session_mutation(
+            request_id,
+            params,
+            "contracts/engine.v1/methods/sessions.get.params.schema.json",
+            "contracts/engine.v1/methods/sessions.get.result.schema.json",
+            self._get_session,
+        )
+
+    def _sessions_select_model(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        return self._run_session_mutation(
+            request_id,
+            params,
+            "contracts/engine.v1/methods/sessions.select_model.params.schema.json",
+            "contracts/engine.v1/methods/sessions.select_model.result.schema.json",
+            self._select_session_model,
+        )
+
+    def _runs_start(self, request_id: Any, params: Mapping[str, Any], connection_id: int) -> dict[str, Any]:
+        principal = self._principal_for_connection(request_id, connection_id)
+        if isinstance(principal, dict):
+            return principal
+        return self._run_run_mutation(
+            request_id,
+            params,
+            "contracts/engine.v1/methods/runs.start.params.schema.json",
+            "contracts/engine.v1/methods/runs.start.result.schema.json",
+            self._start_run,
+            principal_id=principal,
+        )
+
+    def _runs_get(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        return self._run_run_mutation(
+            request_id,
+            params,
+            "contracts/engine.v1/methods/runs.get.params.schema.json",
+            "contracts/engine.v1/methods/runs.get.result.schema.json",
+            self._get_run,
+        )
+
+    def _runs_cancel(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        return self._run_run_mutation(
+            request_id,
+            params,
+            "contracts/engine.v1/methods/runs.cancel.params.schema.json",
+            "contracts/engine.v1/methods/runs.cancel.result.schema.json",
+            self._cancel_run,
+        )
+
+    def _runs_submit_tool_result(
+        self, request_id: Any, params: Mapping[str, Any], connection_id: int
+    ) -> dict[str, Any]:
+        principal = self._principal_for_connection(request_id, connection_id)
+        if isinstance(principal, dict):
+            return principal
+        return self._run_run_mutation(
+            request_id,
+            params,
+            "contracts/engine.v1/methods/runs.submit_tool_result.params.schema.json",
+            "contracts/engine.v1/methods/runs.submit_tool_result.result.schema.json",
+            self._submit_tool_result,
+            principal_id=principal,
+        )
+
+    def _principal_for_connection(self, request_id: Any, connection_id: int) -> str | dict[str, Any]:
+        with self._lock:
+            principal_id = self._connection_principals.get(connection_id)
+        if principal_id is None:
+            return self._domain_error(request_id, "capability_denied", "authenticated principal unavailable")
+        return principal_id
+
     def _run_model_mutation(
         self,
         request_id: Any,
@@ -407,6 +730,363 @@ class EngineDispatch:
         except SchemaValidationError as exc:
             return self._error(request_id, -32603, str(exc))
         return self._success(request_id, result)
+
+    def _run_session_mutation(
+        self,
+        request_id: Any,
+        params: Mapping[str, Any],
+        params_schema: str,
+        result_schema: str,
+        use_case: CreateSessionUseCase | GetSessionUseCase | SelectSessionModelUseCase | None,
+    ) -> dict[str, Any]:
+        if use_case is None:
+            return self._domain_error(request_id, "unsupported_capability", "method not configured")
+        try:
+            validate_schema_ref(params_schema, dict(params))
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32602, str(exc))
+        try:
+            result = use_case.execute(params)
+        except RegistrationNotFoundError as exc:
+            return self._domain_error(request_id, "not_found", str(exc))
+        except SessionNotFoundError as exc:
+            return self._domain_error(request_id, "not_found", str(exc))
+        except SessionRevisionConflictError as exc:
+            return self._domain_error(request_id, "conflict", str(exc))
+        except SessionActiveRunConflictError as exc:
+            return self._domain_error(request_id, "conflict", str(exc))
+        except LookupError as exc:
+            return self._domain_error(request_id, "not_found", str(exc))
+        except ValueError as exc:
+            return self._error(request_id, -32602, str(exc))
+        try:
+            validate_schema_ref(result_schema, result)
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32603, str(exc))
+        return self._success(request_id, result)
+
+    def _run_run_mutation(
+        self,
+        request_id: Any,
+        params: Mapping[str, Any],
+        params_schema: str,
+        result_schema: str,
+        use_case: StartRunUseCase | GetRunUseCase | CancelRunUseCase | SubmitToolResultUseCase | None,
+        *,
+        principal_id: str | None = None,
+    ) -> dict[str, Any]:
+        if use_case is None:
+            return self._domain_error(request_id, "unsupported_capability", "method not configured")
+        try:
+            validate_schema_ref(params_schema, dict(params))
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32602, str(exc))
+        try:
+            if isinstance(use_case, StartRunUseCase):
+                assert principal_id is not None
+                result = use_case.execute(
+                    params,
+                    principal_id=principal_id,
+                    authorized_host_context_ref=None,
+                )
+            elif isinstance(use_case, SubmitToolResultUseCase):
+                assert principal_id is not None
+                result = use_case.execute(
+                    params,
+                    principal_id=principal_id,
+                    authorized_host_context_ref=None,
+                )
+            else:
+                result = use_case.execute(params)
+        except RegistrationNotFoundError as exc:
+            return self._domain_error(request_id, "not_found", str(exc))
+        except (
+            RunNotFoundError,
+            SessionNotFoundError,
+            LookupError,
+        ) as exc:
+            return self._domain_error(request_id, "not_found", str(exc))
+        except (
+            RunAdmissionRequestHashConflictError,
+            RunStateConflictError,
+            SessionRevisionConflictError,
+            ToolCallNotOutstandingError,
+            ToolResultIdempotencyConflictError,
+        ) as exc:
+            return self._domain_error(request_id, "conflict", str(exc))
+        except RunAuthorizationMismatchError as exc:
+            return self._domain_error(request_id, "capability_denied", str(exc))
+        except (
+            UnsupportedCapabilityError,
+            UnknownCapabilityError,
+        ) as exc:
+            return self._domain_error(request_id, "unsupported_capability", str(exc))
+        except ValueError as exc:
+            message = str(exc)
+            if "host context" in message:
+                return self._domain_error(request_id, "capability_denied", message)
+            return self._error(request_id, -32602, message)
+        try:
+            validate_schema_ref(result_schema, result)
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32603, str(exc))
+        return self._success(request_id, result)
+
+
+    def _events_subscribe(
+        self, request_id: Any, params: Mapping[str, Any], connection_id: int
+    ) -> dict[str, Any]:
+        if self._run_repository is None or self._event_replay is None:
+            return self._domain_error(request_id, "unsupported_capability", "method not configured")
+        principal = self._principal_for_connection(request_id, connection_id)
+        if isinstance(principal, dict):
+            return principal
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/events.subscribe.params.schema.json",
+                dict(params),
+            )
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32602, str(exc))
+        topic = params["topics"][0]
+        run_id = _parse_run_topic(topic)
+        if run_id is None:
+            return self._error(request_id, -32602, "invalid topic")
+        try:
+            run = self._run_repository.get(GetRunCommand(run_id=run_id))
+        except RunNotFoundError:
+            return self._domain_error(request_id, "not_found", "run not found")
+        if run.principal_id != principal:
+            return self._domain_error(request_id, "capability_denied", "run ownership required")
+        initial_credit = params["initial_credit"]
+        try:
+            handle, page = self._event_replay.subscribe(
+                run_id,
+                after_sequence=None,
+                grant_credit=initial_credit,
+            )
+        except ValueError as exc:
+            return self._error(request_id, -32602, str(exc))
+        outcome_error = self._replay_page_outcome_error(request_id, page.outcome)
+        if outcome_error is not None:
+            self._event_replay.unsubscribe(handle)
+            return outcome_error
+        result = {"subscription_id": handle.subscription_id}
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/events.subscribe.result.schema.json",
+                result,
+            )
+        except SchemaValidationError as exc:
+            self._drop_managed_subscription(handle)
+            return self._error(request_id, -32603, str(exc))
+        try:
+            notifications = [
+                self._build_event_notification(handle.subscription_id, event)
+                for event in page.events
+            ]
+        except (SchemaValidationError, ValueError):
+            self._drop_managed_subscription(handle)
+            return self._domain_error(request_id, "internal", "invalid notification event")
+        managed = _ManagedSubscription(
+            subscription_id=handle.subscription_id,
+            run_id=run_id,
+            principal_id=principal,
+            handle=handle,
+        )
+        with self._lock:
+            self._subscriptions[handle.subscription_id] = managed
+            if notifications:
+                queue = self._notification_queues.setdefault(connection_id, [])
+                queue.extend(notifications)
+        return self._success(request_id, result)
+
+    def _events_ack(
+        self, request_id: Any, params: Mapping[str, Any], connection_id: int
+    ) -> dict[str, Any]:
+        if self._run_repository is None or self._event_replay is None:
+            return self._domain_error(request_id, "unsupported_capability", "method not configured")
+        principal = self._principal_for_connection(request_id, connection_id)
+        if isinstance(principal, dict):
+            return principal
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/events.ack.params.schema.json",
+                dict(params),
+            )
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32602, str(exc))
+        subscription_id = str(params["subscription_id"])
+        sequence = params["sequence"]
+        managed = self._require_subscription_owner(request_id, subscription_id, principal)
+        if isinstance(managed, dict):
+            return managed
+        with self._lock:
+            last_acked = self._subscription_last_acked.get(managed.subscription_id, 0)
+            newly_advanced = max(0, sequence - last_acked)
+            return_credit = newly_advanced if newly_advanced > 0 else 1
+            try:
+                ack_result = self._event_replay.ack(
+                    managed.handle,
+                    sequence,
+                    return_credit,
+                )
+            except KeyError:
+                return self._domain_error(request_id, "not_found", "subscription not found")
+            except ValueError as exc:
+                return self._error(request_id, -32602, str(exc))
+            outcome_error = self._replay_ack_outcome_error(request_id, ack_result.outcome)
+            if outcome_error is not None:
+                return outcome_error
+            if newly_advanced > 0:
+                self._subscription_last_acked[managed.subscription_id] = sequence
+        try:
+            page = self._event_replay.read_available(managed.handle)
+        except KeyError:
+            return self._domain_error(request_id, "not_found", "subscription not found")
+        page_error = self._replay_page_outcome_error(request_id, page.outcome)
+        if page_error is not None:
+            return page_error
+        try:
+            self._queue_replay_page(connection_id, managed.subscription_id, page)
+        except ValueError:
+            return self._domain_error(request_id, "internal", "invalid notification event")
+        result = {"credit": page.credit_remaining}
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/events.ack.result.schema.json",
+                result,
+            )
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32603, str(exc))
+        return self._success(request_id, result)
+
+    def _events_unsubscribe(
+        self, request_id: Any, params: Mapping[str, Any], connection_id: int
+    ) -> dict[str, Any]:
+        if self._run_repository is None or self._event_replay is None:
+            return self._domain_error(request_id, "unsupported_capability", "method not configured")
+        principal = self._principal_for_connection(request_id, connection_id)
+        if isinstance(principal, dict):
+            return principal
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/events.unsubscribe.params.schema.json",
+                dict(params),
+            )
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32602, str(exc))
+        subscription_id = str(params["subscription_id"])
+        managed = self._require_subscription_owner(request_id, subscription_id, principal)
+        if isinstance(managed, dict):
+            return managed
+        self._event_replay.unsubscribe(managed.handle)
+        with self._lock:
+            self._subscriptions.pop(subscription_id, None)
+            self._subscription_last_acked.pop(subscription_id, None)
+        result = {"unsubscribed": True}
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/events.unsubscribe.result.schema.json",
+                result,
+            )
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32603, str(exc))
+        return self._success(request_id, result)
+
+
+    def _remove_queued_subscription_notifications(
+        self, connection_id: int, subscription_id: str
+    ) -> None:
+        with self._lock:
+            queue = self._notification_queues.get(connection_id)
+            if queue is None:
+                return
+            filtered = [
+                notification
+                for notification in queue
+                if notification.get("params", {}).get("subscription_id") != subscription_id
+            ]
+            if filtered:
+                self._notification_queues[connection_id] = filtered
+            else:
+                self._notification_queues.pop(connection_id, None)
+
+    def _drop_managed_subscription(
+        self,
+        handle: ReplaySubscriptionHandle,
+        *,
+        connection_id: int | None = None,
+    ) -> None:
+        subscription_id = handle.subscription_id
+        self._event_replay.unsubscribe(handle)
+        with self._lock:
+            self._subscriptions.pop(subscription_id, None)
+            self._subscription_last_acked.pop(subscription_id, None)
+        if connection_id is not None:
+            self._remove_queued_subscription_notifications(connection_id, subscription_id)
+
+    def _require_subscription_owner(
+        self, request_id: Any, subscription_id: str, principal_id: str
+    ) -> _ManagedSubscription | dict[str, Any]:
+        with self._lock:
+            managed = self._subscriptions.get(subscription_id)
+        if managed is None:
+            return self._domain_error(request_id, "not_found", "subscription not found")
+        if managed.principal_id != principal_id:
+            return self._domain_error(request_id, "capability_denied", "subscription ownership required")
+        return managed
+
+    def _replay_page_outcome_error(
+        self, request_id: Any, outcome: EventReplayOutcome
+    ) -> dict[str, Any] | None:
+        if outcome == EventReplayOutcome.RESUME_UNAVAILABLE:
+            return self._domain_error(request_id, "resume_unavailable", "resume unavailable")
+        if outcome == EventReplayOutcome.SLOW_READER:
+            return self._domain_error(request_id, "resource_exhausted", "subscriber queue exhausted")
+        return None
+
+    def _replay_ack_outcome_error(
+        self, request_id: Any, outcome: EventReplayOutcome
+    ) -> dict[str, Any] | None:
+        if outcome == EventReplayOutcome.RESUME_UNAVAILABLE:
+            return self._domain_error(request_id, "resume_unavailable", "resume unavailable")
+        if outcome == EventReplayOutcome.SLOW_READER:
+            return self._domain_error(request_id, "resource_exhausted", "subscriber queue exhausted")
+        return None
+
+    def _queue_replay_page(
+        self,
+        connection_id: int,
+        subscription_id: str,
+        page: Any,
+    ) -> None:
+        if not page.events:
+            return
+        notifications: list[dict[str, Any]] = []
+        for event in page.events:
+            notifications.append(self._build_event_notification(subscription_id, event))
+        with self._lock:
+            queue = self._notification_queues.setdefault(connection_id, [])
+            queue.extend(notifications)
+
+    def _build_event_notification(
+        self, subscription_id: str, event: ApplicationRunEvent
+    ) -> dict[str, Any]:
+        flattened = _flatten_application_run_event(event)
+        notification = {
+            "jsonrpc": "2.0",
+            "method": "engine.v1.event",
+            "params": {
+                "subscription_id": subscription_id,
+                "event": flattened,
+            },
+        }
+        validate_schema_ref(
+            "contracts/engine.v1/notifications/event.schema.json",
+            notification,
+        )
+        return notification
 
     def _is_authenticated(self, connection_id: int) -> bool:
         with self._lock:
