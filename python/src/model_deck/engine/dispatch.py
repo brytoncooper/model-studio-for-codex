@@ -67,6 +67,18 @@ from model_deck.engine.sessions.use_cases import (
     GetSessionUseCase,
     SelectSessionModelUseCase,
 )
+from model_deck.engine.host_settings.ports import (
+    CallerContext,
+    SettingsConflictError,
+    SettingsDeniedError,
+    SettingsExhaustedError,
+    SettingsInternalError,
+    SettingsInvalidError,
+    SettingsNotFoundError,
+    SettingsUnsupportedError,
+    SettingsVersionMismatchError,
+)
+from model_deck.engine.host_settings.service import HostSettingsService
 
 SERVER_API = ApiVersion(1, 0)
 SERVER_FEATURES = {"tools": "unsupported", "compaction": "unknown"}
@@ -109,6 +121,15 @@ _EVENT_METHODS = frozenset(
         "engine.v1.events.subscribe",
         "engine.v1.events.ack",
         "engine.v1.events.unsubscribe",
+    }
+)
+
+_HOST_SETTINGS_METHODS = frozenset(
+    {
+        "engine.v1.hosts.settings.read",
+        "engine.v1.hosts.settings.validate",
+        "engine.v1.hosts.settings.preview",
+        "engine.v1.hosts.settings.save",
     }
 )
 
@@ -237,6 +258,30 @@ _OPERATION_CATALOG: tuple[dict[str, str], ...] = (
         "output_schema_id": "contracts/engine.v1/methods/events.unsubscribe.result.schema.json",
         "effect": "write",
     },
+    {
+        "operation_id": "engine.v1.hosts.settings.read",
+        "input_schema_id": "contracts/engine.v1/methods/hosts.settings.read.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/hosts.settings.read.result.schema.json",
+        "effect": "read",
+    },
+    {
+        "operation_id": "engine.v1.hosts.settings.validate",
+        "input_schema_id": "contracts/engine.v1/methods/hosts.settings.validate.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/hosts.settings.validate.result.schema.json",
+        "effect": "read",
+    },
+    {
+        "operation_id": "engine.v1.hosts.settings.preview",
+        "input_schema_id": "contracts/engine.v1/methods/hosts.settings.preview.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/hosts.settings.preview.result.schema.json",
+        "effect": "read",
+    },
+    {
+        "operation_id": "engine.v1.hosts.settings.save",
+        "input_schema_id": "contracts/engine.v1/methods/hosts.settings.save.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/hosts.settings.save.result.schema.json",
+        "effect": "write",
+    },
 )
 
 
@@ -311,6 +356,8 @@ class EngineDispatch:
         submit_tool_result: SubmitToolResultUseCase | None = None,
         run_repository: RunRepository | None = None,
         event_replay: RunEventReplayPort | None = None,
+        host_settings: HostSettingsService | None = None,
+        host_settings_caller: CallerContext | None = None,
     ) -> None:
         self._list_models = list_models
         self._identity = identity
@@ -329,6 +376,8 @@ class EngineDispatch:
         self._submit_tool_result = submit_tool_result
         self._run_repository = run_repository
         self._event_replay = event_replay
+        self._host_settings = host_settings
+        self._host_settings_caller = host_settings_caller
         self._implemented_methods = self._build_implemented_methods()
         self._authenticated_sessions: set[int] = set()
         self._connection_principals: dict[int, str] = {}
@@ -365,6 +414,8 @@ class EngineDispatch:
             methods.add("engine.v1.runs.submit_tool_result")
         if self._run_repository is not None and self._event_replay is not None:
             methods.update(_EVENT_METHODS)
+        if self._host_settings is not None:
+            methods.update(_HOST_SETTINGS_METHODS)
         return frozenset(methods)
 
     def drain_notifications(self, connection_id: int) -> tuple[dict[str, Any], ...]:
@@ -387,7 +438,12 @@ class EngineDispatch:
         if not isinstance(method, str):
             return self._error(frame.get("id"), -32600, "invalid request")
         if method not in self._implemented_methods:
-            if method in _B07_METHODS or method in _B12_METHODS or method in _EVENT_METHODS:
+            if (
+                method in _B07_METHODS
+                or method in _B12_METHODS
+                or method in _EVENT_METHODS
+                or method in _HOST_SETTINGS_METHODS
+            ):
                 return self._domain_error(
                     frame.get("id"),
                     "unsupported_capability",
@@ -450,6 +506,14 @@ class EngineDispatch:
             return self._events_ack(frame.get("id"), params, connection_id)
         if method == "engine.v1.events.unsubscribe":
             return self._events_unsubscribe(frame.get("id"), params, connection_id)
+        if method == "engine.v1.hosts.settings.read":
+            return self._hosts_settings(frame.get("id"), params, connection_id, "read")
+        if method == "engine.v1.hosts.settings.validate":
+            return self._hosts_settings(frame.get("id"), params, connection_id, "validate")
+        if method == "engine.v1.hosts.settings.preview":
+            return self._hosts_settings(frame.get("id"), params, connection_id, "preview")
+        if method == "engine.v1.hosts.settings.save":
+            return self._hosts_settings(frame.get("id"), params, connection_id, "save")
         return self._domain_error(frame.get("id"), "internal", "unhandled method")
 
     def _hello(self, request_id: Any, params: Mapping[str, Any], connection_id: int) -> dict[str, Any]:
@@ -832,6 +896,61 @@ class EngineDispatch:
             return self._error(request_id, -32603, str(exc))
         return self._success(request_id, result)
 
+
+    def _hosts_settings_caller(
+        self, request_id: Any, connection_id: int
+    ) -> CallerContext | dict[str, Any]:
+        principal = self._principal_for_connection(request_id, connection_id)
+        if isinstance(principal, dict):
+            return principal
+        if self._host_settings_caller is None:
+            return self._domain_error(
+                request_id, "capability_denied", "host settings operator context not configured"
+            )
+        return self._host_settings_caller
+
+    def _hosts_settings(
+        self, request_id: Any, params: Mapping[str, Any], connection_id: int, operation: str
+    ) -> dict[str, Any]:
+        if self._host_settings is None:
+            return self._domain_error(request_id, "unsupported_capability", "method not configured")
+        caller = self._hosts_settings_caller(request_id, connection_id)
+        if isinstance(caller, dict):
+            return caller
+        service_method = {
+            "read": self._host_settings.read,
+            "validate": self._host_settings.validate,
+            "preview": self._host_settings.preview,
+            "save": self._host_settings.save,
+        }[operation]
+        try:
+            result = service_method(caller, dict(params))
+        except SettingsDeniedError as exc:
+            return self._domain_error(request_id, "capability_denied", "host settings access denied")
+        except SettingsNotFoundError as exc:
+            return self._domain_error(request_id, "not_found", "host settings document not found")
+        except SettingsConflictError as exc:
+            reason = getattr(exc, "reason", None)
+            if reason == "preview_consumed":
+                message = "settings save conflict: preview_consumed"
+            else:
+                message = "settings save conflict"
+            return self._domain_error(request_id, "conflict", message)
+        except SettingsVersionMismatchError as exc:
+            return self._domain_error(request_id, "version_mismatch", "host settings version changed")
+        except SettingsUnsupportedError as exc:
+            return self._domain_error(request_id, "unsupported_capability", "host settings capability unavailable")
+        except SettingsExhaustedError as exc:
+            return self._domain_error(request_id, "resource_exhausted", "host settings limit exceeded")
+        except SettingsInvalidError as exc:
+            return self._domain_error(request_id, "invalid_argument", "host settings request invalid")
+        except SettingsInternalError as exc:
+            return self._domain_error(request_id, "internal", "host settings operation failed")
+        except Exception:
+            return self._domain_error(request_id, "internal", "settings result unavailable")
+        if not isinstance(result, dict):
+            return self._domain_error(request_id, "internal", "settings result unavailable")
+        return self._success(request_id, result)
 
     def _events_subscribe(
         self, request_id: Any, params: Mapping[str, Any], connection_id: int
