@@ -554,8 +554,200 @@ class EngineServerRollbackTests(unittest.TestCase):
 import socket
 import stat
 
-from model_deck.adapters.transport.framing import MAX_FRAME_BYTES, FrameError, decode_frame
+from model_deck.adapters.transport.framing import (
+    MAX_FRAME_BYTES,
+    FrameError,
+    decode_frame,
+    encode_frame,
+)
+from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
 from model_deck.adapters.transport.unix_server import UnixSocketEngineServer
+
+
+
+class UnixSocketEngineEventTransportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temps: list[tempfile.TemporaryDirectory[str]] = []
+
+    def tearDown(self) -> None:
+        for td in self._temps:
+            td.cleanup()
+
+    def _temp_dir(self) -> Path:
+        td = tempfile.TemporaryDirectory()
+        self._temps.append(td)
+        return Path(td.name)
+
+    def test_call_queues_notification_received_before_matching_response(self) -> None:
+        root = self._temp_dir()
+        socket_path = root / "engine.sock"
+        socket_path.parent.mkdir(parents=True, exist_ok=True)
+        ready = threading.Event()
+
+        def serve() -> None:
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(str(socket_path))
+            server.listen(1)
+            ready.set()
+            conn, _addr = server.accept()
+            conn.recv(65536)
+            notification = {
+                "jsonrpc": "2.0",
+                "method": "engine.v1.event",
+                "params": {
+                    "subscription_id": "sub-1",
+                    "event": {"type": "run.started", "run_id": "run-1"},
+                },
+            }
+            response = {"jsonrpc": "2.0", "id": 7, "result": {"ok": True}}
+            conn.sendall(encode_frame(notification))
+            conn.sendall(encode_frame(response))
+            conn.close()
+            server.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        self.assertTrue(ready.wait(timeout=2.0))
+        client = UnixSocketEngineClient(socket_path, timeout_seconds=2.0)
+        with client.session() as session:
+            result = session.call(
+                {"jsonrpc": "2.0", "id": 7, "method": "engine.v1.ping", "params": {}}
+            )
+            self.assertEqual(result.get("result"), {"ok": True})
+            queued = session.read_notification()
+        self.assertEqual(queued.get("method"), "engine.v1.event")
+        self.assertEqual(
+            queued.get("params", {}).get("subscription_id"),
+            "sub-1",
+        )
+
+    def test_server_sends_response_before_notifications(self) -> None:
+        root = self._temp_dir()
+        socket_path = root / "engine.sock"
+
+        def handler(
+            frame: dict,
+            _connection_id: int,
+            _stop: threading.Event,
+        ) -> dict:
+            return {
+                "jsonrpc": "2.0",
+                "id": frame["id"],
+                "result": {"handled": True},
+            }
+
+        def notification_provider(_connection_id: int) -> tuple[dict, ...]:
+            return (
+                {
+                    "jsonrpc": "2.0",
+                    "method": "engine.v1.event",
+                    "params": {
+                        "subscription_id": "sub-2",
+                        "event": {"type": "content.delta"},
+                    },
+                },
+            )
+
+        server = UnixSocketEngineServer(
+            socket_path,
+            handler,
+            notification_provider=notification_provider,
+        )
+        server.start()
+        try:
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.connect(str(socket_path))
+            client.sendall(
+                encode_frame(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "engine.v1.ping",
+                        "params": {},
+                    }
+                )
+            )
+            client.settimeout(2.0)
+            buffer = bytearray()
+            frames: list[dict] = []
+            while len(frames) < 2:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                buffer.extend(chunk)
+                while True:
+                    frame = decode_frame(buffer)
+                    if frame is None:
+                        break
+                    frames.append(frame)
+            client.close()
+        finally:
+            server.stop()
+        self.assertEqual(len(frames), 2)
+        first = frames[0]
+        second = frames[1]
+        self.assertEqual(first.get("id"), 3)
+        self.assertIn("result", first)
+        self.assertNotIn("id", second)
+        self.assertEqual(second.get("method"), "engine.v1.event")
+
+    def test_read_notification_receives_post_response_notification(self) -> None:
+        root = self._temp_dir()
+        socket_path = root / "engine.sock"
+
+        def handler(
+            frame: dict,
+            _connection_id: int,
+            _stop: threading.Event,
+        ) -> dict:
+            return {
+                "jsonrpc": "2.0",
+                "id": frame["id"],
+                "result": {"subscribed": True},
+            }
+
+        event_payload = {
+            "type": "run.completed",
+            "run_id": "run-9",
+        }
+
+        def notification_provider(_connection_id: int) -> tuple[dict, ...]:
+            return (
+                {
+                    "jsonrpc": "2.0",
+                    "method": "engine.v1.event",
+                    "params": {
+                        "subscription_id": "sub-9",
+                        "event": event_payload,
+                    },
+                },
+            )
+
+        server = UnixSocketEngineServer(
+            socket_path,
+            handler,
+            notification_provider=notification_provider,
+        )
+        server.start()
+        try:
+            client = UnixSocketEngineClient(socket_path, timeout_seconds=2.0)
+            with client.session() as session:
+                response = session.call(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 11,
+                        "method": "engine.v1.events.subscribe",
+                        "params": {"topic": "run:run-9"},
+                    }
+                )
+                self.assertEqual(response.get("result"), {"subscribed": True})
+                notification = session.read_notification()
+        finally:
+            server.stop()
+        self.assertEqual(notification.get("method"), "engine.v1.event")
+        self.assertEqual(
+            notification.get("params", {}).get("event"),
+            event_payload,
+        )
 
 
 class UnixTransportSecurityTests(unittest.TestCase):

@@ -5,7 +5,7 @@ import socket
 import stat
 import struct
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,7 @@ from model_deck.adapters.transport.framing import FrameError, decode_frame, enco
 ConnectionHandler = Callable[[dict[str, Any], int, threading.Event], dict[str, Any] | None]
 DisconnectHandler = Callable[[int], None]
 PeerCredentialChecker = Callable[[socket.socket], bool]
+NotificationProvider = Callable[[int], Sequence[dict[str, Any]]]
 
 
 def peer_uid_from_socket(conn: socket.socket) -> int | None:
@@ -58,6 +59,7 @@ class UnixSocketEngineServer:
         handler: ConnectionHandler,
         on_disconnect: DisconnectHandler | None = None,
         peer_credential_checker: PeerCredentialChecker | None = None,
+        notification_provider: NotificationProvider | None = None,
     ) -> None:
         self._socket_path = socket_path
         self._handler = handler
@@ -67,6 +69,7 @@ class UnixSocketEngineServer:
             if peer_credential_checker is not None
             else default_peer_credential_checker
         )
+        self._notification_provider = notification_provider
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._server: socket.socket | None = None
@@ -168,7 +171,18 @@ class UnixSocketEngineServer:
                         break
                     response = self._handler(frame, connection_id, stop)
                     if response is not None:
-                        conn.sendall(encode_frame(response))
+                        try:
+                            conn.sendall(encode_frame(response))
+                        except OSError:
+                            return
+                        if self._notification_provider is not None:
+                            for notification in self._notification_provider(
+                                connection_id
+                            ):
+                                try:
+                                    conn.sendall(encode_frame(notification))
+                                except OSError:
+                                    return
         finally:
             conn.close()
             if self._on_disconnect is not None:
