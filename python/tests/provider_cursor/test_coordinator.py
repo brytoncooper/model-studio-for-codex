@@ -19,7 +19,7 @@ from model_deck.engine.runs.ports import (
     RunRequest,
     SubmitToolResultProviderOutcome,
     SubmitToolResultProviderResult,
-    ToolCallDescriptor,
+    ToolDefinition,
 )
 from model_deck.integrations.providers.cursor import (
     CURSOR_PROVIDER_ID,
@@ -133,7 +133,14 @@ def _run_request(**overrides: Any) -> RunRequest:
         "idempotency_key": "idem-1",
         "route_snapshot": _route_snapshot(),
         "input": NormalizedRunInput(messages=("hello", {"role": "user"})),
-        "tools": (ToolCallDescriptor(call_id="call-1", tool_name="search"),),
+        "tools": (
+            ToolDefinition(
+                name="search",
+                input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+                host_execution_required=True,
+                description="web search",
+            ),
+        ),
     }
     base.update(overrides)
     return RunRequest(**base)
@@ -183,10 +190,61 @@ class CoordinatorStartTest(unittest.TestCase):
         self.assertEqual(adapter_request.input_messages, ("hello", {"role": "user"}))
         self.assertEqual(
             adapter_request.tools,
-            (ToolCallDescriptor(call_id="call-1", tool_name="search"),),
+            (
+                ToolDefinition(
+                    name="search",
+                    input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+                    host_execution_required=True,
+                    description="web search",
+                ),
+            ),
         )
         self.assertIsNone(adapter_request.continuation_handle)
         self.assertIsInstance(adapter_request, CursorStartRequest)
+
+    def test_tools_nested_detachment(self) -> None:
+        runtime = FakeCursorRuntime()
+        coordinator = CursorExecutionCoordinator(runtime, now=lambda: NOW)
+        schema = {"type": "object", "properties": {"q": {"type": "string"}}}
+        request = _run_request(
+            tools=(
+                ToolDefinition(
+                    name="search",
+                    input_schema=schema,
+                    host_execution_required=True,
+                    description="web search",
+                ),
+            )
+        )
+        coordinator.start(request, RecordingSink())
+        adapter_request, _ = runtime.starts[0]
+        advertised = adapter_request.tools[0]
+        self.assertIsInstance(advertised, ToolDefinition)
+        schema["properties"]["q"]["type"] = "mutated"
+        request.tools[0].input_schema["properties"]["q"]["type"] = "mutated"
+        self.assertEqual(
+            advertised.input_schema,
+            {"type": "object", "properties": {"q": {"type": "string"}}},
+        )
+        self.assertIsNot(advertised.input_schema, schema)
+        self.assertTrue(advertised.host_execution_required)
+        self.assertEqual(advertised.description, "web search")
+
+    def test_advertised_definition_distinct_from_emitted_call_id(self) -> None:
+        runtime = FakeCursorRuntime()
+        coordinator = CursorExecutionCoordinator(runtime, now=lambda: NOW)
+        sink = RecordingSink()
+        coordinator.start(_run_request(), sink)
+        adapter_request, _ = runtime.starts[0]
+        advertised = adapter_request.tools[0]
+        self.assertEqual(advertised.name, "search")
+        self.assertFalse(hasattr(advertised, "call_id"))
+        handle = coordinator.get_handle(RUN_ID)
+        assert handle is not None
+        handle.on_sdk_event(CursorSdkEvent(kind="run.started"))
+        handle.on_sdk_event(_tool_event(call_id="call-1", tool_name="search"))
+        self.assertEqual(handle.outstanding_call_id, "call-1")
+        self.assertEqual(sink.kinds(), ("run.started", "tool.requested"))
 
     def test_start_failure_cleans_up_registration(self) -> None:
         runtime = FakeCursorRuntime()

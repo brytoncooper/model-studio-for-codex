@@ -62,6 +62,19 @@ class NormalizedRunInput:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolDefinition:
+    """Host-authorized function advertisement, distinct from an emitted call."""
+    name: str
+    input_schema: dict[str, Any]
+    host_execution_required: bool
+    description: str | None = None
+
+
+class StoredToolDefinitionsCompatibilityError(ValueError):
+    """Stored tool advertisements cannot be interpreted by this engine version."""
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCallDescriptor:
     call_id: str
     tool_name: str
@@ -76,7 +89,7 @@ class RunRequest:
     idempotency_key: str
     route_snapshot: RouteSnapshot
     input: NormalizedRunInput
-    tools: tuple[ToolCallDescriptor, ...] = ()
+    tools: tuple[ToolDefinition, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +141,7 @@ class StartRunCommand:
     registration_id: str
     route_snapshot: RouteSnapshot
     input: NormalizedRunInput
-    tools: tuple[ToolCallDescriptor, ...] = ()
+    tools: tuple[ToolDefinition, ...] = ()
     authorized_host_context_ref: str | None = None
 
 

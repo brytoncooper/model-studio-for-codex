@@ -22,7 +22,10 @@ only the frozen public B12 run/routing port types it needs
 an immutable, detached `CursorStartRequest` (run id, session id,
 connection id, provider model id, input messages tuple, tools tuple,
 optional continuation handle) carrying deep copies, so later caller
-mutation cannot affect the dispatched request. The route snapshot carries
+mutation cannot affect the dispatched request. The tools tuple carries
+`ToolDefinition` advertisements (name, nested input schema,
+host-execution flag, optional description) detached to the runtime seam,
+distinct from emitted tool-call IDs. The route snapshot carries
 no continuation handle today, so the adapter leaves that field unset for
 the later real-SDK binding to fill.
 

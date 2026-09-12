@@ -33,12 +33,12 @@ live in `python/src/model_deck/adapters/events/live_replay.py` and use the
 ### Records and commands
 
 - `RunRequest` — `run_id`, `session_id`, `client_request_id`, `idempotency_key`,
-  `route_snapshot`, `NormalizedRunInput`, and a tuple of `ToolCallDescriptor`.
+  `route_snapshot`, `NormalizedRunInput`, and a tuple of `ToolDefinition`.
 - `RunRecord` — `run_id`, `session_id`, `state`, `client_request_id`,
   `registration_id`, `route_snapshot`, `principal_id`,
   `authorized_host_context_ref`, optional `terminal_result`, `last_sequence`.
-- `NormalizedRunInput` and `ToolCallDescriptor` carry the messages and tool
-  descriptors for a run start.
+- `NormalizedRunInput` and `ToolDefinition` carry messages and advertised function
+  definitions for a run start. `ToolCallDescriptor` describes a later emitted call.
 - `RunAdmissionKey` — `principal_id`, `operation_id`, `idempotency_key`.
 - `StartRunCommand` — `admission_key`, `request_hash`, `session_id`,
   `client_request_id`, `registration_id`, `route_snapshot`, `input`, `tools`,
@@ -205,3 +205,29 @@ Unix socket with the deterministic provider fixture.
 - `recovery_after_restart` is the only supported recovery flow. Process-level
   supervisor behavior, graceful shutdown, or restart-time configuration reload
   belong outside this package.
+
+### Tool definitions: unreleased v1 correction
+
+The original unreleased branch incorrectly admitted tool calls as run-start
+advertisements, contrary to the existing `authorized_tool` vocabulary. Start
+now accepts name, optional description, object `input_schema`, and explicit
+`host_execution_required`. Names are nonempty, unique and at most 128 characters.
+Schemas are finite bounded JSON, validated offline as Draft 2020-12. External
+references and external base IDs are rejected; local fragment references are
+allowed. This does not execute tools or grant host authority.
+
+`tool_definitions.py` owns parsing and detached wire encoding. The public
+`model_deck_contracts.validate_tool_input_schema` helper owns offline JSON Schema
+validation and returns a detached dictionary; only the contracts package imports
+the schema library. The provider gets
+`ToolDefinition`, while emitted calls retain call IDs, names and arguments.
+Definition content participates in admission hashing and durable recovery.
+SQLite stores `tools_json` as `{schema_version: 1, definitions: [...]}`. Legacy
+empty arrays remain readable as no definitions. Legacy nonempty arrays and
+unknown versions raise `StoredToolDefinitionsCompatibilityError`; recovery
+rolls back without changing state or dispatching them. No arguments-to-schema
+conversion or live database migration is attempted.
+
+Extend focused port, admission and SQLite tests when changing these rules.
+Schema resources must be regenerated from canonical contracts and checked for
+byte equality. Provider-specific conversion belongs in provider adapters.

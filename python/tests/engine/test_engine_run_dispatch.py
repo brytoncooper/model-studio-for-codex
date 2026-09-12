@@ -464,3 +464,230 @@ class EngineRunDispatchTests(unittest.TestCase):
                 enable_application_state=False,
                 enable_fixture_runs=True,
             )
+
+
+from model_deck_contracts.validator import SchemaValidationError, validate_schema_ref
+
+
+class ToolAdmissionIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temps: list[tempfile.TemporaryDirectory[str]] = []
+
+    def tearDown(self) -> None:
+        for td in self._temps:
+            td.cleanup()
+
+    def _temp_dir(self) -> Path:
+        td = tempfile.TemporaryDirectory()
+        self._temps.append(td)
+        return Path(td.name)
+
+    def _start_fixture_runtime(self):
+        root = repo_root()
+        state = self._temp_dir()
+        artifact = self._temp_dir()
+        socket_root = self._temp_dir()
+        validate_isolated_roots(state, artifact, socket_root, source_root=root)
+        runtime = build_engine_server(
+            state_root=state,
+            artifact_root=artifact,
+            socket_root=socket_root,
+            legacy_agents_dir=FIXTURES / "legacy_agent",
+            default_connection_id=CONNECTION_ID,
+            source_root=root,
+            enable_application_state=True,
+            enable_fixture_runs=True,
+        )
+        runtime.server.start()
+        self.addCleanup(runtime.server.stop)
+        return runtime
+
+    def _authenticated_session(self, runtime, client, credential, client_name=CLIENT_NAME):
+        from model_deck.adapters.transport.rendezvous import load_rendezvous_file as _load
+        descriptor = _load(runtime.rendezvous_path)
+        session = client.session()
+        session.__enter__()
+        self.addCleanup(session.__exit__, None, None, None)
+        response = session.call(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "engine.v1.hello",
+                "params": {
+                    "client_name": client_name,
+                    "offered_api": {"major": 1, "minor": 0},
+                    "authentication": {
+                        "engine_instance_id": descriptor.engine_instance_id,
+                        "instance_nonce": descriptor.instance_nonce,
+                        "credential": credential,
+                    },
+                },
+            }
+        )
+        self.assertTrue(response["result"]["authenticated"])
+        return session
+
+    def _provision_session(self, session):
+        session.call(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "engine.v1.connections.save",
+                "params": {
+                    "expected_revision": 0,
+                    "idempotency_key": "conn-tools",
+                    "connection": {
+                        "connection_id": CONNECTION_ID,
+                        "provider_id": DETERMINISTIC_PROVIDER_ID,
+                    },
+                },
+            }
+        )
+        registration_id = session.call(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "engine.v1.models.register",
+                "params": {
+                    "connection_id": CONNECTION_ID,
+                    "provider_model_id": "fixture/model",
+                    "display_name": "Fixture Model",
+                    "expected_revision": 0,
+                    "idempotency_key": "model-tools",
+                },
+            }
+        )["result"]["model"]["registration_id"]
+        session_id = session.call(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "engine.v1.sessions.create",
+                "params": {"registration_id": registration_id},
+            }
+        )["result"]["session_id"]
+        return registration_id, session_id
+
+    def test_old_call_advertisement_shape_rejected_before_dispatch(self) -> None:
+        runtime = self._start_fixture_runtime()
+        credential = runtime.enrollment.credential_path.read_text(encoding="utf-8").strip()
+        client = UnixSocketEngineClient(load_rendezvous_file(runtime.rendezvous_path).socket_path)
+        session = self._authenticated_session(runtime, client, credential)
+        registration_id, session_id = self._provision_session(session)
+        rejected = session.call(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "engine.v1.runs.start",
+                "params": {
+                    "session_id": session_id,
+                    "client_request_id": "client-1",
+                    "idempotency_key": "run-old-shape",
+                    "registration_id": registration_id,
+                    "tools": [
+                        {
+                            "call_id": "c1",
+                            "tool_name": "search",
+                            "arguments": {},
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertIn("error", rejected)
+        self.assertEqual(rejected["error"]["code"], -32602)
+        retried = session.call(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "engine.v1.runs.start",
+                "params": {
+                    "session_id": session_id,
+                    "client_request_id": "client-1",
+                    "idempotency_key": "run-old-shape",
+                    "registration_id": registration_id,
+                },
+            }
+        )
+        self.assertIn("result", retried)
+        self.assertEqual(retried["result"]["run"]["state"], "completed")
+
+    def test_valid_tool_advertisement_passes_schema_gate(self) -> None:
+        runtime = self._start_fixture_runtime()
+        credential = runtime.enrollment.credential_path.read_text(encoding="utf-8").strip()
+        client = UnixSocketEngineClient(load_rendezvous_file(runtime.rendezvous_path).socket_path)
+        session = self._authenticated_session(runtime, client, credential)
+        registration_id, session_id = self._provision_session(session)
+        response = session.call(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "engine.v1.runs.start",
+                "params": {
+                    "session_id": session_id,
+                    "client_request_id": "client-1",
+                    "idempotency_key": "run-valid-tools",
+                    "registration_id": registration_id,
+                    "tools": [
+                        {
+                            "name": "search",
+                            "description": "Search the docs",
+                            "input_schema": {"type": "object"},
+                            "host_execution_required": True,
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertIn("error", response)
+        self.assertNotEqual(response["error"]["code"], -32602)
+        self.assertEqual(response["error"]["data"]["code"], "unsupported_capability")
+        without_description = session.call(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "engine.v1.runs.start",
+                "params": {
+                    "session_id": session_id,
+                    "client_request_id": "client-2",
+                    "idempotency_key": "run-valid-tools-nodesc",
+                    "registration_id": registration_id,
+                    "tools": [
+                        {
+                            "name": "search",
+                            "input_schema": {"type": "object"},
+                            "host_execution_required": False,
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertIn("error", without_description)
+        self.assertNotEqual(without_description["error"]["code"], -32602)
+        self.assertEqual(without_description["error"]["data"]["code"], "unsupported_capability")
+
+    def test_emitted_tool_call_shape_stays_valid_and_distinct(self) -> None:
+        validate_schema_ref(
+            "contracts/engine.v1/vocabulary.schema.json#/definitions/tool_call",
+            {"call_id": "call-1", "tool_name": "search", "arguments": {"q": "contracts"}},
+        )
+        with self.assertRaises(SchemaValidationError):
+            validate_schema_ref(
+                "contracts/engine.v1/vocabulary.schema.json#/definitions/tool_call",
+                {
+                    "name": "search",
+                    "description": "Search the docs",
+                    "input_schema": {"type": "object"},
+                    "host_execution_required": True,
+                },
+            )
+        with self.assertRaises(SchemaValidationError):
+            validate_schema_ref(
+                "contracts/engine.v1/methods/runs.start.params.schema.json",
+                {
+                    "session_id": "550e8400-e29b-41d4-a716-446655440003",
+                    "client_request_id": "client-1",
+                    "idempotency_key": "idem-1",
+                    "registration_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "tools": [{"call_id": "c1", "tool_name": "search", "arguments": {}}],
+                },
+            )

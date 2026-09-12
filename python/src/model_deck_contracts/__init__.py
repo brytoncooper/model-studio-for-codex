@@ -1,3 +1,4 @@
+from model_deck_contracts.tool_schema import validate_tool_input_schema
 
 from model_deck_contracts.inventory import iter_inventory_methods, load_inventory
 from model_deck_contracts.json_util import canonical_json_bytes, canonical_json_equal
@@ -44,6 +45,7 @@ from model_deck_contracts.wire_types import (
 )
 
 __all__ = [
+    "validate_tool_input_schema",
     "ApiVersion",
     "ApplicationPaths",
     "AtomicFileWriter",

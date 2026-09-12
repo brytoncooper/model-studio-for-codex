@@ -172,3 +172,20 @@ Private provider methods on the authenticated activation channel:
 Optional discovery and compaction ports are separately versioned descriptors; a provider need not implement them to generate text. Provider runs are not generic plugin background jobs: engine owns their lifecycle, tool states, accounting and billed-dispatch semantics. Unexpected provider worker exit marks its affected runs interrupted without automatic billed resubmission.
 
 B18 owns both this proxy binding and an external archive containing a deterministic provider. Install it through the fixture harness, register/select its model through the same model-library flow, exercise text/tools/cancel/errors, and run the same ProviderExecution conformance cases used for built-ins. Fixtures verify foreign connection credentials and another activation's run handles are refused. B20 later proves production archive lifecycle using the same package; B23 documents authoring. No private engine import or per-provider routing branch may be added to pass this proof.
+
+### Unreleased v1 tool advertisement correction
+
+`runs.start.tools` uses the existing `authorized_tool` vocabulary: name, optional
+description, object input JSON Schema and explicit host_execution_required.
+These are advertised definitions, not `ToolCall` instances. The latter retain
+call IDs and arguments for emitted requests and outstanding host results.
+Admission rejects duplicate/empty names, nonfinite or oversized JSON, invalid
+Draft 2020-12 schemas and external schema references/base IDs, without network
+resolution. Local fragment references are allowed. Host authorization remains
+separate from the descriptor flag.
+
+This corrects the inconsistent, unreleased Architecture v1 freeze; it is not a
+compatible change to an already deployed profile. No live version migration is
+authorized. Durable definition payloads have explicit schema_version 1; legacy
+nonempty call arrays require compatibility handling and are never interpreted
+as schemas. Empty legacy arrays remain empty definitions.

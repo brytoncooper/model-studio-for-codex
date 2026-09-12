@@ -47,7 +47,8 @@ from model_deck.engine.runs.ports import (
     TERMINAL_RUN_STATES,
     TerminalOutcome,
     TerminalResult,
-    ToolCallDescriptor,
+    ToolDefinition,
+    StoredToolDefinitionsCompatibilityError,
     ToolCallNotOutstandingError,
     ToolResultIdempotencyConflictError,
 )
@@ -60,6 +61,8 @@ from model_deck.engine.sessions.ports import (
     SessionRecord,
     SessionRevisionConflictError,
 )
+
+from model_deck.engine.runs.tool_definitions import parse_tool_definitions, tool_definitions_to_wire
 
 _EVENT_SCHEMA_VERSION = 1
 _ACTIVE_RUN_STATES: frozenset[str] = frozenset(
@@ -973,31 +976,23 @@ def _deserialize_input(payload: str) -> NormalizedRunInput:
     return NormalizedRunInput(messages=tuple(messages))
 
 
-def _serialize_tools(tools: tuple[ToolCallDescriptor, ...]) -> str:
-    return _canonical_json(
-        [
-            {
-                "call_id": tool.call_id,
-                "tool_name": tool.tool_name,
-                "arguments": tool.arguments,
-            }
-            for tool in tools
-        ]
-    )
+def _serialize_tools(tools: tuple[ToolDefinition, ...]) -> str:
+    definitions = tool_definitions_to_wire(tools)
+    parse_tool_definitions(definitions)
+    return _canonical_json({"schema_version": 1, "definitions": definitions})
 
 
-def _deserialize_tools(payload: str) -> tuple[ToolCallDescriptor, ...]:
-    data = json.loads(payload)
-    if not isinstance(data, list):
-        raise ValueError("invalid stored tools")
-    return tuple(
-        ToolCallDescriptor(
-            call_id=item["call_id"],
-            tool_name=item["tool_name"],
-            arguments=item.get("arguments"),
-        )
-        for item in data
-    )
+def _deserialize_tools(payload: str) -> tuple[ToolDefinition, ...]:
+    try:
+        data = json.loads(payload)
+        if data == []:
+            return ()
+        if (not isinstance(data, dict) or set(data) != {"schema_version", "definitions"}
+                or type(data["schema_version"]) is not int or data["schema_version"] != 1):
+            raise ValueError("unsupported stored tool shape")
+        return parse_tool_definitions(data["definitions"])
+    except (ValueError, TypeError, RecursionError):
+        raise StoredToolDefinitionsCompatibilityError("stored tool definitions require explicit compatibility handling") from None
 
 
 def _serialize_continuation(scope: ContinuationScope | None) -> str | None:

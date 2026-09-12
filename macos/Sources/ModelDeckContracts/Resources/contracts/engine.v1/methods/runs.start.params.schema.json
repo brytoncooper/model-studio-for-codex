@@ -39,7 +39,7 @@
     "tools": {
       "type": "array",
       "items": {
-        "$ref": "../vocabulary.schema.json#/definitions/tool_call"
+        "$ref": "../vocabulary.schema.json#/definitions/authorized_tool"
       },
       "maxItems": 128
     },

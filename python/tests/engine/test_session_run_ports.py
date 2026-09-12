@@ -50,7 +50,7 @@ from model_deck.engine.runs.ports import (
     TERMINAL_RUN_STATES,
     TerminalOutcome,
     TerminalResult,
-    ToolCallDescriptor,
+    ToolDefinition,
 )
 from model_deck.engine.sessions.ports import (
     CreateSessionCommand,
@@ -223,7 +223,7 @@ class SessionRunPortsContractTests(unittest.TestCase):
             registration_id=REGISTRATION_ID,
             route_snapshot=_route_snapshot(),
             input=NormalizedRunInput(messages=("plain-string-message",)),
-            tools=(ToolCallDescriptor(call_id="c1", tool_name="search", arguments={"q": 1}),),
+            tools=(ToolDefinition(name="search", input_schema={"type": "object", "properties": {"q": {"type": "integer"}}}, host_execution_required=True),),
             authorized_host_context_ref=HOST_CTX,
         )
         self.assertIsNone(repo.lookup_admission(key, "hash-1"))
@@ -450,3 +450,29 @@ class SessionRunPortsContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolDefinitionValidationTests(unittest.TestCase):
+    def test_definition_detaches_and_allows_local_schema(self):
+        from model_deck.engine.runs.tool_definitions import parse_tool_definitions, tool_definitions_to_wire
+        schema = {"$defs": {"q": {"type": "string"}}, "type": "object", "properties": {"q": {"$ref": "#/$defs/q"}}}
+        tools = parse_tool_definitions([{"name": "search", "description": "Search", "input_schema": schema, "host_execution_required": True}])
+        schema["properties"].clear()
+        self.assertIn("q", tools[0].input_schema["properties"])
+        encoded = tool_definitions_to_wire(tools)
+        encoded[0]["input_schema"]["properties"].clear()
+        self.assertIn("q", tools[0].input_schema["properties"])
+
+    def test_invalid_definitions_reject_offline(self):
+        from model_deck.engine.runs.tool_definitions import parse_tool_definitions
+        good = {"name": "search", "input_schema": {}, "host_execution_required": True}
+        invalid = [None, [{"call_id": "c", "tool_name": "search", "arguments": {}}], [good, good]]
+        for field, values in {"name": ["", "x"*129, 1], "description": [None, "x"*4097],
+                              "host_execution_required": [1, None],
+                              "input_schema": [None, [], True, {"type": "bogus"}, {"minimum": float("nan")},
+                                               {"$ref": "https://invalid.example/schema"}, {"$ref": "file:///fixture"},
+                                               {"$id": "https://invalid.example/", "$ref": "#x"}]}.items():
+            invalid.extend([{**good, field: value}] for value in values)
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                parse_tool_definitions(value)

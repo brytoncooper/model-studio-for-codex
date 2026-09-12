@@ -22,6 +22,7 @@ from model_deck.engine.runs.ports import (
     RunRequest,
     SubmitToolResultProviderOutcome,
     SubmitToolResultProviderResult,
+    ToolDefinition,
 )
 
 CURSOR_PROVIDER_ID = "com.modeldeck.provider.cursor"
@@ -362,7 +363,7 @@ class CursorStartRequest:
     connection_id: str
     provider_model_id: str
     input_messages: tuple[Any, ...] = ()
-    tools: tuple[Any, ...] = ()
+    tools: tuple[ToolDefinition, ...] = ()
     continuation_handle: str | None = None
 
 

@@ -444,3 +444,46 @@ class DeterministicProviderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from model_deck.engine.runs.ports import ToolDefinition
+
+
+class ToolDefinitionCarryTests(unittest.TestCase):
+    def test_advertised_definitions_reach_provider_start_intact(self) -> None:
+        definitions = (
+            ToolDefinition(
+                name="search",
+                input_schema={"type": "object"},
+                host_execution_required=True,
+                description="Search the docs",
+            ),
+        )
+        provider = DeterministicProviderExecutionPort(script=(EmitTerminalCompleted(),))
+        sink = RecordingSink()
+        request = _run_request(tools=definitions)
+        provider.start(request, sink)
+        recorded = provider.recorded_request(RUN_ID)
+        self.assertEqual(recorded.tools, definitions)
+        carried = recorded.tools[0]
+        self.assertEqual(carried.name, "search")
+        self.assertEqual(carried.description, "Search the docs")
+        self.assertEqual(carried.input_schema, {"type": "object"})
+        self.assertIs(carried.host_execution_required, True)
+
+    def test_emitted_tool_call_uses_call_shape_not_advertisement_shape(self) -> None:
+        script = (
+            EmitToolRequested("call-1", "search", {"q": "contracts"}),
+            EmitTerminalCompleted(),
+        )
+        handle, sink = _start(script)
+        handle.emit_next()
+        self.assertEqual(sink.events[0].kind, "tool.requested")
+        tool_call = sink.events[0].payload["tool_call"]
+        self.assertEqual(
+            tool_call,
+            {"call_id": "call-1", "tool_name": "search", "arguments": {"q": "contracts"}},
+        )
+        self.assertNotIn("input_schema", tool_call)
+        self.assertNotIn("host_execution_required", tool_call)
+        self.assertNotIn("name", tool_call)

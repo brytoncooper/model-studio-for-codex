@@ -123,6 +123,10 @@
     {
       "file": "hosts_settings_secret_entry_configured.json",
       "schema": "contracts/common/host_settings.schema.json#/definitions/field_descriptor"
+    },
+    {
+      "file": "runs_start_tool_definition.json",
+      "schema": "contracts/engine.v1/methods/runs.start.params.schema.json"
     }
   ],
   "invalid": [
@@ -249,6 +253,18 @@
     {
       "file": "hosts_settings_secret_entry_values.json",
       "schema": "contracts/common/host_settings.schema.json#/definitions/field_descriptor"
+    },
+    {
+      "file": "runs_start_call_advertisement.json",
+      "schema": "contracts/engine.v1/methods/runs.start.params.schema.json"
+    },
+    {
+      "file": "runs_start_scalar_schema.json",
+      "schema": "contracts/engine.v1/methods/runs.start.params.schema.json"
+    },
+    {
+      "file": "runs_start_empty_name.json",
+      "schema": "contracts/engine.v1/methods/runs.start.params.schema.json"
     }
   ]
 }

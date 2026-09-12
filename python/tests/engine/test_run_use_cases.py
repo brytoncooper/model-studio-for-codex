@@ -681,10 +681,24 @@ class RunUseCaseTests(unittest.TestCase):
             )
         self.assertEqual(len(runs.admit_calls), 0)
 
+    def test_tool_definition_changes_conflict_without_redispatch(self):
+        runs, _, _, provider, _, start = self._build()
+        first = {"name": "search", "input_schema": {"type": "object"}, "host_execution_required": True}
+        kwargs = {"principal_id": PRINCIPAL_ID, "authorized_host_context_ref": HOST_CTX}
+        original = start.execute(_start_params(tools=[first]), **kwargs)
+        replay = start.execute(_start_params(tools=[first]), **kwargs)
+        self.assertEqual(original["run"]["run_id"], replay["run"]["run_id"])
+        for changes in ({"description": "new"}, {"input_schema": {"type": "object", "required": ["q"]}},
+                        {"host_execution_required": False}):
+            with self.assertRaises(RunAdmissionRequestHashConflictError):
+                start.execute(_start_params(tools=[{**first, **changes}]), **kwargs)
+        self.assertEqual(len(runs.admit_calls), 1)
+        self.assertEqual(len(runs.claim_calls), 1)
+
     def test_tools_require_supported_capability_at_route_resolve(self) -> None:
         _, _, routes, _, _, start = self._build()
         start.execute(
-            _start_params(tools=[{"call_id": "c1", "tool_name": "t", "arguments": {}}]),
+            _start_params(tools=[{"name": "t", "input_schema": {"type": "object"}, "host_execution_required": True}]),
             principal_id=PRINCIPAL_ID,
             authorized_host_context_ref=HOST_CTX,
         )
@@ -902,7 +916,7 @@ class RunUseCaseTests(unittest.TestCase):
         routes.error = UnsupportedCapabilityError("tools unsupported")
         with self.assertRaises(UnsupportedCapabilityError):
             start.execute(
-                _start_params(tools=[{"call_id": "c1", "tool_name": "t", "arguments": {}}]),
+                _start_params(tools=[{"name": "t", "input_schema": {"type": "object"}, "host_execution_required": True}]),
                 principal_id=PRINCIPAL_ID,
                 authorized_host_context_ref=HOST_CTX,
             )

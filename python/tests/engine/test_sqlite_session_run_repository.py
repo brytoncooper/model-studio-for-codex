@@ -35,7 +35,7 @@ from model_deck.engine.runs.ports import (
     SubmitToolResultCommand,
     TerminalOutcome,
     TerminalResult,
-    ToolCallDescriptor,
+    ToolDefinition,
     ToolCallNotOutstandingError,
     ToolResultIdempotencyConflictError,
     RunAuthorizationMismatchError,
@@ -127,7 +127,7 @@ def _start_command(**overrides: Any) -> StartRunCommand:
         "registration_id": REGISTRATION_ID,
         "route_snapshot": _route_snapshot(),
         "input": NormalizedRunInput(messages=({"role": "user", "content": "hi"},)),
-        "tools": (ToolCallDescriptor(call_id="c1", tool_name="search", arguments={"q": 1}),),
+        "tools": (ToolDefinition(name="search", input_schema={"type": "object", "properties": {"q": {"type": "integer"}}}, host_execution_required=True),),
         "authorized_host_context_ref": HOST_CTX,
     }
     base.update(overrides)
@@ -135,6 +135,30 @@ def _start_command(**overrides: Any) -> StartRunCommand:
 
 
 class SQLiteSessionRunRepositoryTests(unittest.TestCase):
+    def test_tools_storage_version_and_legacy_recovery_rejection(self):
+        import json
+        from model_deck.engine.runs import StoredToolDefinitionsCompatibilityError
+        with TemporaryDirectory() as temp_dir:
+            repo = _repo(temp_dir)
+            _create_session(repo)
+            repo.admit(_start_command())
+            path = Path(temp_dir) / "state.sqlite3"
+            with sqlite3.connect(path) as conn:
+                payload = json.loads(conn.execute("SELECT tools_json FROM runs").fetchone()[0])
+                self.assertEqual(payload["schema_version"], 1)
+                self.assertEqual(payload["definitions"][0]["name"], "search")
+                legacy = '[{"call_id":"c1","tool_name":"search","arguments":{}}]'
+                conn.execute("UPDATE runs SET tools_json = ?", (legacy,))
+            with sqlite3.connect(path) as conn:
+                before = list(conn.iterdump())
+            with self.assertRaises(StoredToolDefinitionsCompatibilityError):
+                _repo(temp_dir).recover_after_restart("2026-01-01T00:01:00Z")
+            with sqlite3.connect(path) as conn:
+                self.assertEqual(list(conn.iterdump()), before)
+                conn.execute("UPDATE runs SET tools_json = '[]'")
+            recovery = _repo(temp_dir).recover_after_restart("2026-01-01T00:01:00Z")
+            self.assertEqual(recovery.dispatchable_requests[0].tools, ())
+
     def test_session_create_get_and_select_model_cas(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo = _repo(temp_dir)
@@ -245,6 +269,7 @@ class SQLiteSessionRunRepositoryTests(unittest.TestCase):
             self.assertEqual(len(recovery.dispatchable_requests), 1)
             request = recovery.dispatchable_requests[0]
             self.assertEqual(request.route_snapshot.provider_model_id, "provider/captured-model")
+            self.assertEqual(request.tools, _start_command().tools)
 
     def test_claim_dispatch_is_single_use(self) -> None:
         with TemporaryDirectory() as temp_dir:

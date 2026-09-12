@@ -881,14 +881,19 @@
       "properties": {
         "name": {
           "type": "string",
-          "maxLength": 128
+          "maxLength": 128,
+          "minLength": 1
         },
         "description": {
           "type": "string",
           "maxLength": 4096
         },
         "input_schema": {
-          "$ref": "../common/types.schema.json#/definitions/json_value"
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "../common/types.schema.json#/definitions/json_value"
+          },
+          "description": "Finite Draft 2020-12 JSON Schema object; admission validates schema offline and rejects external references."
         },
         "host_execution_required": {
           "type": "boolean"

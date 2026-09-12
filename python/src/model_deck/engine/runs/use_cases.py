@@ -46,9 +46,10 @@ from model_deck.engine.runs.ports import (
     TERMINAL_RUN_STATES,
     TerminalOutcome,
     TerminalResult,
-    ToolCallDescriptor,
+    ToolDefinition,
     ToolResultIdempotencyConflictError,
 )
+from model_deck.engine.runs.tool_definitions import parse_tool_definitions, tool_definitions_to_wire
 from model_deck.engine.sessions.ports import GetSessionCommand, SessionRepository
 
 _RUNS_START_OPERATION = "engine.v1.runs.start"
@@ -234,18 +235,11 @@ def _validate_json_value(name: str, value: Any) -> Any:
 
 def _validate_run_input_tools_payload_size(
     input_block: NormalizedRunInput,
-    tools: tuple[ToolCallDescriptor, ...],
+    tools: tuple[ToolDefinition, ...],
 ) -> None:
     payload = {
         "input": {"messages": list(input_block.messages)},
-        "tools": [
-            {
-                "call_id": tool.call_id,
-                "tool_name": tool.tool_name,
-                "arguments": tool.arguments,
-            }
-            for tool in tools
-        ],
+        "tools": tool_definitions_to_wire(tools),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(encoded) > _MAX_RUN_INPUT_TOOLS_PAYLOAD:
@@ -267,35 +261,8 @@ def _validate_input_block(value: Any) -> NormalizedRunInput:
     return NormalizedRunInput(messages=normalized)
 
 
-def _validate_tools_block(value: Any) -> tuple[ToolCallDescriptor, ...]:
-    if not isinstance(value, list):
-        raise ValueError("tools must be an array")
-    if len(value) > _MAX_TOOLS:
-        raise ValueError("tools must contain at most 128 items")
-    tools: list[ToolCallDescriptor] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, dict):
-            raise ValueError(f"tools[{index}] must be an object")
-        _reject_unknown_keys(
-            item,
-            frozenset({"call_id", "tool_name", "arguments"}),
-            context=f"tools[{index}]",
-        )
-        call_id = _validate_bounded_string(
-            f"tools[{index}].call_id",
-            item.get("call_id"),
-            max_length=_MAX_TOOL_FIELD,
-        )
-        tool_name = _validate_bounded_string(
-            f"tools[{index}].tool_name",
-            item.get("tool_name"),
-            max_length=_MAX_TOOL_FIELD,
-        )
-        if "arguments" not in item:
-            raise ValueError(f"tools[{index}].arguments is required")
-        arguments = _validate_json_value(f"tools[{index}].arguments", item["arguments"])
-        tools.append(ToolCallDescriptor(call_id=call_id, tool_name=tool_name, arguments=arguments))
-    return tuple(tools)
+def _validate_tools_block(value: Any) -> tuple[ToolDefinition, ...]:
+    return parse_tool_definitions(value)
 
 
 def _validate_start_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -352,14 +319,7 @@ def _request_hash_from_start(validated: dict[str, Any]) -> str:
         "idempotency_key": validated["idempotency_key"],
         "registration_id": validated["registration_id"],
         "input": {"messages": list(validated["input"].messages)},
-        "tools": [
-            {
-                "call_id": tool.call_id,
-                "tool_name": tool.tool_name,
-                "arguments": tool.arguments,
-            }
-            for tool in validated["tools"]
-        ],
+        "tools": tool_definitions_to_wire(validated["tools"]),
     }
     if validated["capability_snapshot_ref"] is not None:
         payload["capability_snapshot_ref"] = validated["capability_snapshot_ref"]
@@ -656,7 +616,7 @@ class StartRunUseCase:
         *,
         idempotency_key: str,
         normalized_input: NormalizedRunInput,
-        tools: tuple[ToolCallDescriptor, ...],
+        tools: tuple[ToolDefinition, ...],
     ) -> RunRecord:
         run = admission.run
         claimed = self._runs.claim_dispatch(
