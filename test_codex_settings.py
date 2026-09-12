@@ -10,6 +10,37 @@ import codex_settings as settings
 
 
 class SettingsTests(unittest.TestCase):
+    def test_cursor_sdk_status_and_install_are_explicit_and_preserve_config(self):
+        self.config.write_text('model = "gpt-6-astra"\n')
+        original = self.config.read_bytes()
+        with patch("cursor_sdk_runtime.status", return_value={"ok": True, "installed": False}) as status, \
+                patch("cursor_sdk_runtime.install", return_value={"ok": True, "installed": True}) as install:
+            self.assertFalse(self.call("cursor_status")["installed"])
+            install.assert_not_called()
+            self.assertTrue(self.call("install_cursor_sdk")["installed"])
+            status.assert_called_once()
+            install.assert_called_once()
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertFalse(self.state.exists())
+
+    def test_cursor_catalog_uses_saved_helper_and_sanitizes_errors(self):
+        from subprocess import CompletedProcess
+        fields = {"account": "bd3f9c00-03df-4dab-af64-3231575887a0", "executable": "/Applications/Helper"}
+        with patch.object(settings.subprocess, "run", return_value=CompletedProcess([], 0, "secret-token\n")) as run, \
+                patch("cursor_sdk_runtime.list_models", return_value={"ok": True, "models": [{"id": "cursor/auto", "name": "Auto"}]}) as models:
+            result = self.call("cursor_models", **fields)
+            models.assert_called_once_with("secret-token")
+            self.assertEqual(run.call_args.args[0], [fields["executable"], "--token", fields["account"]])
+            self.assertNotIn("secret-token", json.dumps(result))
+            models.side_effect = RuntimeError("secret-token")
+            with self.assertRaisesRegex(settings.SettingsError, "Cursor SDK operation failed") as caught:
+                self.call("cursor_models", **fields)
+            self.assertNotIn("secret-token", str(caught.exception))
+        with patch.object(settings.subprocess, "run") as run:
+            with self.assertRaises(settings.SettingsError):
+                self.call("cursor_models", account="bad", executable="relative")
+            run.assert_not_called()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -191,18 +222,91 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(provider["auth"]["timeout_ms"], 5000)
         self.assertEqual(provider["auth"]["refresh_interval_ms"], 300000)
 
-    def test_register_is_idempotent_and_updates_key_account(self):
+    def test_register_is_idempotent_and_refuses_silent_connection_changes(self):
         result = self.register()
         path = Path(result["agent_path"])
         first = path.read_bytes()
-        self.assertEqual(self.register()["agent_name"], result["agent_name"])
+        repeated = self.register()
+        self.assertEqual(repeated["agent_name"], result["agent_name"])
+        self.assertTrue(repeated["already_registered"])
         self.assertEqual(path.read_bytes(), first)
         replacement = "019f11a1-04d2-799b-ae83-d76f94a51796"
-        self.register(account=replacement, effort="medium")
-        agent = tomlkit.parse(path.read_text())
-        self.assertEqual(agent["model_providers"][settings.PROVIDER]["auth"]["args"][1], replacement)
-        self.assertEqual(agent["model_reasoning_effort"], "medium")
+        for fields in ({"account": replacement, "effort": "medium"},
+                       {"base_url": "https://api.deepseek.com"},
+                       {"base_url": "http://localhost:8080/v1", "account": None}):
+            with self.assertRaisesRegex(settings.SettingsError, "another connection"):
+                self.register(**fields)
+            self.assertEqual(path.read_bytes(), first)
         self.assertFalse(self.config.exists())
+
+    def saved_catalog_connection(self, keyed=True):
+        self.state.mkdir(exist_ok=True)
+        account = "bd3f9c00-03df-4dab-af64-3231575887a0"
+        url = "https://api.deepseek.com"
+        preferences = {"accounts": [{"id": account, "name": "DeepSeek", "baseURL": url,
+                                      "wire": "chat", "hasKey": keyed}]}
+        (self.state / "preferences.json").write_text(json.dumps(preferences))
+        return {"account": account, "base_url": url, "wire": "chat", "has_key": keyed,
+                "executable": "/Applications/Model Deck.app/Contents/MacOS/ModelDeck"}
+
+    def test_same_connection_refreshes_relocated_credential_command_only(self):
+        path = Path(self.register(effort="high")["agent_path"])
+        moved = "/Applications/Model Deck.app/Contents/MacOS/ModelDeck"
+        self.assertTrue(self.register(executable=moved, effort="medium")["already_registered"])
+        agent = tomlkit.parse(path.read_text())
+        self.assertEqual(agent["model_providers"][settings.PROVIDER]["auth"]["command"], moved)
+        self.assertEqual(agent["model_reasoning_effort"], "high")
+
+    def test_same_connection_refuses_invalid_registered_provider(self):
+        path = Path(self.register()["agent_path"])
+        agent = tomlkit.parse(path.read_text())
+        agent["model_providers"][settings.PROVIDER]["wire_api"] = "chat"
+        original = tomlkit.dumps(agent)
+        path.write_text(original)
+        with self.assertRaisesRegex(settings.SettingsError, "existing model connection is invalid"):
+            self.register()
+        self.assertEqual(path.read_text(), original)
+
+    def test_endpoint_catalog_uses_only_the_matching_saved_connection(self):
+        from subprocess import CompletedProcess
+        fields = self.saved_catalog_connection()
+        fixture = {"models": [{"id": "deepseek-flash", "name": "DeepSeek Flash"}],
+                   "source": "remote", "verified": True, "note": "Catalog only"}
+        with patch.object(settings.subprocess, "run", return_value=CompletedProcess([], 0, "fixture-secret\n")) as run, \
+                patch("provider_connections.fetch_endpoint_models", return_value=fixture) as fetch:
+            result = self.call("endpoint_models", **fields)
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["models"], fixture["models"])
+            fetch.assert_called_once_with(fields["base_url"], key="fixture-secret")
+            self.assertEqual(run.call_args.args[0], [fields["executable"], "--token", fields["account"]])
+            self.assertNotIn("fixture-secret", json.dumps(result))
+        self.assertFalse(self.config.exists())
+
+    def test_endpoint_catalog_rejects_changed_destination_before_reading_key(self):
+        fields = self.saved_catalog_connection()
+        with patch.object(settings.subprocess, "run") as run, \
+                patch("provider_connections.fetch_endpoint_models") as fetch:
+            for changed in ({"base_url": "https://example.org"}, {"wire": "responses"},
+                            {"has_key": False}, {"account": "019f11a1-04d2-799b-ae83-d76f94a51796"}):
+                with self.assertRaises(settings.SettingsError):
+                    self.call("endpoint_models", **dict(fields, **changed))
+            run.assert_not_called()
+            fetch.assert_not_called()
+
+    def test_endpoint_catalog_keyless_and_sanitized_failures(self):
+        from subprocess import CompletedProcess
+        fields = self.saved_catalog_connection(keyed=False)
+        with patch.object(settings.subprocess, "run") as run, \
+                patch("provider_connections.fetch_endpoint_models", return_value={"models": []}) as fetch:
+            self.assertTrue(self.call("endpoint_models", **fields)["ok"])
+            run.assert_not_called()
+            fetch.assert_called_once_with(fields["base_url"], key=None)
+        fields = self.saved_catalog_connection(keyed=True)
+        with patch.object(settings.subprocess, "run", return_value=CompletedProcess([], 0, "fixture-secret")), \
+                patch("provider_connections.fetch_endpoint_models", side_effect=RuntimeError("fixture-secret")):
+            with self.assertRaises(settings.SettingsError) as caught:
+                self.call("endpoint_models", **fields)
+            self.assertNotIn("fixture-secret", str(caught.exception))
 
     def test_register_refuses_unowned_collision_and_symlink(self):
         result = self.register()
