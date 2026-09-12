@@ -32,9 +32,53 @@ class ArchitectureGraphTests(unittest.TestCase):
         self.assertEqual(layer_for_module("model_deck").value, "bootstrap")
         self.assertEqual(layer_for_module("model_deck.cli.main").value, "bootstrap")
         self.assertEqual(layer_for_module("model_deck.cli_like").value, "unknown")
+        self.assertEqual(layer_for_module("model_deck.plugins").value, "plugin_runtime")
+        self.assertEqual(layer_for_module("model_deck.plugins.process_runtime.runtime").value, "plugin_runtime")
+        self.assertEqual(layer_for_module("model_deck.plugins_like").value, "unknown")
+        self.assertEqual(layer_for_module("model_deck_plugin.notebook.panel").value, "plugin")
+        self.assertEqual(layer_for_module("model_deck_sdk.client").value, "plugin")
 
 
 class ArchitectureCheckerFixtureTests(unittest.TestCase):
+    def test_plugin_runtime_uses_public_contracts_and_owned_infrastructure(self):
+        checker, result = self._check_fixture(
+            "positive/plugin_runtime_public_imports.py", "model_deck.plugins.process_runtime.runtime"
+        )
+        self.assertEqual(checker.failing_violations(result), ())
+
+    def test_bootstrap_can_compose_plugin_runtime(self):
+        checker, result = self._check_fixture(
+            "positive/bootstrap_imports_plugin_runtime.py", "model_deck.bootstrap.composition"
+        )
+        self.assertEqual(checker.failing_violations(result), ())
+
+    def test_core_and_external_plugins_cannot_import_plugin_runtime(self):
+        for module in (
+            "model_deck.kernel.registry",
+            "model_deck.engine.plugin_authority.service",
+            "model_deck_plugin.notebook.panel",
+            "model_deck_sdk.client",
+        ):
+            with self.subTest(module=module):
+                checker, result = self._check_fixture("negative/imports_plugin_runtime.py", module)
+                self.assertIn("layer_import", {v.rule_id for v in checker.failing_violations(result)})
+
+    def test_plugin_runtime_cannot_import_host_or_provider(self):
+        for fixture in (
+            "negative/plugin_runtime_imports_host.py",
+            "negative/plugin_runtime_imports_provider.py",
+        ):
+            with self.subTest(fixture=fixture):
+                checker, result = self._check_fixture(fixture, "model_deck.plugins.process_runtime.runtime")
+                self.assertIn("layer_import", {v.rule_id for v in checker.failing_violations(result)})
+
+    def test_plugin_runtime_cannot_import_private_engine_modules_or_symbols(self):
+        checker, result = self._check_fixture(
+            "negative/plugin_runtime_imports_private_engine.py", "model_deck.plugins.process_runtime.runtime"
+        )
+        private_lines = {v.line for v in checker.failing_violations(result) if v.rule_id == "private_import"}
+        self.assertEqual(private_lines, {1, 2})
+
     def test_cli_can_select_bootstrap(self):
         checker, result = self._check_fixture(
             "positive/cli_composition.py", "model_deck.cli.main"

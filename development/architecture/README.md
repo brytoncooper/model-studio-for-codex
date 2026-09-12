@@ -35,6 +35,14 @@ Optional flags:
 | integrations/providers/hosts/clients | contracts, engine, same integration family |
 | bootstrap | concrete implementations across layers |
 | plugins | contracts and plugin SDK surface only |
+| plugin runtime (`model_deck.plugins`) | contracts, public engine, own runtime infrastructure |
+
+`model_deck.plugins` is first-party supervision and package-lifecycle infrastructure,
+distinct from external `model_deck_plugin` and `model_deck_sdk` consumers. Bootstrap
+may compose this runtime. Kernel, engine and external plugin/SDK modules cannot
+import it; the runtime cannot import host/provider implementations or private
+engine modules/symbols. Public here follows the checker's existing Python
+underscore-private convention; it is not a separate published API allowlist.
 
 Additional rules:
 

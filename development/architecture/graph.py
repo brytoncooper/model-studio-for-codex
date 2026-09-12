@@ -15,6 +15,7 @@ class Layer(str, Enum):
     CLIENTS = "clients"
     BOOTSTRAP = "bootstrap"
     PLUGIN = "plugin"
+    PLUGIN_RUNTIME = "plugin_runtime"
     LEGACY_BASELINE = "legacy_baseline"
     UNKNOWN = "unknown"
 
@@ -29,6 +30,7 @@ HOSTS_PREFIX = "model_deck.integrations.hosts"
 CLIENTS_PREFIX = "model_deck.integrations.clients"
 BOOTSTRAP_PREFIX = "model_deck.bootstrap"
 PLUGIN_PREFIXES = ("model_deck_plugin.", "model_deck_sdk.")
+PLUGIN_RUNTIME_PREFIX = "model_deck.plugins"
 
 
 @dataclass(frozen=True)
@@ -57,9 +59,11 @@ ALLOWED_LAYER_IMPORTS: dict[Layer, frozenset[Layer]] = {
             Layer.HOSTS,
             Layer.CLIENTS,
             Layer.BOOTSTRAP,
+            Layer.PLUGIN_RUNTIME,
         }
     ),
     Layer.PLUGIN: frozenset({Layer.CONTRACTS, Layer.PLUGIN}),
+    Layer.PLUGIN_RUNTIME: frozenset({Layer.CONTRACTS, Layer.ENGINE, Layer.PLUGIN_RUNTIME}),
     Layer.LEGACY_BASELINE: frozenset({Layer.LEGACY_BASELINE, Layer.CONTRACTS}),
     Layer.UNKNOWN: frozenset({Layer.UNKNOWN}),
 }
@@ -85,6 +89,8 @@ def layer_for_module(module_name: str) -> Layer:
     for prefix in PLUGIN_PREFIXES:
         if name == prefix.rstrip(".") or name.startswith(prefix):
             return Layer.PLUGIN
+    if name == PLUGIN_RUNTIME_PREFIX or name.startswith(PLUGIN_RUNTIME_PREFIX + "."):
+        return Layer.PLUGIN_RUNTIME
     if name == "model_deck_contracts" or name.startswith(CONTRACTS_PREFIXES[0]):
         return Layer.CONTRACTS
     if name == KERNEL_PREFIX or name.startswith(KERNEL_PREFIX + "."):

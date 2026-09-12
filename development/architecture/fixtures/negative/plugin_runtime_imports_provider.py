@@ -1,0 +1,1 @@
+from model_deck.integrations.providers.openai_compatible import HttpProvider

@@ -23,7 +23,7 @@ commit counts or the number of task headings.
 | B00 Isolation | Guards and isolated worktree tooling written | Supported staged packaging and artifact checks |
 | B01 Contracts | Shared schemas, resources and language clients written; tool contract corrected | Complete cross-language gate at current revision |
 | B02 Headless model library | CLI/socket/model read path integrated | Record full current G2 acceptance |
-| B03 Architecture enforcement | Checker written; full scan found 45 plugin-runtime classification errors | Classify first-party runtime correctly and prove negative boundaries |
+| B03 Architecture enforcement | Runtime classification repaired; parent verified 30 checker tests and full 156-file graph with zero findings | Keep graph gate current as integrations land |
 | B04 Swift packaging | Native library targets extracted | Staged executable/assets/helper verification |
 | B05 Models client | Typed client/presenter and app model path wired | Complete cross-language UI acceptance |
 | B06 MCP | Read adapter written | Wire real entrypoint and available mutations |
@@ -62,8 +62,12 @@ These retain the inspection revision and distinguish evidence from missing work.
 | `a143b51` | Immutable plugin artifact staging | 24 focused tests plus independent cleanup/replacement probes accepted. Failure before filesystem identity is established may leave an empty staging directory; no unknown replacement is deleted. |
 | `3551838` | Codex settings-file persistence | Parent: 45 document/file tests, 8 subtests passed. Independent descriptor, backup and failure probes reviewed. Engine bootstrap composition remains in progress. |
 
-The first three commits above were confirmed pushed. `3551838` was committed
-at this snapshot; subsequent push status must be verified separately.
+All four commits above, plus the initial checklist `193e016`, were confirmed pushed.
+
+Architecture follow-up: first-party plugin runtime has its own layer. Parent
+verified 30 checker tests and the complete 156-file product scan with zero errors
+or warnings. Core and external plugin/SDK imports of runtime remain forbidden;
+new negative fixtures also reject runtime imports of hosts/providers/private core.
 
 ## Current independent work
 
@@ -71,7 +75,7 @@ at this snapshot; subsequent push status must be verified separately.
 - Real settings-file service composition through authenticated engine requests.
 - Bidirectional external provider process channel.
 - Engine usage recording from genuine run/session identities.
-- Architecture runtime classification and negative-boundary checks.
+- Independent usage-recording review and external provider proxy implementation.
 
 The source audit exposed real missing integration and verification work. Earlier
 conversation percentages were estimates, not a measured delivery baseline; this
