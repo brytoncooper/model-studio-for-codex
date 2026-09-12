@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/sessions.select_model.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "registration_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "expected_revision": {
+      "$ref": "../../common/types.schema.json#/definitions/revision"
+    },
+    "continuation_reset": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "session_id",
+    "registration_id",
+    "expected_revision"
+  ]
+}

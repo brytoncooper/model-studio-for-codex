@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/operations.invoke.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "operation": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "input": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
+    },
+    "idempotency_key": {
+      "$ref": "../../common/types.schema.json#/definitions/idempotency_key"
+    }
+  },
+  "required": [
+    "operation",
+    "input",
+    "idempotency_key"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/extensions.disable.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "extension_id": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "expected_revision": {
+      "$ref": "../../common/types.schema.json#/definitions/revision"
+    }
+  },
+  "required": [
+    "extension_id",
+    "expected_revision"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/lifecycle/heartbeat.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "activation_id": {
+      "$ref": "../../common/types.schema.json#/definitions/uuid"
+    }
+  },
+  "required": [
+    "activation_id"
+  ]
+}

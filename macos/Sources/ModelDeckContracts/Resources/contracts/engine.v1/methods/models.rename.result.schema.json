@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/models.rename.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "model": {
+      "$ref": "../vocabulary.schema.json#/definitions/registered_model"
+    }
+  },
+  "required": [
+    "model"
+  ]
+}

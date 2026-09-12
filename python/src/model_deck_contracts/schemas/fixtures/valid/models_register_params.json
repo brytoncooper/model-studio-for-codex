@@ -1,0 +1,7 @@
+{
+  "connection_id": "550e8400-e29b-41d4-a716-446655440002",
+  "provider_model_id": "openrouter/foo/bar",
+  "display_name": "Foo",
+  "expected_revision": 0,
+  "idempotency_key": "register-1"
+}

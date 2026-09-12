@@ -1,0 +1,13 @@
+{
+  "name": "search",
+  "description": "Search docs",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "q": {
+        "type": "string"
+      }
+    }
+  },
+  "host_execution_required": true
+}

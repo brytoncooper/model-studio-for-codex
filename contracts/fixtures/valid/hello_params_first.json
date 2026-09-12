@@ -1,0 +1,10 @@
+{
+  "client_name": "model-deck-cli",
+  "offered_api": {
+    "major": 1,
+    "minor": 0
+  },
+  "required_capabilities": [
+    "tools"
+  ]
+}

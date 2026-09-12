@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/ports/owned_process_supervisor.schema.json",
+  "title": "owned_process_supervisor",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "child_handle": {
+      "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+    },
+    "deadline_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60000
+    }
+  },
+  "required": [
+    "child_handle"
+  ]
+}

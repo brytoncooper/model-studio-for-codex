@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/security/client_principal.schema.json",
+  "title": "ClientPrincipal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "principal_id",
+    "role",
+    "engine_instance_id",
+    "revocation_generation"
+  ],
+  "properties": {
+    "principal_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Opaque principal identity; never a secret or API key"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "local_operator",
+        "host_session",
+        "plugin_activation"
+      ]
+    },
+    "engine_instance_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "audience": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "grants": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "maxItems": 256
+    },
+    "expires_at": {
+      "$ref": "../common/types.schema.json#/definitions/iso8601"
+    },
+    "revocation_generation": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/attachments.write_chunk.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "attachment_handle": {
+      "$ref": "../../common/types.schema.json#/definitions/opaque_ref"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "data_base64": {
+      "type": "string",
+      "maxLength": 1400000
+    }
+  },
+  "required": [
+    "attachment_handle",
+    "sequence",
+    "data_base64"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/connections.test.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "connection_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "connection_id"
+  ]
+}

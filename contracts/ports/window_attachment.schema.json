@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/ports/window_attachment.schema.json",
+  "title": "window_attachment",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "window_handle": {
+      "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+    },
+    "session_id": {
+      "$ref": "../common/types.schema.json#/definitions/uuid"
+    }
+  },
+  "required": [
+    "window_handle"
+  ]
+}

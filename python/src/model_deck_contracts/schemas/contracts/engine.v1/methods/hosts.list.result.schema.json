@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/hosts.list.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "hosts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "host_id": {
+            "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+          },
+          "api_profile": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      },
+      "maxItems": 32
+    }
+  },
+  "required": [
+    "hosts"
+  ]
+}

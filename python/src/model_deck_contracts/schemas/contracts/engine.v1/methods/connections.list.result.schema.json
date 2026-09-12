@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/connections.list.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "connections": {
+      "type": "array",
+      "items": {
+        "$ref": "../vocabulary.schema.json#/definitions/connection_ref"
+      },
+      "maxItems": 256
+    }
+  },
+  "required": [
+    "connections"
+  ]
+}

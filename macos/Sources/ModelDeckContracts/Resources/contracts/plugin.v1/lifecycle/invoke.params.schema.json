@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/lifecycle/invoke.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "input": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
+    }
+  },
+  "required": [
+    "operation_id",
+    "input"
+  ]
+}

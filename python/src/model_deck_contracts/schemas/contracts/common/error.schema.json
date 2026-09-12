@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/common/error.schema.json",
+  "title": "Domain error payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "retryable"
+  ],
+  "properties": {
+    "code": {
+      "$ref": "types.schema.json#/definitions/domain_error_code"
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 2048
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "request_id": {
+      "type": "string",
+      "maxLength": 64
+    }
+  }
+}

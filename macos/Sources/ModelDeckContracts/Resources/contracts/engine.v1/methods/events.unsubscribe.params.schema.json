@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/events.unsubscribe.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "subscription_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "subscription_id"
+  ]
+}

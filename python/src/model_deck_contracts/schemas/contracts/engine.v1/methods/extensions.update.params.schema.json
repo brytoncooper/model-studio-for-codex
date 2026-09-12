@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/extensions.update.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "extension_id": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "archive_path": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "idempotency_key": {
+      "$ref": "../../common/types.schema.json#/definitions/idempotency_key"
+    }
+  },
+  "required": [
+    "extension_id",
+    "archive_path",
+    "idempotency_key"
+  ]
+}

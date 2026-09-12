@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/attachments.begin.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "attachment_handle": {
+      "$ref": "../../common/types.schema.json#/definitions/opaque_ref"
+    }
+  },
+  "required": [
+    "attachment_handle"
+  ]
+}

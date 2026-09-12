@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/sessions.select_model.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "revision": {
+      "$ref": "../../common/types.schema.json#/definitions/revision"
+    }
+  },
+  "required": [
+    "session_id",
+    "revision"
+  ]
+}

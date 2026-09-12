@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/extensions.install.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "archive_path": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "idempotency_key": {
+      "$ref": "../../common/types.schema.json#/definitions/idempotency_key"
+    }
+  },
+  "required": [
+    "archive_path",
+    "idempotency_key"
+  ]
+}

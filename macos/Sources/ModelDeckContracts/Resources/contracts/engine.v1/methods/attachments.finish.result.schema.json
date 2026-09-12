@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/attachments.finish.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "attachment_handle": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "length": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "attachment_handle",
+    "length"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/provider/start.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_request": {
+      "$ref": "../../engine.v1/vocabulary.schema.json#/definitions/run_request"
+    },
+    "route_snapshot": {
+      "$ref": "../../engine.v1/vocabulary.schema.json#/definitions/route_snapshot"
+    },
+    "continuation_scope": {
+      "$ref": "../../engine.v1/vocabulary.schema.json#/definitions/continuation_scope"
+    }
+  },
+  "required": [
+    "run_request",
+    "route_snapshot"
+  ]
+}

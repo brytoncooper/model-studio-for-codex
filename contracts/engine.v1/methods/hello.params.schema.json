@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/hello.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "client_name",
+    "offered_api"
+  ],
+  "properties": {
+    "client_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "offered_api": {
+      "$ref": "../../common/types.schema.json#/definitions/api_version"
+    },
+    "required_capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "../../common/types.schema.json#/definitions/capability_feature_id"
+      },
+      "maxItems": 64
+    },
+    "authentication": {
+      "$ref": "../../common/types.schema.json#/definitions/hello_authentication"
+    }
+  }
+}

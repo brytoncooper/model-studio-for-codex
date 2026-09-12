@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/ports/local_transport.schema.json",
+  "title": "local_transport",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "rendezvous_id": {
+      "$ref": "../common/types.schema.json#/definitions/uuid"
+    },
+    "max_frame_bytes": {
+      "type": "integer",
+      "const": 1048576
+    }
+  },
+  "required": [
+    "rendezvous_id"
+  ]
+}

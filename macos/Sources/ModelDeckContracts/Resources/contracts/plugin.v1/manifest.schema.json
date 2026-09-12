@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/manifest.schema.json",
+  "title": "Plugin manifest (manifest.json)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "id",
+    "version",
+    "plugin_api",
+    "entrypoint"
+  ],
+  "properties": {
+    "manifest_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "id": {
+      "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-zA-Z0-9.]+)?$"
+    },
+    "plugin_api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "major",
+        "minimum_minor"
+      ],
+      "properties": {
+        "major": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minimum_minor": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime",
+        "path"
+      ],
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "enum": [
+            "python",
+            "node"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^[^/\\\\][^\\\\0]*$",
+          "maxLength": 256
+        }
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 64
+      },
+      "maxItems": 64
+    },
+    "contributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/operation_contribution"
+          },
+          "maxItems": 128
+        },
+        "panels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/panel_contribution"
+          },
+          "maxItems": 64
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/provider_contribution"
+          },
+          "maxItems": 32
+        }
+      }
+    }
+  },
+  "definitions": {
+    "operation_contribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "input_schema",
+        "output_schema",
+        "effect"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+        },
+        "input_schema": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "output_schema": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "effect": {
+          "type": "string",
+          "enum": [
+            "read",
+            "write"
+          ]
+        }
+      }
+    },
+    "panel_contribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schema"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+        },
+        "schema": {
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
+    "provider_contribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "port",
+        "execution_mode"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+        },
+        "port": {
+          "type": "string",
+          "const": "provider.execution/v1"
+        },
+        "execution_mode": {
+          "type": "string",
+          "enum": [
+            "chat_completions",
+            "responses",
+            "custom"
+          ]
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "tools",
+              "catalog",
+              "compaction",
+              "resume"
+            ]
+          },
+          "maxItems": 8
+        }
+      }
+    }
+  }
+}

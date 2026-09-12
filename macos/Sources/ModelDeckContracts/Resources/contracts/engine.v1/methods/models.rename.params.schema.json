@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/models.rename.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "registration_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "display_name": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "expected_revision": {
+      "$ref": "../../common/types.schema.json#/definitions/revision"
+    },
+    "idempotency_key": {
+      "$ref": "../../common/types.schema.json#/definitions/idempotency_key"
+    }
+  },
+  "required": [
+    "registration_id",
+    "display_name",
+    "idempotency_key",
+    "expected_revision"
+  ]
+}

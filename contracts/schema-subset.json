@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Permitted JSON Schema keywords for Model Deck contracts",
+  "allowed_keywords": [
+    "$id",
+    "$ref",
+    "$schema",
+    "additionalProperties",
+    "allOf",
+    "const",
+    "default",
+    "definitions",
+    "description",
+    "enum",
+    "format",
+    "items",
+    "maxItems",
+    "maxLength",
+    "maxProperties",
+    "maximum",
+    "minItems",
+    "minLength",
+    "minimum",
+    "not",
+    "oneOf",
+    "pattern",
+    "properties",
+    "required",
+    "title",
+    "type"
+  ],
+  "allowed_formats": [
+    "uuid",
+    "date-time",
+    "uri"
+  ],
+  "ref_root": "contracts",
+  "forbidden_additionalProperties_boolean": true
+}

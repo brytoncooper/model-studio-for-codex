@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/attachments.read_chunk.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "attachment_handle": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "attachment_handle",
+    "sequence"
+  ]
+}

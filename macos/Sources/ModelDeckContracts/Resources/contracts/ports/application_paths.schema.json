@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/ports/application_paths.schema.json",
+  "title": "application_paths",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "state_root": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "artifacts_root": {
+      "type": "string",
+      "maxLength": 512
+    }
+  },
+  "required": [
+    "state_root",
+    "artifacts_root"
+  ]
+}

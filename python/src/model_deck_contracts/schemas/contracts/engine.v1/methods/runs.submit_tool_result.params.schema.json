@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/runs.submit_tool_result.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "call_id": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "result": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
+    },
+    "idempotency_key": {
+      "$ref": "../../common/types.schema.json#/definitions/idempotency_key"
+    }
+  },
+  "required": [
+    "run_id",
+    "call_id",
+    "result",
+    "idempotency_key"
+  ]
+}

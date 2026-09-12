@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/runs.cancel.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "type": "boolean"
+    },
+    "state": {
+      "$ref": "../../common/types.schema.json#/definitions/run_state"
+    }
+  },
+  "required": [
+    "accepted"
+  ]
+}

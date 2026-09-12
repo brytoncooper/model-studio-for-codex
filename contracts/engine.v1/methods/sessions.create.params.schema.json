@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/sessions.create.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "registration_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "host_context_ref": {
+      "type": "string",
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "registration_id"
+  ]
+}

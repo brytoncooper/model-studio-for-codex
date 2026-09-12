@@ -1,0 +1,6 @@
+{
+  "registration_id": "550e8400-e29b-41d4-a716-446655440003",
+  "display_name": "Foo Renamed",
+  "expected_revision": 1,
+  "idempotency_key": "rename-1"
+}

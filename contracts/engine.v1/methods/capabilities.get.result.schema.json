@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/capabilities.get.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "features": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "../../common/types.schema.json#/definitions/capability_tri_state"
+          },
+          "maxProperties": 256
+        }
+      }
+    }
+  },
+  "required": [
+    "capabilities"
+  ]
+}

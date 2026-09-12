@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/attachments.begin.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "owner_kind": {
+      "type": "string",
+      "enum": [
+        "run",
+        "invocation",
+        "plugin"
+      ]
+    },
+    "owner_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "content_type": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "max_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 104857600
+    }
+  },
+  "required": [
+    "owner_kind",
+    "owner_id",
+    "content_type",
+    "max_bytes"
+  ]
+}

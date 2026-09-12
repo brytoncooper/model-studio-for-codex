@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/lifecycle/hello.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "plugin_id": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "plugin_version": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 64
+      },
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "plugin_id",
+    "plugin_version"
+  ]
+}

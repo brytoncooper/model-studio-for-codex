@@ -1,0 +1,13 @@
+{
+  "connection_id": "550e8400-e29b-41d4-a716-446655440002",
+  "registration_id": "550e8400-e29b-41d4-a716-446655440003",
+  "provider_id": "com.example.provider",
+  "provider_model_id": "provider/model-1",
+  "execution_mode": "responses",
+  "capabilities": {
+    "features": {
+      "tools": "supported"
+    }
+  },
+  "endpoint_config_ref": "550e8400-e29b-41d4-a716-446655440004"
+}

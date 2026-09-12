@@ -1,0 +1,8 @@
+{
+  "client_name": "cli",
+  "offered_api": {
+    "major": 1,
+    "minor": 0
+  },
+  "role": "local_operator"
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/extensions.list.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "extensions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "extension_id": {
+            "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "maxItems": 256
+    }
+  },
+  "required": [
+    "extensions"
+  ]
+}

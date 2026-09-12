@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/connections.list.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}

@@ -1,0 +1,158 @@
+{
+  "valid": [
+    {
+      "file": "jsonrpc_request.json",
+      "schema": "contracts/common/jsonrpc.schema.json#/definitions/request"
+    },
+    {
+      "file": "domain_error.json",
+      "schema": "contracts/common/error.schema.json"
+    },
+    {
+      "file": "tool_call.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/tool_call"
+    },
+    {
+      "file": "run_event_completed.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/run_event_run_completed"
+    },
+    {
+      "file": "manifest_minimal.json",
+      "schema": "contracts/plugin.v1/manifest.schema.json"
+    },
+    {
+      "file": "model_list_item_registered.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/model_list_item_registered"
+    },
+    {
+      "file": "model_list_item_catalog.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/model_list_item_catalog"
+    },
+    {
+      "file": "capability_features_unknown.json",
+      "schema": "contracts/engine.v1/methods/capabilities.get.result.schema.json"
+    },
+    {
+      "file": "run_request_minimal.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/run_request"
+    },
+    {
+      "file": "authorized_tool_minimal.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/authorized_tool"
+    },
+    {
+      "file": "route_snapshot_minimal.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/route_snapshot"
+    },
+    {
+      "file": "provider_start_minimal.json",
+      "schema": "contracts/plugin.v1/provider/start.params.schema.json"
+    },
+    {
+      "file": "content_delta_text.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/run_event_content_delta"
+    },
+    {
+      "file": "hello_params_first.json",
+      "schema": "contracts/engine.v1/methods/hello.params.schema.json"
+    },
+    {
+      "file": "hello_params_authenticated.json",
+      "schema": "contracts/engine.v1/methods/hello.params.schema.json"
+    },
+    {
+      "file": "hello_result_unauthenticated.json",
+      "schema": "contracts/engine.v1/methods/hello.result.schema.json"
+    },
+    {
+      "file": "hello_result_authenticated.json",
+      "schema": "contracts/engine.v1/methods/hello.result.schema.json"
+    },
+    {
+      "file": "models_register_params.json",
+      "schema": "contracts/engine.v1/methods/models.register.params.schema.json"
+    },
+    {
+      "file": "models_rename_params.json",
+      "schema": "contracts/engine.v1/methods/models.rename.params.schema.json"
+    },
+    {
+      "file": "models_remove_params.json",
+      "schema": "contracts/engine.v1/methods/models.remove.params.schema.json"
+    },
+    {
+      "file": "connections_save_params.json",
+      "schema": "contracts/engine.v1/methods/connections.save.params.schema.json"
+    },
+    {
+      "file": "registered_model_minimal.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/registered_model"
+    }
+  ],
+  "invalid": [
+    {
+      "file": "models_list_unknown_field.json",
+      "schema": "contracts/engine.v1/methods/models.list.params.schema.json"
+    },
+    {
+      "file": "secret_in_opaque_ref.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/connection_ref"
+    },
+    {
+      "file": "model_list_catalog_with_registration_id.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/model_list_item"
+    },
+    {
+      "file": "capability_tri_state_denied.json",
+      "schema": "contracts/engine.v1/methods/capabilities.get.result.schema.json"
+    },
+    {
+      "file": "hello_params_unknown_field.json",
+      "schema": "contracts/engine.v1/methods/hello.params.schema.json"
+    },
+    {
+      "file": "content_delta_missing_channel.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/run_event_content_delta"
+    },
+    {
+      "file": "hello_params_offered_api_major_zero.json",
+      "schema": "contracts/engine.v1/methods/hello.params.schema.json"
+    },
+    {
+      "file": "hello_params_missing_client_name.json",
+      "schema": "contracts/engine.v1/methods/hello.params.schema.json"
+    },
+    {
+      "file": "hello_params_caller_role.json",
+      "schema": "contracts/engine.v1/methods/hello.params.schema.json"
+    },
+    {
+      "file": "hello_result_missing_authenticated.json",
+      "schema": "contracts/engine.v1/methods/hello.result.schema.json"
+    },
+    {
+      "file": "model_list_item_registered_missing_revision.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/model_list_item_registered"
+    },
+    {
+      "file": "models_rename_missing_expected_revision.json",
+      "schema": "contracts/engine.v1/methods/models.rename.params.schema.json"
+    },
+    {
+      "file": "models_remove_missing_expected_revision.json",
+      "schema": "contracts/engine.v1/methods/models.remove.params.schema.json"
+    },
+    {
+      "file": "models_register_missing_expected_revision.json",
+      "schema": "contracts/engine.v1/methods/models.register.params.schema.json"
+    },
+    {
+      "file": "connections_save_missing_expected_revision.json",
+      "schema": "contracts/engine.v1/methods/connections.save.params.schema.json"
+    },
+    {
+      "file": "connections_save_ambiguous_connection_revision.json",
+      "schema": "contracts/engine.v1/methods/connections.save.params.schema.json"
+    }
+  ]
+}

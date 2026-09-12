@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/attachments.finish.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "attachment_handle": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "checksum_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "required": [
+    "attachment_handle",
+    "checksum_sha256"
+  ]
+}

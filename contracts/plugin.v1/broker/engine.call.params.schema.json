@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/engine.call.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "invocation_handle": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "operation_id": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "input": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
+    }
+  },
+  "required": [
+    "invocation_handle",
+    "operation_id",
+    "input"
+  ]
+}

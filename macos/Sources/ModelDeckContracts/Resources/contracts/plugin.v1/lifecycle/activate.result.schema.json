@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/lifecycle/activate.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "activation_id": {
+      "$ref": "../../common/types.schema.json#/definitions/uuid"
+    },
+    "invocation_handle_prefix": {
+      "type": "string",
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "activation_id"
+  ]
+}

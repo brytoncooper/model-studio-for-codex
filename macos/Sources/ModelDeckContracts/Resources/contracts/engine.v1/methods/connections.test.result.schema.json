@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/connections.test.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reachable": {
+      "type": "boolean"
+    },
+    "diagnostic": {
+      "type": "string",
+      "maxLength": 512
+    }
+  },
+  "required": [
+    "reachable"
+  ]
+}

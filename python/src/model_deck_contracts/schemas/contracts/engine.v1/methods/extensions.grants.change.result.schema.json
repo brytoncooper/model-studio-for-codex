@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/extensions.grants.change.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "approved_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 64
+      },
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "approved_scopes"
+  ]
+}

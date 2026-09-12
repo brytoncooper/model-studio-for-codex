@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/security/invocation_context.schema.json",
+  "title": "InvocationContext",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "invocation_id",
+    "origin_principal_id",
+    "actor_plugin_id",
+    "operation_id",
+    "allowed_effects",
+    "deadline",
+    "revocation_generation"
+  ],
+  "properties": {
+    "invocation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "invocation_handle": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Opaque broker handle; supervisor resolves to full context"
+    },
+    "origin_principal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "actor_plugin_id": {
+      "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "operation_id": {
+      "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "allowed_effects": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write",
+          "network",
+          "credential_resolve"
+        ]
+      },
+      "maxItems": 32
+    },
+    "resource_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "maxItems": 64
+    },
+    "deadline": {
+      "$ref": "../common/types.schema.json#/definitions/iso8601"
+    },
+    "revocation_generation": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

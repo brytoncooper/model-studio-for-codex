@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/jobs.create.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "invocation_handle": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "operation_id": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "checkpoint_schema_id": {
+      "type": "string",
+      "maxLength": 256
+    }
+  },
+  "required": [
+    "invocation_handle",
+    "operation_id"
+  ]
+}

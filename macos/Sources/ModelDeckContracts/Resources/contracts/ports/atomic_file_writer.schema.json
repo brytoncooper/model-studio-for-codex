@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/ports/atomic_file_writer.schema.json",
+  "title": "atomic_file_writer",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "target_path": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "expected_revision": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "target_path"
+  ]
+}

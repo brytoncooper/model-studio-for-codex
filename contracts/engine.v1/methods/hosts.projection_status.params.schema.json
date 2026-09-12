@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/hosts.projection_status.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "host_id": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    }
+  },
+  "required": [
+    "host_id"
+  ]
+}

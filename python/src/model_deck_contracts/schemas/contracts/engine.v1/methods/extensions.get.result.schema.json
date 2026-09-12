@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/extensions.get.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "extension_id": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "installed",
+        "enabled",
+        "disabled",
+        "failed"
+      ]
+    },
+    "version": {
+      "type": "string",
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "extension_id",
+    "status"
+  ]
+}

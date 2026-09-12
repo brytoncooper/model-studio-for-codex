@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/extensions.inspect.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "archive_path": {
+      "type": "string",
+      "maxLength": 512,
+      "description": "Operator-supplied path; plugins cannot supply arbitrary paths"
+    }
+  },
+  "required": [
+    "archive_path"
+  ]
+}

@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/common/types.schema.json",
+  "title": "Shared wire types",
+  "definitions": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "iso8601": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reverse_domain_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$",
+      "minLength": 3,
+      "maxLength": 256
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "capability_tri_state": {
+      "type": "string",
+      "enum": [
+        "supported",
+        "unsupported",
+        "unknown"
+      ],
+      "description": "Capability knowledge state; authorization denial is domain_error capability_denied, not this tri-state"
+    },
+    "run_state": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "running",
+        "waiting_for_tool",
+        "cancelling",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    "domain_error_code": {
+      "type": "string",
+      "enum": [
+        "invalid_argument",
+        "unsupported_capability",
+        "capability_denied",
+        "not_found",
+        "conflict",
+        "version_mismatch",
+        "provider_unavailable",
+        "plugin_unavailable",
+        "rate_limited",
+        "deadline_exceeded",
+        "interrupted",
+        "resume_unavailable",
+        "resource_exhausted",
+        "projection_pending",
+        "internal"
+      ]
+    },
+    "opaque_ref": {
+      "description": "Opaque engine reference; never raw secret or API key material",
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "uuid"
+        },
+        {
+          "type": "string",
+          "pattern": "^ref:[a-z][a-z0-9._-]{0,120}$",
+          "maxLength": 128
+        }
+      ]
+    },
+    "json_value": {
+      "description": "Bounded arbitrary JSON for tool args, operation I/O validated against registered schemas at dispatch",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/definitions/json_value"
+          }
+        },
+        {
+          "type": "object",
+          "maxProperties": 1024,
+          "additionalProperties": {
+            "$ref": "#/definitions/json_value"
+          }
+        }
+      ]
+    },
+    "enrollment_payload_handle": {
+      "description": "Opaque handle to a private operator-only enrollment input channel (B02 adapter); not a credential_ref, not an attachment readable by plugins",
+      "type": "string",
+      "format": "uuid"
+    },
+    "api_version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "major",
+        "minor"
+      ],
+      "properties": {
+        "major": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minor": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "capability_feature_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "instance_enrollment_credential": {
+      "description": "Opaque instance enrollment secret for the authenticated second hello; not a provider API token, credential_ref, or loggable diagnostic field",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "hello_authentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine_instance_id",
+        "instance_nonce",
+        "credential"
+      ],
+      "properties": {
+        "engine_instance_id": {
+          "$ref": "#/definitions/uuid"
+        },
+        "instance_nonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "credential": {
+          "$ref": "#/definitions/instance_enrollment_credential"
+        }
+      }
+    },
+    "engine_capability_features": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "features": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/capability_tri_state"
+          },
+          "maxProperties": 256
+        }
+      },
+      "required": [
+        "features"
+      ]
+    }
+  }
+}

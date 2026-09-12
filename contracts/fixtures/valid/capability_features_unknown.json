@@ -1,0 +1,9 @@
+{
+  "capabilities": {
+    "features": {
+      "tools": "unknown",
+      "compaction": "unsupported",
+      "resume": "supported"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/events.publish.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "invocation_handle": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "topic": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "payload": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "invocation_handle",
+    "topic",
+    "payload",
+    "sequence"
+  ]
+}

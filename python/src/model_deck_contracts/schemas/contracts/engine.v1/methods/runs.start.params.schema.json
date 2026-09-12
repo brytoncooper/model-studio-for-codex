@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/runs.start.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "session_id",
+    "client_request_id",
+    "idempotency_key",
+    "registration_id"
+  ],
+  "properties": {
+    "session_id": {
+      "$ref": "../../common/types.schema.json#/definitions/uuid"
+    },
+    "client_request_id": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "idempotency_key": {
+      "$ref": "../../common/types.schema.json#/definitions/idempotency_key"
+    },
+    "registration_id": {
+      "$ref": "../../common/types.schema.json#/definitions/uuid"
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "../../common/types.schema.json#/definitions/json_value"
+          },
+          "maxItems": 256
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "$ref": "../vocabulary.schema.json#/definitions/tool_call"
+      },
+      "maxItems": 128
+    },
+    "capability_snapshot_ref": {
+      "$ref": "../../common/types.schema.json#/definitions/opaque_ref"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/events.subscribe.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "subscription_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "resume_cursor": {
+      "type": "string",
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "subscription_id"
+  ]
+}

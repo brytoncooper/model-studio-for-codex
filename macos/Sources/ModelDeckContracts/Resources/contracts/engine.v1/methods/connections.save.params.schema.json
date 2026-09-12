@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/connections.save.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "connection": {
+      "$ref": "../vocabulary.schema.json#/definitions/connection_save_input"
+    },
+    "idempotency_key": {
+      "$ref": "../../common/types.schema.json#/definitions/idempotency_key"
+    },
+    "expected_revision": {
+      "$ref": "../../common/types.schema.json#/definitions/revision"
+    }
+  },
+  "required": [
+    "connection",
+    "idempotency_key",
+    "expected_revision"
+  ]
+}

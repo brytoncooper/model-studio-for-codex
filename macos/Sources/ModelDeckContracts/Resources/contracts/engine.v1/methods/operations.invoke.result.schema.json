@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/operations.invoke.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "output": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
+    },
+    "job_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "output"
+  ]
+}

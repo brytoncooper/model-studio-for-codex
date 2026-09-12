@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/storage.put.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "invocation_handle": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "namespace": {
+      "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "key": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "value": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
+    },
+    "expected_revision": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "invocation_handle",
+    "namespace",
+    "key",
+    "value"
+  ]
+}

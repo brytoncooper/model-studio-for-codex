@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/storage.get.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "value": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "value",
+    "revision"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "client_name": "cli",
+  "offered_api": {
+    "major": 0,
+    "minor": 0
+  }
+}

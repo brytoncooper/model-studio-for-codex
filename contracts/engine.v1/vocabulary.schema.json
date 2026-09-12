@@ -1,0 +1,957 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/vocabulary.schema.json",
+  "title": "Application-owned vocabulary",
+  "definitions": {
+    "connection_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_id",
+        "provider_id",
+        "revision"
+      ],
+      "properties": {
+        "connection_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "provider_id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+        },
+        "endpoint_config_ref": {
+          "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+        },
+        "credential_ref": {
+          "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+        },
+        "revision": {
+          "$ref": "../common/types.schema.json#/definitions/revision"
+        }
+      }
+    },
+    "registered_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registration_id",
+        "provider_model_id",
+        "connection_id",
+        "display_name",
+        "revision"
+      ],
+      "properties": {
+        "registration_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Registration identity; not provider_model_id"
+        },
+        "provider_model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "connection_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "display_name": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "capability_snapshot_ref": {
+          "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+        },
+        "revision": {
+          "$ref": "../common/types.schema.json#/definitions/revision"
+        }
+      }
+    },
+    "model_list_item_registered": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "registration_id",
+        "provider_model_id",
+        "connection_id",
+        "display_name",
+        "revision"
+      ],
+      "properties": {
+        "kind": {
+          "const": "registered"
+        },
+        "registration_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "provider_model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "connection_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "display_name": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "revision": {
+          "$ref": "../common/types.schema.json#/definitions/revision"
+        }
+      }
+    },
+    "model_list_item_catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "provider_model_id",
+        "connection_id",
+        "display_name"
+      ],
+      "properties": {
+        "kind": {
+          "const": "catalog"
+        },
+        "provider_model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "connection_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "display_name": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "catalog_revision": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
+    },
+    "model_list_item": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/model_list_item_registered"
+        },
+        {
+          "$ref": "#/definitions/model_list_item_catalog"
+        }
+      ]
+    },
+    "run_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "session_id",
+        "state"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "client_request_id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "state": {
+          "$ref": "../common/types.schema.json#/definitions/run_state"
+        },
+        "terminal_result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "failed",
+                "cancelled",
+                "interrupted"
+              ]
+            },
+            "error": {
+              "$ref": "../common/error.schema.json"
+            }
+          }
+        }
+      }
+    },
+    "tool_call": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "call_id",
+        "tool_name",
+        "arguments"
+      ],
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "tool_name": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "arguments": {
+          "$ref": "../common/types.schema.json#/definitions/json_value"
+        }
+      }
+    },
+    "operation_descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "input_schema_id",
+        "output_schema_id",
+        "effect"
+      ],
+      "properties": {
+        "operation_id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+        },
+        "input_schema_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "output_schema_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "effect": {
+          "type": "string",
+          "enum": [
+            "read",
+            "write"
+          ]
+        },
+        "required_grants": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 32
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "registration_id",
+        "revision"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "registration_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "revision": {
+          "$ref": "../common/types.schema.json#/definitions/revision"
+        },
+        "host_context_ref": {
+          "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+        },
+        "continuation_scope": {
+          "$ref": "#/definitions/continuation_scope"
+        }
+      }
+    },
+    "run_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "client_request_id",
+        "idempotency_key",
+        "registration_id"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid",
+          "description": "Present after admission; omitted on client start params"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "client_request_id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "idempotency_key": {
+          "$ref": "../common/types.schema.json#/definitions/idempotency_key"
+        },
+        "registration_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "messages": {
+              "type": "array",
+              "items": {
+                "$ref": "../common/types.schema.json#/definitions/json_value"
+              },
+              "maxItems": 256
+            }
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/authorized_tool"
+          },
+          "maxItems": 128,
+          "description": "Authorized tool descriptors for this run"
+        }
+      }
+    },
+    "usage_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "session_id",
+        "observed_at",
+        "units",
+        "unit_kind"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "registration_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "connection_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "provider_model_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        },
+        "units": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unit_kind": {
+          "type": "string",
+          "enum": [
+            "input_tokens",
+            "output_tokens",
+            "cached_tokens",
+            "tool_calls",
+            "requests",
+            "other"
+          ]
+        },
+        "settled_amount": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 8
+        },
+        "estimate_amount": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "run_event_run_accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at"
+      ],
+      "properties": {
+        "kind": {
+          "const": "run.accepted"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        }
+      }
+    },
+    "run_event_run_started": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at"
+      ],
+      "properties": {
+        "kind": {
+          "const": "run.started"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        }
+      }
+    },
+    "run_event_content_delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at",
+        "delta",
+        "channel"
+      ],
+      "properties": {
+        "kind": {
+          "const": "content.delta"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        },
+        "delta": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "channel": {
+          "type": "string",
+          "enum": [
+            "text",
+            "reasoning"
+          ]
+        }
+      }
+    },
+    "run_event_tool_requested": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at",
+        "tool_call"
+      ],
+      "properties": {
+        "kind": {
+          "const": "tool.requested"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        },
+        "tool_call": {
+          "$ref": "#/definitions/tool_call"
+        }
+      }
+    },
+    "run_event_usage_observed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at",
+        "usage"
+      ],
+      "properties": {
+        "kind": {
+          "const": "usage.observed"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        },
+        "usage": {
+          "$ref": "#/definitions/usage_record"
+        }
+      }
+    },
+    "run_event_run_cancelling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at"
+      ],
+      "properties": {
+        "kind": {
+          "const": "run.cancelling"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        }
+      }
+    },
+    "run_event_run_completed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at",
+        "terminal_result"
+      ],
+      "properties": {
+        "kind": {
+          "const": "run.completed"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        },
+        "terminal_result": {
+          "$ref": "#/definitions/run_event_terminal_result"
+        }
+      }
+    },
+    "run_event_run_failed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at",
+        "terminal_result"
+      ],
+      "properties": {
+        "kind": {
+          "const": "run.failed"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        },
+        "terminal_result": {
+          "$ref": "#/definitions/run_event_terminal_result"
+        }
+      }
+    },
+    "run_event_run_cancelled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at",
+        "terminal_result"
+      ],
+      "properties": {
+        "kind": {
+          "const": "run.cancelled"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        },
+        "terminal_result": {
+          "$ref": "#/definitions/run_event_terminal_result"
+        }
+      }
+    },
+    "run_event_run_interrupted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "session_id",
+        "sequence",
+        "event_schema_version",
+        "observed_at",
+        "terminal_result"
+      ],
+      "properties": {
+        "kind": {
+          "const": "run.interrupted"
+        },
+        "run_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "session_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601"
+        },
+        "terminal_result": {
+          "$ref": "#/definitions/run_event_terminal_result"
+        }
+      }
+    },
+    "run_event_terminal_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted"
+          ]
+        },
+        "error": {
+          "$ref": "../common/error.schema.json"
+        }
+      }
+    },
+    "application_run_event": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/run_event_run_accepted"
+        },
+        {
+          "$ref": "#/definitions/run_event_run_started"
+        },
+        {
+          "$ref": "#/definitions/run_event_content_delta"
+        },
+        {
+          "$ref": "#/definitions/run_event_tool_requested"
+        },
+        {
+          "$ref": "#/definitions/run_event_usage_observed"
+        },
+        {
+          "$ref": "#/definitions/run_event_run_cancelling"
+        },
+        {
+          "$ref": "#/definitions/run_event_run_completed"
+        },
+        {
+          "$ref": "#/definitions/run_event_run_failed"
+        },
+        {
+          "$ref": "#/definitions/run_event_run_cancelled"
+        },
+        {
+          "$ref": "#/definitions/run_event_run_interrupted"
+        }
+      ]
+    },
+    "route_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_id",
+        "registration_id",
+        "provider_id",
+        "provider_model_id",
+        "execution_mode",
+        "capabilities",
+        "endpoint_config_ref"
+      ],
+      "properties": {
+        "connection_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "registration_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "provider_id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+        },
+        "provider_model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "execution_mode": {
+          "type": "string",
+          "enum": [
+            "chat_completions",
+            "responses",
+            "custom"
+          ]
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "features"
+          ],
+          "properties": {
+            "features": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "../common/types.schema.json#/definitions/capability_tri_state"
+              },
+              "maxProperties": 256
+            }
+          }
+        },
+        "endpoint_config_ref": {
+          "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+        }
+      }
+    },
+    "authorized_tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "input_schema",
+        "host_execution_required"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "input_schema": {
+          "$ref": "../common/types.schema.json#/definitions/json_value"
+        },
+        "host_execution_required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "continuation_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_id",
+        "provider_model_id",
+        "provider_id",
+        "execution_mode",
+        "handle"
+      ],
+      "properties": {
+        "connection_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "provider_model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "provider_id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+        },
+        "execution_mode": {
+          "type": "string",
+          "enum": [
+            "chat_completions",
+            "responses",
+            "custom"
+          ]
+        },
+        "handle": {
+          "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+        }
+      }
+    },
+    "connection_save_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_id",
+        "provider_id"
+      ],
+      "properties": {
+        "connection_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid"
+        },
+        "provider_id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+        },
+        "endpoint_config_ref": {
+          "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+        },
+        "credential_ref": {
+          "$ref": "../common/types.schema.json#/definitions/opaque_ref"
+        }
+      },
+      "description": "Connection fields for connections.save; CAS uses top-level expected_revision, not revision inside this object"
+    }
+  }
+}

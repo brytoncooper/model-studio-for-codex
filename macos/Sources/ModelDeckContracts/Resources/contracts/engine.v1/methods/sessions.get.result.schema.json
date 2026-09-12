@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/sessions.get.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "session"
+  ],
+  "properties": {
+    "session": {
+      "$ref": "../vocabulary.schema.json#/definitions/session"
+    }
+  }
+}

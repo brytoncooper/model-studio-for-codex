@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/attachments.begin.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "invocation_handle": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "content_type": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "max_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 104857600
+    }
+  },
+  "required": [
+    "invocation_handle",
+    "content_type",
+    "max_bytes"
+  ]
+}

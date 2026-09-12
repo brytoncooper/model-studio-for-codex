@@ -1,0 +1,409 @@
+{
+  "cli_namespace": "model-deck",
+  "engine_v1": [
+    {
+      "group": "discovery",
+      "method": "engine.v1.hello",
+      "mutates": false
+    },
+    {
+      "group": "discovery",
+      "method": "engine.v1.health",
+      "mutates": false
+    },
+    {
+      "group": "discovery",
+      "method": "engine.v1.operations.list",
+      "mutates": false
+    },
+    {
+      "group": "discovery",
+      "method": "engine.v1.capabilities.get",
+      "mutates": false
+    },
+    {
+      "group": "model_library",
+      "method": "engine.v1.models.list",
+      "mutates": false
+    },
+    {
+      "group": "model_library",
+      "idempotent": true,
+      "method": "engine.v1.models.register",
+      "mutates": true
+    },
+    {
+      "group": "model_library",
+      "idempotent": true,
+      "method": "engine.v1.models.rename",
+      "mutates": true
+    },
+    {
+      "group": "model_library",
+      "idempotent": true,
+      "method": "engine.v1.models.remove",
+      "mutates": true
+    },
+    {
+      "group": "connections",
+      "method": "engine.v1.connections.list",
+      "mutates": false
+    },
+    {
+      "group": "connections",
+      "idempotent": true,
+      "method": "engine.v1.connections.save",
+      "mutates": true
+    },
+    {
+      "group": "connections",
+      "method": "engine.v1.connections.test",
+      "mutates": false
+    },
+    {
+      "group": "sessions",
+      "method": "engine.v1.sessions.create",
+      "mutates": true
+    },
+    {
+      "group": "sessions",
+      "method": "engine.v1.sessions.get",
+      "mutates": false
+    },
+    {
+      "group": "sessions",
+      "method": "engine.v1.sessions.select_model",
+      "mutates": true
+    },
+    {
+      "group": "sessions",
+      "method": "engine.v1.sessions.compact",
+      "mutates": true
+    },
+    {
+      "group": "runs",
+      "idempotent": true,
+      "method": "engine.v1.runs.start",
+      "mutates": true
+    },
+    {
+      "group": "runs",
+      "method": "engine.v1.runs.get",
+      "mutates": false
+    },
+    {
+      "group": "runs",
+      "idempotent": true,
+      "method": "engine.v1.runs.cancel",
+      "mutates": true
+    },
+    {
+      "group": "runs",
+      "idempotent": true,
+      "method": "engine.v1.runs.submit_tool_result",
+      "mutates": true
+    },
+    {
+      "group": "events",
+      "method": "engine.v1.events.subscribe",
+      "mutates": true
+    },
+    {
+      "group": "events",
+      "method": "engine.v1.events.ack",
+      "mutates": true
+    },
+    {
+      "group": "events",
+      "method": "engine.v1.events.unsubscribe",
+      "mutates": true
+    },
+    {
+      "group": "usage_evidence",
+      "method": "engine.v1.usage.query",
+      "mutates": false
+    },
+    {
+      "group": "usage_evidence",
+      "method": "engine.v1.catalog.refresh",
+      "mutates": true
+    },
+    {
+      "group": "usage_evidence",
+      "method": "engine.v1.benchmarks.query",
+      "mutates": false
+    },
+    {
+      "group": "usage_evidence",
+      "method": "engine.v1.benchmarks.refresh",
+      "mutates": true
+    },
+    {
+      "group": "hosts",
+      "method": "engine.v1.hosts.list",
+      "mutates": false
+    },
+    {
+      "group": "hosts",
+      "method": "engine.v1.hosts.prepare",
+      "mutates": true
+    },
+    {
+      "group": "hosts",
+      "method": "engine.v1.hosts.projection_status",
+      "mutates": false
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.inspect",
+      "mutates": false
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.install",
+      "mutates": true
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.enable",
+      "mutates": true
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.disable",
+      "mutates": true
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.update",
+      "mutates": true
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.remove",
+      "mutates": true
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.get",
+      "mutates": false
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.list",
+      "mutates": false
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.grants.get",
+      "mutates": false
+    },
+    {
+      "group": "extensions",
+      "method": "engine.v1.extensions.grants.change",
+      "mutates": true,
+      "privileged": "local_operator"
+    },
+    {
+      "group": "ui",
+      "method": "engine.v1.ui.contributions.list",
+      "mutates": false
+    },
+    {
+      "group": "ui",
+      "method": "engine.v1.ui.panel.get",
+      "mutates": false
+    },
+    {
+      "group": "ui",
+      "method": "engine.v1.schemas.get",
+      "mutates": false
+    },
+    {
+      "group": "attachments",
+      "method": "engine.v1.attachments.begin",
+      "mutates": true
+    },
+    {
+      "group": "attachments",
+      "method": "engine.v1.attachments.write_chunk",
+      "mutates": true
+    },
+    {
+      "group": "attachments",
+      "method": "engine.v1.attachments.finish",
+      "mutates": true
+    },
+    {
+      "group": "attachments",
+      "method": "engine.v1.attachments.read_chunk",
+      "mutates": false
+    },
+    {
+      "group": "attachments",
+      "method": "engine.v1.attachments.release",
+      "mutates": true
+    },
+    {
+      "group": "attachments",
+      "method": "engine.v1.attachments.export",
+      "mutates": true,
+      "privileged": "local_operator"
+    },
+    {
+      "group": "credentials",
+      "method": "engine.v1.credentials.enroll",
+      "mutates": true,
+      "privileged": "local_operator"
+    },
+    {
+      "group": "credentials",
+      "method": "engine.v1.credentials.replace",
+      "mutates": true,
+      "privileged": "local_operator"
+    },
+    {
+      "group": "credentials",
+      "method": "engine.v1.credentials.remove",
+      "mutates": true,
+      "privileged": "local_operator"
+    },
+    {
+      "group": "features_jobs",
+      "idempotent": true,
+      "method": "engine.v1.operations.invoke",
+      "mutates": true
+    },
+    {
+      "group": "features_jobs",
+      "method": "engine.v1.jobs.get",
+      "mutates": false
+    },
+    {
+      "group": "features_jobs",
+      "idempotent": true,
+      "method": "engine.v1.jobs.cancel",
+      "mutates": true
+    }
+  ],
+  "inventory_version": 1,
+  "manifest_filename": "manifest.json",
+  "plugin_v1_broker": [
+    {
+      "method": "plugin.v1.broker.storage.get"
+    },
+    {
+      "method": "plugin.v1.broker.storage.list"
+    },
+    {
+      "method": "plugin.v1.broker.storage.put"
+    },
+    {
+      "method": "plugin.v1.broker.storage.delete"
+    },
+    {
+      "method": "plugin.v1.broker.jobs.create"
+    },
+    {
+      "method": "plugin.v1.broker.jobs.progress"
+    },
+    {
+      "method": "plugin.v1.broker.jobs.complete"
+    },
+    {
+      "method": "plugin.v1.broker.jobs.fail"
+    },
+    {
+      "method": "plugin.v1.broker.jobs.check_cancelled"
+    },
+    {
+      "method": "plugin.v1.broker.events.publish"
+    },
+    {
+      "method": "plugin.v1.broker.events.subscribe"
+    },
+    {
+      "method": "plugin.v1.broker.events.ack"
+    },
+    {
+      "method": "plugin.v1.broker.events.unsubscribe"
+    },
+    {
+      "method": "plugin.v1.broker.engine.call"
+    },
+    {
+      "method": "plugin.v1.broker.attachments.begin"
+    },
+    {
+      "method": "plugin.v1.broker.attachments.write_chunk"
+    },
+    {
+      "method": "plugin.v1.broker.attachments.finish"
+    },
+    {
+      "method": "plugin.v1.broker.attachments.read_chunk"
+    },
+    {
+      "method": "plugin.v1.broker.attachments.release"
+    },
+    {
+      "method": "plugin.v1.broker.credentials.resolve"
+    }
+  ],
+  "plugin_v1_lifecycle": [
+    {
+      "channel": "activation",
+      "method": "plugin.v1.hello"
+    },
+    {
+      "channel": "activation",
+      "method": "plugin.v1.activate"
+    },
+    {
+      "channel": "activation",
+      "method": "plugin.v1.invoke"
+    },
+    {
+      "channel": "activation",
+      "method": "plugin.v1.cancel"
+    },
+    {
+      "channel": "activation",
+      "method": "plugin.v1.drain"
+    },
+    {
+      "channel": "activation",
+      "method": "plugin.v1.deactivate"
+    },
+    {
+      "channel": "activation",
+      "method": "plugin.v1.heartbeat"
+    }
+  ],
+  "plugin_v1_provider": [
+    {
+      "method": "plugin.v1.provider.start"
+    },
+    {
+      "method": "plugin.v1.provider.submit_tool_result"
+    },
+    {
+      "method": "plugin.v1.provider.cancel"
+    },
+    {
+      "method": "plugin.v1.provider.resume"
+    },
+    {
+      "method": "plugin.v1.provider.event"
+    },
+    {
+      "method": "plugin.v1.provider.ack"
+    }
+  ],
+  "schema_roots": {
+    "broker_prefix": "contracts/plugin.v1/broker",
+    "lifecycle_prefix": "contracts/plugin.v1/lifecycle",
+    "params_prefix": "contracts/engine.v1/methods",
+    "provider_prefix": "contracts/plugin.v1/provider"
+  }
+}

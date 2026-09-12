@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/benchmarks.query.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "benchmarks": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 256
+    }
+  },
+  "required": [
+    "benchmarks"
+  ]
+}

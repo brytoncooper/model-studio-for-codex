@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/provider/resume.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "adapter_run_handle": {
+      "$ref": "../../common/types.schema.json#/definitions/opaque_ref"
+    },
+    "checkpoint": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
+    }
+  },
+  "required": [
+    "adapter_run_handle",
+    "checkpoint"
+  ]
+}

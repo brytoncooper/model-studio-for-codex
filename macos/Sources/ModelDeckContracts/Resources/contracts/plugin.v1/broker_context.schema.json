@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker_context.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "activation_id",
+    "plugin_id",
+    "invocation_handle",
+    "revocation_generation"
+  ],
+  "properties": {
+    "activation_id": {
+      "$ref": "../common/types.schema.json#/definitions/uuid"
+    },
+    "plugin_id": {
+      "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "invocation_handle": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "revocation_generation": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

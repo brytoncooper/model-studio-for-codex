@@ -1,0 +1,9 @@
+{
+  "connection": {
+    "connection_id": "550e8400-e29b-41d4-a716-446655440002",
+    "provider_id": "com.example.provider",
+    "credential_ref": "550e8400-e29b-41d4-a716-446655440010"
+  },
+  "expected_revision": 0,
+  "idempotency_key": "conn-save-1"
+}

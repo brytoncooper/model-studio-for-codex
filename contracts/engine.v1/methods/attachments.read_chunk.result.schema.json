@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/attachments.read_chunk.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "data_base64": {
+      "type": "string",
+      "maxLength": 1400000
+    },
+    "eof": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "eof"
+  ]
+}
