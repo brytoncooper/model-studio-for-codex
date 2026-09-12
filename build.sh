@@ -33,6 +33,8 @@ cp "$source_directory/chat_wire.py" "$app_directory/Contents/Resources/chat_wire
 cp "$source_directory/context_compaction.py" "$app_directory/Contents/Resources/context_compaction.py"
 cp "$source_directory/agent_message_wire.py" "$app_directory/Contents/Resources/agent_message_wire.py"
 cp "$source_directory/cursor_sdk_runtime.py" "$app_directory/Contents/Resources/cursor_sdk_runtime.py"
+cp "$source_directory/model_benchmarks.py" "$app_directory/Contents/Resources/model_benchmarks.py"
+cp "$source_directory/spawn_benchmarks.py" "$app_directory/Contents/Resources/spawn_benchmarks.py"
 cp "$source_directory/codex_settings.py" "$app_directory/Contents/Resources/codex_settings.py"
 cp "$source_directory/provider_bridge.py" "$app_directory/Contents/Resources/provider_bridge.py"
 cp "$source_directory/routing_registry.py" "$app_directory/Contents/Resources/routing_registry.py"
