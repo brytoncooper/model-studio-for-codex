@@ -210,5 +210,75 @@ class DevelopmentGuardTests(unittest.TestCase):
             self.assertTrue(legitimate_temp_symlink(Path("/var")))
 
 
+
+class DevelopmentGuardAuthorityTests(unittest.TestCase):
+    def test_development_guard_error_aliases_authority(self):
+        import sys
+
+        python_src = str(architecture_repo() / "python" / "src")
+        if python_src not in sys.path:
+            sys.path.insert(0, python_src)
+        from model_deck_root_guard.paths import IsolatedRootGuardError
+
+        self.assertIs(DevelopmentGuardError, IsolatedRootGuardError)
+
+    def test_validate_isolated_roots_is_shared_authority(self):
+        import sys
+
+        python_src = str(architecture_repo() / "python" / "src")
+        if python_src not in sys.path:
+            sys.path.insert(0, python_src)
+        from model_deck_root_guard.roots import validate_isolated_roots as authority_validate
+        from development.guard.roots import validate_isolated_roots as dev_validate
+
+        self.assertIs(dev_validate, authority_validate)
+
+    def test_runtime_validate_isolated_roots_is_shared_authority(self):
+        import sys
+
+        python_src = str(architecture_repo() / "python" / "src")
+        if python_src not in sys.path:
+            sys.path.insert(0, python_src)
+        from model_deck_root_guard.roots import validate_isolated_roots as authority_validate
+        from model_deck.adapters.platform.macos.isolated_roots import (
+            validate_isolated_roots as runtime_validate,
+        )
+
+        self.assertIs(runtime_validate, authority_validate)
+
+    def test_dev_and_runtime_reject_same_protected_path(self):
+        import sys
+
+        python_src = str(architecture_repo() / "python" / "src")
+        if python_src not in sys.path:
+            sys.path.insert(0, python_src)
+        from model_deck.adapters.platform.macos.isolated_roots import (
+            validate_isolated_roots as runtime_validate,
+        )
+
+        root = architecture_repo()
+        protected = protected_roots(root)[0]
+        with tempfile.TemporaryDirectory() as artifact:
+            with self.assertRaises(DevelopmentGuardError):
+                validate_isolated_roots(protected, artifact, source_root=root)
+            with self.assertRaises(DevelopmentGuardError):
+                runtime_validate(protected, artifact, source_root=root)
+
+    def test_dev_and_runtime_accept_disjoint_temp_roots(self):
+        import sys
+
+        python_src = str(architecture_repo() / "python" / "src")
+        if python_src not in sys.path:
+            sys.path.insert(0, python_src)
+        from model_deck.adapters.platform.macos.isolated_roots import (
+            validate_isolated_roots as runtime_validate,
+        )
+
+        root = architecture_repo()
+        with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as artifact:
+            dev_result = validate_isolated_roots(state, artifact, source_root=root)
+            runtime_result = runtime_validate(state, artifact, source_root=root)
+            self.assertEqual(dev_result, runtime_result)
+
 if __name__ == "__main__":
     unittest.main()

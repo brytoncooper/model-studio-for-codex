@@ -29,9 +29,24 @@ class ArchitectureGraphTests(unittest.TestCase):
             "providers",
         )
         self.assertEqual(layer_for_module("model_deck.bootstrap.composition").value, "bootstrap")
+        self.assertEqual(layer_for_module("model_deck").value, "bootstrap")
+        self.assertEqual(layer_for_module("model_deck.cli.main").value, "bootstrap")
+        self.assertEqual(layer_for_module("model_deck.cli_like").value, "unknown")
 
 
 class ArchitectureCheckerFixtureTests(unittest.TestCase):
+    def test_cli_can_select_bootstrap(self):
+        checker, result = self._check_fixture(
+            "positive/cli_composition.py", "model_deck.cli.main"
+        )
+        self.assertEqual(checker.failing_violations(result), ())
+
+    def test_core_cannot_import_cli_composition(self):
+        for module in ("model_deck.kernel.registry", "model_deck.engine.sessions"):
+            with self.subTest(module=module):
+                checker, result = self._check_fixture("negative/core_imports_cli.py", module)
+                self.assertTrue(checker.failing_violations(result))
+
     def _checker(self, overrides: dict[Path, str]) -> ArchitectureChecker:
         return ArchitectureChecker(repo_root=REPO, module_name_overrides=overrides)
 

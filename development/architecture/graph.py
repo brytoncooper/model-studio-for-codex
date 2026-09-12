@@ -78,6 +78,10 @@ def layer_for_module(module_name: str) -> Layer:
     name = module_name.strip()
     if not name:
         return Layer.UNKNOWN
+    # Package initialization and the executable CLI are composition entrypoints.
+    # Core layers still cannot import them through ALLOWED_LAYER_IMPORTS.
+    if name in {"model_deck", "model_deck.cli"} or name.startswith("model_deck.cli."):
+        return Layer.BOOTSTRAP
     for prefix in PLUGIN_PREFIXES:
         if name == prefix.rstrip(".") or name.startswith(prefix):
             return Layer.PLUGIN

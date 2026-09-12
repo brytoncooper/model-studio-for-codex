@@ -1,12 +1,6 @@
-import sys
-from pathlib import Path
+"""Shared isolated-root path policy for development and runtime adapters."""
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_PYTHON_SRC = str(_REPO_ROOT / "python" / "src")
-if _PYTHON_SRC not in sys.path:
-    sys.path.insert(0, _PYTHON_SRC)
-
-from model_deck_root_guard.paths import (  # noqa: E402
+from model_deck_root_guard.paths import (
     IsolatedRootGuardError,
     actual_user_home,
     canonicalize_path,
@@ -24,11 +18,9 @@ from model_deck_root_guard.paths import (  # noqa: E402
     repo_root_from_script,
     unittest_module_name,
 )
-
-DevelopmentGuardError = IsolatedRootGuardError
+from model_deck_root_guard.roots import validate_isolated_roots
 
 __all__ = [
-    "DevelopmentGuardError",
     "IsolatedRootGuardError",
     "actual_user_home",
     "canonicalize_path",
@@ -45,4 +37,5 @@ __all__ = [
     "repo_root",
     "repo_root_from_script",
     "unittest_module_name",
+    "validate_isolated_roots",
 ]
