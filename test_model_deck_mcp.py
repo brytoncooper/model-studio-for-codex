@@ -6,11 +6,16 @@ import tempfile
 import unittest
 from unittest import mock
 import urllib.error
+import os
+import shutil
+import subprocess
+import sys
 
 import model_benchmarks as bm
 from test_model_benchmarks import CATALOG
 
 import model_deck_mcp as mcp
+from model_deck.engine.model_library.use_cases import ListModelsUseCase
 from provider_connections import load_provider_presets
 from routing_registry import AGENT_MARKER, RoutingRegistry
 
@@ -53,6 +58,142 @@ class DeckTests(unittest.TestCase):
         self.assertEqual(self.deck.endpoint_named("lm studio")["base_url"], "http://localhost:1234/v1")
         with self.assertRaises(mcp.DeckError):
             self.deck.endpoint_named("DeepSeek")
+
+    def test_rpc_registered_reads_use_application_and_preserve_envelope(self):
+        self.deck.add_model("deepseek/deepseek-v4.1-flash", endpoint="OpenRouter")
+        expected = self.deck.list_added_models()
+        original = ListModelsUseCase.execute
+        calls = []
+
+        def record(use_case, params):
+            calls.append(params)
+            return original(use_case, params)
+
+        with mock.patch.object(ListModelsUseCase, "execute", record):
+            result = mcp.handle_message(self.deck, {"jsonrpc": "2.0", "id": 1,
+                "method": "tools/call", "params": {"name": "list_added_models", "arguments": {}}})
+        self.assertFalse(result["result"]["isError"])
+        self.assertEqual(json.loads(result["result"]["content"][0]["text"]), expected)
+        self.assertEqual(calls, [{"collection": "registered"}])
+
+    def test_read_composition_refreshes_mixed_routes_after_each_mutation(self):
+        self.deck.call("add_model", {"model": "deepseek/deepseek-v4.1-flash", "endpoint": "OpenRouter"})
+        self.deck.call("add_model", {"model": "local-fixture", "endpoint": "LM Studio"})
+        with mock.patch.object(self.deck, "list_added_models", side_effect=AssertionError("recursive legacy read")):
+            first = self.deck.call("list_added_models", {})
+        self.assertEqual(first, self.deck.list_added_models())
+        self.assertIsNone(first["models"][0]["billing_note"])
+        self.deck.call("set_display_name", {"model": "local-fixture", "name": "Renamed Local"})
+        self.assertEqual(self.deck.call("list_added_models", {}), self.deck.list_added_models())
+        self.deck.call("remove_model", {"model": "local-fixture"})
+        self.assertEqual(self.deck.call("list_added_models", {}), self.deck.list_added_models())
+
+    def test_read_composition_keeps_account_and_unkeyed_connection_scope(self):
+        models = {
+            "a": {"role": "role_a", "endpoint": {"account": ACCOUNT, "base_url": "https://one.test", "has_key": True}},
+            "b": {"role": "role_b", "endpoint": {"account": "22345678-1234-1234-1234-123456789abc", "base_url": "https://one.test", "has_key": True}},
+            "c": {"role": "role_c", "endpoint": {"base_url": "http://local.test", "has_key": False}},
+        }
+        captured = []
+        original = ListModelsUseCase.execute
+
+        def capture(use_case, params):
+            result = original(use_case, params)
+            captured.append(result)
+            return result
+
+        with mock.patch.object(self.registry, "load_models", return_value=models), \
+                mock.patch.object(ListModelsUseCase, "execute", capture):
+            self.assertEqual(self.deck.call("list_added_models", {}), self.deck.list_added_models())
+            self.deck.call("list_added_models", {})
+        identities = [row["connection_id"] for row in captured[0]["items"]]
+        self.assertEqual(len(set(identities)), 3)
+        self.assertEqual(captured[0], captured[1])
+        self.assertNotIn("https://", json.dumps(identities))
+
+    def test_composed_search_preserves_legacy_output_and_validation(self):
+        for arguments in ({"query": "kimi", "endpoint": "openrouter"},
+                          {"query": "qwen", "endpoint": "LM Studio"}):
+            with self.subTest(arguments=arguments):
+                expected = self.deck.search_models(**arguments)
+                self.assertEqual(self.deck.call("search_models", arguments), expected)
+        with mock.patch.object(self.deck, "_model_read_service", side_effect=AssertionError("validation bypassed")):
+            with self.assertRaisesRegex(mcp.DeckError, "Unknown arguments"):
+                self.deck.call("list_added_models", {"unexpected": True})
+
+    def test_same_account_captured_urls_keep_exact_legacy_billing(self):
+        self.deck.add_model("deepseek/deepseek-v4.1-flash", endpoint="OpenRouter")
+        self.registry.endpoints_path.write_text(json.dumps({ACCOUNT: {
+            "name": "Private endpoint", "base_url": "https://private.test/v1/", "wire": "chat"}}))
+        self.deck.add_model("private-model", endpoint="Private endpoint")
+        expected = self.deck.list_added_models()
+        self.assertEqual([row["billing"] for row in expected["models"]], ["OpenRouter credits", "API key"])
+        self.assertEqual(self.deck.call("list_added_models", {}), expected)
+
+    def test_same_account_and_url_with_different_wire_get_distinct_routes(self):
+        models = {model_id: {"role": "role_" + model_id, "endpoint": {
+            "account": ACCOUNT, "base_url": "https://private.test/v1", "wire": wire,
+            "has_key": True, "openrouter": False}}
+            for model_id, wire in (("a", "chat"), ("b", "responses"))}
+        captured = []
+        original = ListModelsUseCase.execute
+
+        def capture(use_case, params):
+            result = original(use_case, params)
+            captured.extend(row["connection_id"] for row in result["items"])
+            return result
+
+        with mock.patch.object(self.registry, "load_models", return_value=models), \
+                mock.patch.object(ListModelsUseCase, "execute", capture):
+            self.assertEqual(self.deck.call("list_added_models", {}), self.deck.list_added_models())
+        self.assertEqual(len(set(captured)), 2)
+        self.assertNotIn("https://", json.dumps(captured))
+
+    def test_composed_search_routes_errors_and_keys_through_selected_account(self):
+        self.registry.endpoints_path.write_text(json.dumps({
+            ACCOUNT: {"name": "First", "base_url": "https://first.test/v1", "wire": "chat"},
+            "22345678-1234-1234-1234-123456789abc": {
+                "name": "Second", "base_url": "https://second.test/v1", "wire": "chat"}}))
+        with mock.patch.object(self.deck, "_key_for_account", return_value="fixture-only") as key:
+            self.deck.call("search_models", {"query": "qwen", "endpoint": "Second"})
+        key.assert_called_once_with("22345678-1234-1234-1234-123456789abc")
+        self.assertEqual(self.fetched[-1], ("https://second.test/v1/models", {"Authorization": "Bearer fixture-only"}))
+        result = mcp.handle_message(self.deck, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "search_models", "arguments": {"query": "", "endpoint": "missing"}}})
+        self.assertTrue(result["result"]["isError"])
+        self.assertIn("No endpoint named", result["result"]["content"][0]["text"])
+
+    def test_source_and_packaged_loader_have_explicit_package_roots(self):
+        root = Path(mcp.__file__).resolve().parent
+        request = json.dumps({"jsonrpc": "2.0", "id": 7, "method": "initialize", "params": {}}) + "\n"
+        environment = dict(os.environ)
+        environment.pop("PYTHONPATH", None)
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        stage = Path(self.temp.name) / "stage"
+        stage.mkdir()
+        for filename in ("model_deck_mcp.py", "codex_settings.py", "pricing.py", "model_benchmarks.py",
+                         "provider_connections.py", "routing_registry.py"):
+            shutil.copyfile(root / filename, stage / filename)
+        for directory in (root, stage):
+            with self.subTest(directory=directory):
+                if directory == stage:
+                    shutil.copytree(root / "python/src/model_deck", stage / "vendor/model_deck",
+                                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                result = subprocess.run([sys.executable, "-B", str(directory / "model_deck_mcp.py")],
+                    input=request, text=True, capture_output=True, timeout=10, cwd=self.temp.name, env=environment)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["result"]["serverInfo"], mcp.SERVER_INFO)
+
+    def test_missing_packaged_engine_fails_before_protocol_or_live_access(self):
+        stage = Path(self.temp.name) / "missing"
+        stage.mkdir()
+        shutil.copyfile(mcp.__file__, stage / "model_deck_mcp.py")
+        result = subprocess.run([sys.executable, "-I", str(stage / "model_deck_mcp.py")],
+            input="", text=True, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("requires its packaged engine service", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_preferences_fallback_when_endpoints_file_is_missing(self):
         self.registry.endpoints_path.unlink()

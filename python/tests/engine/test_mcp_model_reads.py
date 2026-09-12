@@ -8,6 +8,7 @@ from model_deck.engine.model_library.use_cases import ListModelsUseCase
 from model_deck.integrations.clients.mcp.errors import McpReadError
 from model_deck.integrations.clients.mcp.model_reads import McpModelReadService
 from model_deck.integrations.clients.mcp.presenters import UnverifiedCacheCatalogProvenance
+from model_deck.integrations.clients.mcp.registry_snapshot import McpRegistrySnapshot
 from model_deck.integrations.hosts.codex.legacy_models import LegacyCodexModelRepository
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -126,6 +127,8 @@ class McpModelReadTests(unittest.TestCase):
         expected_row = expected["models"][0]
         for key in ("id", "name", "endpoint", "billing", "price", "role"):
             self.assertEqual(row[key], expected_row[key])
+        self.assertIn("billing_note", row)
+        self.assertIsNone(row["billing_note"])
 
     def test_list_added_models_omits_role_when_host_has_none(self) -> None:
         service = self._service(presentation=_NoRolePresentation())
@@ -213,6 +216,21 @@ class McpModelReadTests(unittest.TestCase):
         result = service.list_added_models()
         self.assertIn("models", result)
         self.assertNotIn("Keychain", json.dumps(result))
+
+
+class RegistrySnapshotTests(unittest.TestCase):
+    def test_snapshot_detaches_rows_and_filters_connections_without_storage(self):
+        rows = [{"id": "qwen/test", "name": "Test", "role": "openrouter_test", "endpoint": "Fixture",
+                 "billing": "OpenRouter credits", "billing_note": None, "price": "n/a"}]
+        identities = {"qwen/test": CONNECTION}
+        snapshot = McpRegistrySnapshot(rows, identities)
+        rows[0]["name"] = "Later change"
+        identities["qwen/test"] = "other"
+        self.assertEqual(snapshot.list_registered(connection_id=CONNECTION)[0].display_name, "Test")
+        self.assertEqual(snapshot.list_registered(connection_id="other"), [])
+        self.assertEqual(snapshot.billing_for(CONNECTION), ("OpenRouter credits", None))
+        with self.assertRaisesRegex(ValueError, "connection mismatch"):
+            snapshot.price_for("qwen/test", "other")
 
 
 class DelegatingLegacyAdapterTests(unittest.TestCase):

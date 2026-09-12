@@ -47,13 +47,12 @@ def present_list_added_models(
             "name": item["display_name"],
             "endpoint": presentation.endpoint_name(connection_id),
             "billing": billing,
+            "billing_note": billing_note,
             "price": presentation.price_for(provider_model_id, connection_id),
         }
         role = presentation.host_role(provider_model_id)
         if role is not None:
             row["role"] = role
-        if billing_note is not None:
-            row["billing_note"] = billing_note
         rows.append(row)
     rows.sort(key=lambda entry: entry["id"])
     return {"models": rows, "how_to_use": _LISTED_HOW_TO_USE}

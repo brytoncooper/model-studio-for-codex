@@ -26,7 +26,7 @@ commit counts or the number of task headings.
 | B03 Architecture enforcement | Runtime classification repaired; parent verified 30 checker tests and full 156-file graph with zero findings | Keep graph gate current as integrations land |
 | B04 Swift packaging | Native library targets extracted | Staged executable/assets/helper verification |
 | B05 Models client | Typed client/presenter and app model path wired | Complete cross-language UI acceptance |
-| B06 MCP | Read adapter written | Wire real entrypoint and available mutations |
+| B06 MCP | Real entrypoint read composition reviewed; existing registry/formatting/search reused | Converge available mutations; qualify packaged entrypoint |
 | B07 Application state | Revisioned SQLite model/connection operations integrated | Shared repository conformance and active-run removal proof |
 | B08 Import preview | Deterministic read-only preview written | Record current full preview acceptance |
 | B09 Projections | Outbox, conditional files, renderer and consumer written | Compose committed resolvers; handle connection changes |
@@ -97,6 +97,13 @@ including control actions through actual Command-S, typed enum values, duplicate
 labels, unknown choices and secret metadata exclusion. Parent inspected the
 offscreen layout. This proves the reusable screen, not attachment to the running
 app or an end-to-end Swift-to-file session.
+
+MCP read composition follow-up: 40 tests and independent shared-account route
+probes passed. Validated Deck.call reads traverse the application service while
+reusing registry parsing and legacy output formatting/search. Captured account,
+URL and wire participate in opaque connection identity. Writes remain legacy.
+The Architecture entrypoint requires the engine package in source or staged
+vendor; the new packager must supply it, with no silent service bypass.
 
 ## Current independent work
 

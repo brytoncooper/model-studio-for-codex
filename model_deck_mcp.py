@@ -5,11 +5,32 @@ import json
 import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 _VENDOR = Path(__file__).resolve().with_name("vendor")
 if _VENDOR.is_dir() and str(_VENDOR) not in sys.path:
     sys.path.insert(0, str(_VENDOR))
+
+# Source checkouts carry the package here; staged bundles ship it in vendor.
+# An incomplete bundle must fail explicitly, never silently bypass use cases.
+_SOURCE_PYTHON = Path(__file__).resolve().parent / "python" / "src"
+if (_SOURCE_PYTHON / "model_deck" / "__init__.py").is_file():
+    sys.path.insert(0, str(_SOURCE_PYTHON))
+elif not (_VENDOR / "model_deck" / "__init__.py").is_file():
+    raise SystemExit(
+        "Model Deck MCP requires its packaged engine service in Resources/vendor; "
+        "the Architecture source checkout may instead supply python/src/model_deck."
+    )
+try:
+    from model_deck.engine.model_library.use_cases import ListModelsUseCase
+    from model_deck.integrations.clients.mcp import McpModelReadService, McpReadError, as_legacy_adapter
+    from model_deck.integrations.clients.mcp.registry_snapshot import McpRegistrySnapshot
+except ModuleNotFoundError as error:
+    raise SystemExit(
+        "Model Deck MCP requires its packaged engine service. Run from the Architecture source "
+        "checkout or stage the engine package and its dependencies in Resources/vendor."
+    ) from error
 
 import codex_settings  # noqa: E402
 import pricing  # noqa: E402
@@ -219,6 +240,11 @@ class Deck:
             models = self.registry.load_models()
         except RegistryError as error:
             raise DeckError(str(error)) from None
+        return {"models": self._registered_model_rows(models),
+                "how_to_use": "Pick a model in Codex's picker, or spawn_agent with model set to the exact id."}
+
+    def _registered_model_rows(self, models):
+        """Shared legacy formatting for direct reads and application snapshots."""
         table = self.pricing_loader() if any((entry.get("endpoint") or {}).get("openrouter") for entry in models.values()) else {}
         rows = []
         for model_id, entry in sorted(models.items()):
@@ -228,7 +254,28 @@ class Deck:
                          **endpoint_billing(endpoint),
                          "price": (pricing.price_line(pricing.pricing_for(model_id, table)) or "not listed") if endpoint.get("openrouter") else "n/a",
                          "role": entry["role"]})
-        return {"models": rows, "how_to_use": "Pick a model in Codex's picker, or spawn_agent with model set to the exact id."}
+        return rows
+
+    def _model_read_service(self, name):
+        rows, connection_ids = [], {}
+        if name == "list_added_models":
+            try:
+                models = self.registry.load_models()
+            except RegistryError as error:
+                raise DeckError(str(error)) from None
+            rows = self._registered_model_rows(models)
+            for model_id, entry in models.items():
+                endpoint = entry.get("endpoint") or {}
+                # The registry already normalizes captured URLs and resolves wire.
+                # One account can appear in agents with different captured routes.
+                identity = [endpoint.get("account"), endpoint.get("base_url"), endpoint.get("wire")]
+                connection_ids[model_id] = str(uuid.uuid5(
+                    uuid.NAMESPACE_URL, "model-deck:mcp:connection:" + json.dumps(identity)))
+        snapshot = McpRegistrySnapshot(rows, connection_ids)
+        return McpModelReadService(
+            list_models=ListModelsUseCase(snapshot), legacy=as_legacy_adapter(self),
+            presentation=snapshot, catalog_resolver=None,
+        )
 
     def add_model(self, model, endpoint=None, display_name=None, effort=None):
         if not isinstance(model, str) or not valid_model(model.strip()):
@@ -373,6 +420,11 @@ class Deck:
         missing = [key for key in tool["inputSchema"].get("required", []) if key not in arguments]
         if missing:
             raise DeckError("Missing arguments: " + ", ".join(missing))
+        if name in {"list_added_models", "search_models", "list_endpoints"}:
+            try:
+                return getattr(self._model_read_service(name), name)(**arguments)
+            except McpReadError as error:
+                raise DeckError(str(error)) from None
         return getattr(self, name)(**arguments)
 
 
