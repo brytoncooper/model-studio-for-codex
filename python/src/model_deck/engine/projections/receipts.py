@@ -50,7 +50,10 @@ class ProjectionAppliedState:
     applied_revision: int
     applied_outbox_id: int
     artifact_ref: str
-    output_sha256: str
+    # ``None`` marks a verified applied deletion (tombstone) where no artifact
+    # bytes were produced. This is the only legitimate null hash; it never
+    # stands in for an empty-file sentinel.
+    output_sha256: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +104,11 @@ def validate_artifact_ref(value: object) -> str:
 
 
 def validate_output_sha256(value: object) -> str:
+    """Validate a strict 64-character lowercase hex sha256 digest.
+
+    Applied upserts require a real digest. Deletion receipts use ``None``
+    directly and do not call this validator.
+    """
     if not isinstance(value, str):
         raise TypeError("output_sha256 must be a str")
     if _SHA256_LOWERCASE_HEX.fullmatch(value) is None:
@@ -176,7 +184,12 @@ class ProjectionReceiptStore(Protocol):
         aggregate_type: str,
         aggregate_id: str,
     ) -> ProjectionAppliedState | None:
-        """Return the current applied state for one consumer and aggregate."""
+        """Return the current applied state for one consumer and aggregate.
+
+        ``output_sha256`` is ``None`` when the stored row is a verified applied
+        deletion (tombstone); consumers must treat absent-only semantics
+        consistently.
+        """
         ...
 
     def record_applied(
@@ -188,6 +201,23 @@ class ProjectionReceiptStore(Protocol):
         output_sha256: str,
     ) -> ProjectionAppliedState:
         """Mark an outbox row applied and record aggregate applied state."""
+        ...
+
+    def record_deleted(
+        self,
+        event: ProjectionOutboxEvent,
+        *,
+        consumer_id: str,
+        artifact_ref: str,
+    ) -> ProjectionAppliedState:
+        """Mark an outbox row applied as a verified deletion (tombstone).
+
+        ``artifact_ref`` identifies the deleted artifact for replay/conflict
+        detection. The stored applied state sets ``output_sha256`` to ``None``
+        rather than to any digest; an empty-file hash is never a sentinel.
+        Exact replay returns the original deletion receipt metadata even when
+        the current aggregate state has advanced; use get_applied for current state.
+        """
         ...
 
     def record_conflict(
