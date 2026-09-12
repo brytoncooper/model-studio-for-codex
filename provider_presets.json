@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "providers": [
+    {"id":"kimi","name":"Kimi Code","base_url":"https://api.kimi.com/coding/v1","wire":"chat","billing":"Kimi membership","billing_note":"Uses your Kimi Code membership allowance. Create a Kimi Code key for this connection.","symbol":"moon.stars.fill","color":"7357E8","key_url":"https://www.kimi.com/code/console","default_models":["kimi-for-coding","kimi-for-coding-highspeed"]},
+    {"id":"zai","name":"Z.AI","base_url":"https://api.z.ai/api/v1","wire":"responses","billing":"GLM Coding Plan","billing_note":"Uses your GLM Coding Plan allowance with its dedicated Codex endpoint and plan key.","symbol":"bolt.fill","color":"D47722","key_url":"https://z.ai/manage-apikey/apikey-list","default_models":["glm-5.3"]},
+    {"id":"minimax","name":"MiniMax","base_url":"https://api.minimax.io/v1","wire":"chat","billing":"MiniMax Token Plan / API","billing_note":"Use a Subscription Key for your Token Plan. A pay-as-you-go key uses separate API billing; purchased credits may cover usage beyond your plan.","symbol":"waveform","color":"DB5279","key_url":"https://platform.minimax.io/subscribe/token-plan","default_models":["MiniMax-M3","MiniMax-M2.7"]},
+    {"id":"google","name":"Google Gemini","base_url":"https://generativelanguage.googleapis.com/v1beta/openai","wire":"chat","billing":"Gemini API","billing_note":"Uses Gemini API billing. Eligible Google subscription developer credits can offset usage after you activate them on the API project's billing account.","symbol":"sparkles","color":"4285F4","key_url":"https://aistudio.google.com/apikey","default_models":["gemini-3.8-flash"]},
+    {"id":"deepseek","name":"DeepSeek","base_url":"https://api.deepseek.com","wire":"chat","billing":"DeepSeek API","billing_note":"Uses your DeepSeek API balance. Your key stays in macOS Keychain.","symbol":"water.waves","color":"3978DD","key_url":"https://platform.deepseek.com/api_keys","default_models":["deepseek-flash","deepseek-v4-pro"]}
+  ]
+}

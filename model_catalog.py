@@ -1,9 +1,11 @@
-"""Read the native picker catalog and locally registered OpenRouter models."""
+"""Read the native picker catalog and locally registered provider models."""
 import json
 import sys
 
+import pricing
+from provider_connections import provider_billing_description, provider_for_base_url
 from provider_usage import NativeUsageClient
-from routing_registry import RoutingRegistry
+from routing_registry import CURSOR_BILLING, RoutingRegistry, endpoint_description
 
 MAX_MODELS = 256
 MAX_OUTPUT = 128 * 1024
@@ -80,23 +82,55 @@ def collect_openai_models():
 
 def collect_openrouter_models():
     try:
-        models = RoutingRegistry().load_models()
+        registry = RoutingRegistry()
+        models = registry.load_models()
         if len(models) > MAX_MODELS:
             raise ValueError("Registered catalog exceeds limit")
+        custom_names = registry.load_display_names()
+        price_table = pricing.load(timeout=8) if any((entry.get("endpoint") or {"openrouter": True}).get("openrouter")
+                                                     for entry in models.values()) else {}
         rows = []
         for model, entry in models.items():
             model_id(model)
-            rows.append({"model": model, "display_name": text_field(f"{model} · OpenRouter", 128, True),
-                         "description": "Native agent model billed to OpenRouter API credits.",
-                         "provider": "openrouter", "role": text_field(entry["role"], 128, True)})
+            endpoint = entry.get("endpoint") or {"name": "OpenRouter", "openrouter": True, "has_key": True}
+            preset = provider_for_base_url(endpoint.get("base_url"))
+            provider_id = ("cursor" if endpoint.get("cursor") else "openrouter" if endpoint.get("openrouter")
+                           else preset["id"] if preset else "custom")
+            provider_name = ("Cursor" if provider_id == "cursor" else "OpenRouter" if provider_id == "openrouter"
+                             else preset["name"] if preset else endpoint.get("name") or "Custom endpoint")
+            billing_note = (CURSOR_BILLING if provider_id == "cursor" else "Uses OpenRouter credits." if provider_id == "openrouter"
+                            else provider_billing_description(endpoint.get("base_url"), endpoint.get("has_key", False)))
+            billing = ("Cursor subscription" if provider_id == "cursor" else "OpenRouter credits" if provider_id == "openrouter"
+                       else preset["billing"] if preset and endpoint.get("has_key") else "key required" if preset
+                       else "API key" if endpoint.get("has_key") else "endpoint managed")
+            price = pricing.pricing_for(model, price_table) if endpoint.get("openrouter") else None
+            rows.append({"model": model, "display_name": text_field(registry.display_name_for(model), 128, True),
+                         "description": text_field(endpoint_description(endpoint), 256),
+                         "provider": provider_id, "provider_name": text_field(provider_name, 64, True),
+                         "billing": billing, "billing_note": billing_note, "role": text_field(entry["role"], 128, True),
+                         "custom_name": model in custom_names,
+                         "endpoint": text_field(endpoint.get("name") or "OpenRouter", 64, True),
+                         "endpoint_account": endpoint.get("account"), "endpoint_base_url": endpoint.get("base_url"),
+                         "endpoint_wire": endpoint.get("wire", "auto"),
+                         "billed": bool(endpoint.get("has_key", True)),
+                         "pricing": text_field(pricing.price_line(price), 128),
+                         "context": price.get("context") if price else None,
+                         "openrouter": bool(endpoint.get("openrouter")), "cursor": bool(endpoint.get("cursor"))})
         return {"ok": True}, rows
     except Exception:
-        return {"ok": False, "error": "Could not read registered OpenRouter models."}, []
+        return {"ok": False, "error": "Could not read registered models."}, []
 
 
 def collect_catalog():
     openai, native_rows = collect_openai_models()
     openrouter, registered_rows = collect_openrouter_models()
+    # Codex persists our injected /models rows in its native catalog cache.
+    # Rebuild those rows from today's registry, including endpoint and billing
+    # metadata, instead of mistaking them for conflicting OpenAI models. This
+    # also keeps a removed registration out of the library until cache refresh.
+    native_rows = [entry for entry in native_rows
+                   if not (entry.get("description", "").startswith(("Routed to ", "Routed through "))
+                           and " by Model Deck." in entry.get("description", ""))]
     if {entry["model"] for entry in native_rows}.intersection(entry["model"] for entry in registered_rows):
         openrouter = {"ok": False, "error": "A registered model conflicts with the native catalog."}
         registered_rows = []

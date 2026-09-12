@@ -25,6 +25,9 @@ else
   /usr/bin/codesign --verify --strict "$helper_executable"
 fi
 "$python_executable" -m pip install --quiet --disable-pip-version-check --target "$app_directory/Contents/Resources/vendor" 'tomlkit==0.13.3'
+cp "$source_directory/provider_connections.py" "$app_directory/Contents/Resources/provider_connections.py"
+cp "$source_directory/provider_presets.json" "$app_directory/Contents/Resources/provider_presets.json"
+cp "$source_directory/pricing.py" "$app_directory/Contents/Resources/pricing.py"
 cp "$source_directory/codex_settings.py" "$app_directory/Contents/Resources/codex_settings.py"
 cp "$source_directory/provider_bridge.py" "$app_directory/Contents/Resources/provider_bridge.py"
 cp "$source_directory/routing_registry.py" "$app_directory/Contents/Resources/routing_registry.py"
