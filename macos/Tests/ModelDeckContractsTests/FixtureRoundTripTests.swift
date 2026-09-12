@@ -3,6 +3,39 @@ import XCTest
 @testable import ModelDeckContracts
 
 final class FixtureRoundTripTests: XCTestCase {
+    func testSettingsPreviewOneOfEnforcesSiblingCandidateHash() throws {
+        let schemaRef = "contracts/engine.v1/methods/hosts.settings.preview.result.schema.json"
+        let valid = try ContractJSON.loadFixtureJSONObject(named: "hosts_settings_preview_result_valid.json", valid: true)
+        let invalid = try ContractJSON.loadFixtureJSONObject(named: "hosts_settings_preview_absent_candidate.json", valid: false)
+        XCTAssertNoThrow(try SchemaValidator.validate(instance: valid, schemaRef: schemaRef))
+        XCTAssertThrowsError(try SchemaValidator.validate(instance: invalid, schemaRef: schemaRef)) { error in
+            XCTAssertTrue(error is SchemaValidationError)
+        }
+    }
+
+    func testSettingsFieldAllOfEnforcesSiblingConfiguredType() throws {
+        let schemaRef = "contracts/common/host_settings.schema.json#/definitions/field_descriptor"
+        let valid = try ContractJSON.loadFixtureJSONObject(named: "hosts_settings_secret_entry_configured.json", valid: true)
+        var invalid = try XCTUnwrap(valid as? [String: Any])
+        invalid["configured"] = "true"
+        XCTAssertNoThrow(try SchemaValidator.validate(instance: valid, schemaRef: schemaRef))
+        XCTAssertThrowsError(try SchemaValidator.validate(instance: invalid, schemaRef: schemaRef)) { error in
+            XCTAssertTrue(error is SchemaValidationError)
+        }
+    }
+
+    func testReferenceEnforcesSiblingStringLength() throws {
+        let schema: [String: Any] = [
+            "$ref": "#/definitions/opaque_ref",
+            "maxLength": 8,
+        ]
+        let base = "contracts/common/types.schema.json"
+        XCTAssertNoThrow(try SchemaValidator.validate(instance: "ref:ok", schema: schema, baseDocumentPath: base))
+        XCTAssertThrowsError(try SchemaValidator.validate(instance: "ref:too-long", schema: schema, baseDocumentPath: base)) { error in
+            XCTAssertTrue(error is SchemaValidationError)
+        }
+    }
+
     func testValidManifestFixturesValidate() throws {
         let manifest = try ContractJSON.loadManifest()
         let valid = manifest["valid"] as! [[String: Any]]

@@ -1,0 +1,5 @@
+{
+  "kind": "raw",
+  "raw_toml": "model = \"gpt-6\"\n",
+  "changes": [{ "field_id": "model", "operation": "unset" }]
+}

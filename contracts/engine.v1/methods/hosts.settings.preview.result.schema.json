@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/hosts.settings.preview.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "valid",
+    "validation_level",
+    "diagnostics",
+    "context_revision",
+    "preview"
+  ],
+  "properties": {
+    "valid": {
+      "type": "boolean"
+    },
+    "validation_level": {
+      "type": "string",
+      "enum": [
+        "schema",
+        "toml_only"
+      ]
+    },
+    "candidate_content_hash": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/present_content_hash"
+    },
+    "candidate_raw_toml": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/raw_toml"
+    },
+    "candidate_structured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sections"
+      ],
+      "properties": {
+        "sections": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "section_id",
+              "title",
+              "fields"
+            ],
+            "properties": {
+              "section_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "title": {
+                "$ref": "../../common/host_settings.schema.json#/definitions/label"
+              },
+              "description": {
+                "$ref": "../../common/host_settings.schema.json#/definitions/description"
+              },
+              "fields": {
+                "type": "array",
+                "maxItems": 256,
+                "items": {
+                  "$ref": "../../common/host_settings.schema.json#/definitions/field_descriptor"
+                }
+              }
+            }
+          }
+        },
+        "unrepresented_paths": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "../../common/host_settings.schema.json#/definitions/diagnostic"
+      }
+    },
+    "context_revision": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/context_revision"
+    },
+    "preview": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "preview_id",
+            "base_content_hash",
+            "candidate_content_hash",
+            "changed",
+            "diff",
+            "diff_truncated",
+            "changed_field_ids",
+            "application_effects",
+            "protected_projection_changes"
+          ],
+          "properties": {
+            "preview_id": {
+              "$ref": "../../common/host_settings.schema.json#/definitions/preview_id"
+            },
+            "base_content_hash": {
+              "$ref": "../../common/host_settings.schema.json#/definitions/content_hash"
+            },
+            "candidate_content_hash": {
+              "$ref": "../../common/host_settings.schema.json#/definitions/present_content_hash"
+            },
+            "changed": {
+              "type": "boolean"
+            },
+            "diff": {
+              "type": "string",
+              "maxLength": 131072
+            },
+            "diff_truncated": {
+              "type": "boolean"
+            },
+            "changed_field_ids": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "$ref": "../../common/host_settings.schema.json#/definitions/field_id"
+              }
+            },
+            "application_effects": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "$ref": "../../common/host_settings.schema.json#/definitions/application_effect"
+              }
+            },
+            "protected_projection_changes": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "valid": {
+          "const": true
+        },
+        "preview": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "candidate_content_hash",
+        "candidate_raw_toml",
+        "candidate_structured"
+      ]
+    },
+    {
+      "properties": {
+        "valid": {
+          "const": false
+        },
+        "preview": {
+          "type": "null"
+        }
+      }
+    }
+  ]
+}

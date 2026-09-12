@@ -1,0 +1,13 @@
+{
+  "host_id": "com.openai.codex",
+  "document_id": "ref:codex-user-config",
+  "expected_content_hash": "absent",
+  "context_revision": "ctx-001",
+  "draft": {
+    "kind": "structured",
+    "changes": [
+      { "field_id": "model", "operation": "set", "value": "gpt-6" },
+      { "field_id": "api_key", "operation": "unset" }
+    ]
+  }
+}

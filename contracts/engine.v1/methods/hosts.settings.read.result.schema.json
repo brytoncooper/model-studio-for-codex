@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/hosts.settings.read.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["snapshot"],
+  "properties": {
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host_id", "document_id", "document_revision", "exists", "target", "schema_profile", "precedence", "raw_toml", "structured", "context_revision"],
+      "properties": {
+        "host_id": { "$ref": "../../common/host_settings.schema.json#/definitions/host_id" },
+        "document_id": { "$ref": "../../common/host_settings.schema.json#/definitions/document_id" },
+        "document_revision": { "$ref": "../../common/host_settings.schema.json#/definitions/content_hash" },
+        "exists": { "type": "boolean" },
+        "target": {
+          "type": "object", "additionalProperties": false,
+          "required": ["display_name", "display_path", "scope", "writable"],
+          "properties": {
+            "display_name": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "display_path": { "type": "string", "minLength": 1, "maxLength": 2048 },
+            "scope": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "writable": { "type": "boolean" }
+          }
+        },
+        "schema_profile": {
+          "type": "object", "additionalProperties": false,
+          "required": ["schema_id", "schema_revision", "host_version", "support_level"],
+          "properties": {
+            "schema_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "schema_revision": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "host_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "support_level": { "type": "string", "enum": ["supported", "toml_only", "unavailable"] },
+            "reference_url": { "type": "string", "maxLength": 2048 }
+          }
+        },
+        "precedence": {
+          "type": "array", "maxItems": 64,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["layer_id", "label", "editable", "status"],
+            "properties": {
+              "layer_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "label": { "$ref": "../../common/host_settings.schema.json#/definitions/label" },
+              "editable": { "type": "boolean" },
+              "status": { "type": "string", "enum": ["active", "inactive", "unknown"] }
+            }
+          }
+        },
+        "raw_toml": { "$ref": "../../common/host_settings.schema.json#/definitions/raw_toml" },
+        "structured": {
+          "type": "object", "additionalProperties": false,
+          "required": ["sections"],
+          "properties": {
+            "sections": {
+              "type": "array", "maxItems": 64,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["section_id", "title", "fields"],
+                "properties": {
+                  "section_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "title": { "$ref": "../../common/host_settings.schema.json#/definitions/label" },
+                  "description": { "$ref": "../../common/host_settings.schema.json#/definitions/description" },
+                  "fields": { "type": "array", "maxItems": 256, "items": { "$ref": "../../common/host_settings.schema.json#/definitions/field_descriptor" } }
+                }
+              }
+            },
+            "unrepresented_paths": { "type": "array", "maxItems": 256, "items": { "type": "string", "minLength": 1, "maxLength": 2048 } }
+          }
+        },
+        "context_revision": { "$ref": "../../common/host_settings.schema.json#/definitions/context_revision" }
+      }
+    }
+  }
+}

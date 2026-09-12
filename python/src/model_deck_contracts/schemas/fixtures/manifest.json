@@ -95,6 +95,34 @@
     {
       "file": "event_notification_content_delta.json",
       "schema": "contracts/engine.v1/notifications/event.schema.json"
+    },
+    {
+      "file": "hosts_settings_read_params.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.read.params.schema.json"
+    },
+    {
+      "file": "hosts_settings_validate_params_structured.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.validate.params.schema.json"
+    },
+    {
+      "file": "hosts_settings_preview_result_valid.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.preview.result.schema.json"
+    },
+    {
+      "file": "hosts_settings_save_params.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.save.params.schema.json"
+    },
+    {
+      "file": "hosts_settings_save_result_changed.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.save.result.schema.json"
+    },
+    {
+      "file": "hosts_settings_preview_invalid.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.preview.result.schema.json"
+    },
+    {
+      "file": "hosts_settings_secret_entry_configured.json",
+      "schema": "contracts/common/host_settings.schema.json#/definitions/field_descriptor"
     }
   ],
   "invalid": [
@@ -169,6 +197,58 @@
     {
       "file": "event_notification_with_id.json",
       "schema": "contracts/engine.v1/notifications/event.schema.json"
+    },
+    {
+      "file": "hosts_settings_secret_with_value.json",
+      "schema": "contracts/common/host_settings.schema.json#/definitions/field_descriptor"
+    },
+    {
+      "file": "hosts_settings_draft_raw_with_changes.json",
+      "schema": "contracts/common/host_settings.schema.json#/definitions/draft"
+    },
+    {
+      "file": "hosts_settings_save_unknown_field.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.save.params.schema.json"
+    },
+    {
+      "file": "hosts_settings_change_unset_with_value.json",
+      "schema": "contracts/common/host_settings.schema.json#/definitions/structured_change"
+    },
+    {
+      "file": "hosts_settings_validate_missing_context.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.validate.params.schema.json"
+    },
+    {
+      "file": "hosts_settings_preview_missing_context.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.preview.params.schema.json"
+    },
+    {
+      "file": "hosts_settings_save_result_missing_context.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.save.result.schema.json"
+    },
+    {
+      "file": "hosts_settings_preview_invalid_with_token.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.preview.result.schema.json"
+    },
+    {
+      "file": "hosts_settings_preview_valid_null.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.preview.result.schema.json"
+    },
+    {
+      "file": "hosts_settings_preview_absent_candidate.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.preview.result.schema.json"
+    },
+    {
+      "file": "hosts_settings_preview_missing_candidate.json",
+      "schema": "contracts/engine.v1/methods/hosts.settings.preview.result.schema.json"
+    },
+    {
+      "file": "hosts_settings_boolean_map_value.json",
+      "schema": "contracts/common/host_settings.schema.json#/definitions/field_descriptor"
+    },
+    {
+      "file": "hosts_settings_secret_entry_values.json",
+      "schema": "contracts/common/host_settings.schema.json#/definitions/field_descriptor"
     }
   ]
 }

@@ -286,6 +286,31 @@
       "group": "features_jobs",
       "mutates": true,
       "idempotent": true
+    },
+    {
+      "method": "engine.v1.hosts.settings.read",
+      "group": "hosts",
+      "mutates": false,
+      "privileged": "local_operator"
+    },
+    {
+      "method": "engine.v1.hosts.settings.validate",
+      "group": "hosts",
+      "mutates": false,
+      "privileged": "local_operator"
+    },
+    {
+      "method": "engine.v1.hosts.settings.preview",
+      "group": "hosts",
+      "mutates": false,
+      "privileged": "local_operator"
+    },
+    {
+      "method": "engine.v1.hosts.settings.save",
+      "group": "hosts",
+      "mutates": true,
+      "privileged": "local_operator",
+      "idempotent": true
     }
   ],
   "plugin_v1_lifecycle": [

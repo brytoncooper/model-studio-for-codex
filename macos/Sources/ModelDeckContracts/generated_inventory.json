@@ -284,6 +284,31 @@
       "idempotent": true,
       "method": "engine.v1.jobs.cancel",
       "mutates": true
+    },
+    {
+      "group": "hosts",
+      "method": "engine.v1.hosts.settings.read",
+      "mutates": false,
+      "privileged": "local_operator"
+    },
+    {
+      "group": "hosts",
+      "method": "engine.v1.hosts.settings.validate",
+      "mutates": false,
+      "privileged": "local_operator"
+    },
+    {
+      "group": "hosts",
+      "method": "engine.v1.hosts.settings.preview",
+      "mutates": false,
+      "privileged": "local_operator"
+    },
+    {
+      "group": "hosts",
+      "idempotent": true,
+      "method": "engine.v1.hosts.settings.save",
+      "mutates": true,
+      "privileged": "local_operator"
     }
   ],
   "inventory_version": 1,

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/hosts.settings.save.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "saved",
+    "changed",
+    "document_id",
+    "previous_content_hash",
+    "document_revision",
+    "backup",
+    "application_effects",
+    "context_revision"
+  ],
+  "properties": {
+    "saved": {
+      "type": "boolean",
+      "const": true
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "document_id": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/document_id"
+    },
+    "previous_content_hash": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/content_hash"
+    },
+    "document_revision": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/present_content_hash"
+    },
+    "backup": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "backup_id",
+            "display_path"
+          ],
+          "properties": {
+            "backup_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "display_path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          }
+        }
+      ]
+    },
+    "application_effects": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "../../common/host_settings.schema.json#/definitions/application_effect"
+      }
+    },
+    "context_revision": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/context_revision"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/hosts.settings.save.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["host_id", "document_id", "expected_content_hash", "context_revision", "preview_id", "candidate_content_hash", "candidate_raw_toml", "idempotency_key"],
+  "properties": {
+    "host_id": { "$ref": "../../common/host_settings.schema.json#/definitions/host_id" },
+    "document_id": { "$ref": "../../common/host_settings.schema.json#/definitions/document_id" },
+    "expected_content_hash": { "$ref": "../../common/host_settings.schema.json#/definitions/content_hash" },
+    "context_revision": { "$ref": "../../common/host_settings.schema.json#/definitions/context_revision" },
+    "preview_id": { "$ref": "../../common/host_settings.schema.json#/definitions/preview_id" },
+    "candidate_content_hash": { "$ref": "../../common/host_settings.schema.json#/definitions/present_content_hash" },
+    "candidate_raw_toml": { "$ref": "../../common/host_settings.schema.json#/definitions/raw_toml" },
+    "idempotency_key": { "$ref": "../../common/types.schema.json#/definitions/idempotency_key" }
+  }
+}

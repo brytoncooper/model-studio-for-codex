@@ -1,0 +1,11 @@
+{
+  "host_id": "com.openai.codex",
+  "document_id": "ref:codex-user-config",
+  "expected_content_hash": "absent",
+  "context_revision": "ctx-001",
+  "preview_id": "preview-001",
+  "candidate_content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "candidate_raw_toml": "model = \"gpt-6\"\n",
+  "idempotency_key": "save-001",
+  "raw_toml": "model = \"gpt-6\"\n"
+}

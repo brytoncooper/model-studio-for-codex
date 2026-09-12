@@ -1,0 +1,21 @@
+{
+  "valid": true,
+  "validation_level": "schema",
+  "diagnostics": [],
+  "context_revision": "ctx-001",
+  "preview": {
+    "preview_id": "preview-001",
+    "base_content_hash": "absent",
+    "candidate_content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "changed": true,
+    "diff": "+model = \"gpt-6\"\n",
+    "diff_truncated": false,
+    "changed_field_ids": [
+      "model"
+    ],
+    "application_effects": [
+      "future_session"
+    ],
+    "protected_projection_changes": false
+  }
+}

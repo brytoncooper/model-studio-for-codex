@@ -247,7 +247,6 @@ public enum SchemaValidator {
         if let ref = schema["$ref"] as? String {
             let resolved = try resolveRef(ref, from: baseDocumentPath)
             try validateInstance(instance, schema: resolved.schema, baseDocumentPath: resolved.path, frames: frames + 1, nodeCounter: nodeCounter)
-            return
         }
         if let not = schema["not"] as? [String: Any] {
             if try matches(instance, schema: not, baseDocumentPath: baseDocumentPath, frames: frames, nodeCounter: nodeCounter) {
@@ -265,7 +264,6 @@ public enum SchemaValidator {
             if matchCount != 1 {
                 throw SchemaValidationError("instance must match exactly one oneOf branch (matched \(matchCount))")
             }
-            return
         }
         if let allOf = schema["allOf"] as? [Any] {
             for item in allOf {
@@ -274,7 +272,6 @@ public enum SchemaValidator {
                 }
                 try validateInstance(instance, schema: sub, baseDocumentPath: baseDocumentPath, frames: frames, nodeCounter: nodeCounter)
             }
-            return
         }
         if let const = schema["const"] {
             if !jsonEqual(instance, const) {

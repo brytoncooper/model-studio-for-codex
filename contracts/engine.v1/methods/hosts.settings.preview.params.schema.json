@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/hosts.settings.preview.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "host_id",
+    "document_id",
+    "expected_content_hash",
+    "draft",
+    "context_revision"
+  ],
+  "properties": {
+    "host_id": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/host_id"
+    },
+    "document_id": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/document_id"
+    },
+    "expected_content_hash": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/content_hash"
+    },
+    "context_revision": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/context_revision"
+    },
+    "draft": {
+      "$ref": "../../common/host_settings.schema.json#/definitions/draft"
+    }
+  }
+}

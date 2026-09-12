@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/hosts.settings.read.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["host_id"],
+  "properties": { "host_id": { "$ref": "../../common/host_settings.schema.json#/definitions/host_id" } }
+}

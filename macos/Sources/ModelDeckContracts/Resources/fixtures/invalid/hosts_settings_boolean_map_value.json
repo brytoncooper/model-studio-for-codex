@@ -1,0 +1,12 @@
+{
+  "field_id": "model",
+  "label": "Model",
+  "type": "boolean",
+  "value_state": "explicit",
+  "editability": "editable",
+  "application_effect": "future_session",
+  "sensitivity": "public",
+  "value": {
+    "bad": "map"
+  }
+}
