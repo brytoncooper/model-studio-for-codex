@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from model_deck.adapters.credentials.file_enrollment import FileEnrollmentCredentialStore
 from model_deck.adapters.platform.macos.instance_lock import FileInstanceLock
@@ -11,6 +12,7 @@ from model_deck.adapters.platform.macos.paths import IsolatedApplicationPaths
 from model_deck.adapters.storage.json_catalog_cache import JsonFixtureCatalogCacheRepository
 from model_deck.adapters.storage.sqlite_connection_repository import SQLiteConnectionRepository
 from model_deck.adapters.storage.sqlite_model_repository import SQLiteModelRepository
+from model_deck.adapters.storage.sqlite_host_settings import SQLitePreviewStore, SQLiteSaveReceiptStore
 from model_deck.adapters.transport.rendezvous import build_rendezvous_payload, publish_rendezvous_file
 from model_deck.adapters.transport.unix_server import UnixSocketEngineServer
 from model_deck.engine.dispatch import EngineDispatch
@@ -22,6 +24,8 @@ from model_deck.engine.model_library.use_cases import (
     RenameModelUseCase,
 )
 from model_deck.engine.server import EngineServer
+from model_deck.engine.host_settings.ports import CallerContext, READ_GRANT, WRITE_GRANT, SettingsDocumentPort
+from model_deck.engine.host_settings.service import HostSettingsService
 from model_deck.adapters.events.live_replay import LiveRunEventReplay
 from model_deck.adapters.providers.deterministic import (
     DETERMINISTIC_PROVIDER_ID,
@@ -69,9 +73,22 @@ def build_engine_server(
     catalog_cache_path: Path | None = None,
     enable_application_state: bool = False,
     enable_fixture_runs: bool = False,
+    host_settings_document: SettingsDocumentPort | None = None,
+    host_settings_caller: CallerContext | None = None,
 ) -> EngineRuntime:
     if enable_fixture_runs and not enable_application_state:
         raise ValueError("enable_fixture_runs requires enable_application_state")
+    if (host_settings_document is None) != (host_settings_caller is None):
+        raise ValueError("host settings document and caller must be supplied together")
+    if host_settings_document is not None:
+        if not isinstance(host_settings_document, SettingsDocumentPort):
+            raise ValueError("host settings document must implement SettingsDocumentPort")
+        if (type(host_settings_caller) is not CallerContext
+                or type(host_settings_caller.principal) is not str
+                or not host_settings_caller.principal.strip()
+                or type(host_settings_caller.grants) is not frozenset
+                or not {READ_GRANT, WRITE_GRANT}.issubset(host_settings_caller.grants)):
+            raise ValueError("host settings require an explicit local operator with read and write grants")
 
     root = source_root or contracts_repo_root()
     validate_isolated_roots(state_root, artifact_root, socket_root, source_root=root)
@@ -96,6 +113,16 @@ def build_engine_server(
     submit_tool_result = None
     run_repository = None
     event_replay = None
+    host_settings = None
+    if host_settings_document is not None and host_settings_caller is not None:
+        settings_database = paths.state_root() / "engine" / "host-settings.sqlite3"
+        host_settings = HostSettingsService(
+            document=host_settings_document,
+            previews=SQLitePreviewStore(settings_database),
+            receipts=SQLiteSaveReceiptStore(settings_database),
+            new_preview_id=lambda: str(uuid4()),
+            local_operator_principal=host_settings_caller.principal,
+        )
 
     if enable_application_state:
         application_database_path = paths.state_root() / "engine" / "state.sqlite3"
@@ -186,6 +213,8 @@ def build_engine_server(
         submit_tool_result=submit_tool_result,
         run_repository=run_repository,
         event_replay=event_replay,
+        host_settings=host_settings,
+        host_settings_caller=host_settings_caller,
     )
 
     socket_path = socket_root / "engine.sock"

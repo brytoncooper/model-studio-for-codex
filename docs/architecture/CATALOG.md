@@ -62,6 +62,7 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | Subsystem | Guide |
 |---|---|
 | Host settings dispatch (engine wiring) | [host settings dispatch](../engine/host-settings-dispatch.md) |
+| Explicit settings composition and authenticated file persistence | [settings bootstrap](../engine/host-settings-bootstrap.md) |
 | Codex settings document: pure TOML parse, lossless edits, known-field validation, protected-field checks; never finds or writes files | [settings document README](../../python/src/model_deck/integrations/hosts/codex/settings_document/README.md) |
 | Codex settings file: filesystem persistence implementing `SettingsDocumentPort`; engine keeps authz, tokens, receipts | [settings file README](../../python/src/model_deck/integrations/hosts/codex/settings_file/README.md) |
 | Legacy import preview: deterministic, redacted, read-only fixture-only preview of legacy routing state | [migration preview README](../../python/src/model_deck/integrations/hosts/codex/migration_preview/README.md) |

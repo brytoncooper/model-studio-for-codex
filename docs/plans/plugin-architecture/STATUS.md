@@ -45,7 +45,7 @@ commit counts or the number of task headings.
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
 | B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
 | B24 Restricted execution | No implementation found | Feasibility investigation and qualified OS enforcement |
-| B25 Native parity | Catalog path and settings components written | Settings screen repair/integration and remaining native features |
+| B25 Native parity | Catalog path and settings components written; real settings persistence composed through authenticated engine | Native settings screen acceptance/app attachment and remaining native features |
 | B26 Distribution/docs | Legacy packaging remains; subsystem catalog written | Supported staged packaging, compatibility wrappers and aggregate gate |
 | B27 Live qualification | Not started | Complete staged readiness, then schedule protected-runtime cutover |
 
@@ -69,10 +69,16 @@ verified 30 checker tests and the complete 156-file product scan with zero error
 or warnings. Core and external plugin/SDK imports of runtime remain forbidden;
 new negative fixtures also reject runtime imports of hosts/providers/private core.
 
+Settings composition follow-up: six independently run real socket tests verify
+read/preview/save against temporary TOML files and SQLite ledgers, durable preview
+and exact save replay across restart, one recoverable backup, stale edit rejection,
+authentication and unchanged defaults. Configured operator identity is injected
+by bootstrap; this is not per-client role enrollment or live settings discovery.
+
 ## Current independent work
 
 - Native settings rendering, secret editing, keyboard shortcut and layout repair.
-- Real settings-file service composition through authenticated engine requests.
+- Native settings screen independent acceptance and app attachment planning.
 - Bidirectional external provider process channel.
 - Engine usage recording from genuine run/session identities.
 - Independent usage-recording review and external provider proxy implementation.
