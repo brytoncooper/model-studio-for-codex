@@ -9,6 +9,7 @@ description = "Model Deck headless engine (B02 vertical slice)"
 requires-python = ">=3.11"
 dependencies = [
   "jsonschema[format]==4.23.0",
+  "tomlkit==0.13.3",
 ]
 
 [project.scripts]
@@ -16,4 +17,3 @@ model-deck = "model_deck.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/model_deck", "src/model_deck_contracts", "src/model_deck_root_guard"]
-
