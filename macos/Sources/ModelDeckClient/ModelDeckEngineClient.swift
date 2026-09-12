@@ -15,6 +15,7 @@ public final class ModelDeckEngineClient {
     private var requestCounter = 0
     private let transportLock = NSLock()
     private var cancelled = false
+    private var authenticated = false
 
     public init(transport: EngineTransport, credentialProvider: EngineInstanceCredentialProviding) {
         self.transport = transport
@@ -29,9 +30,6 @@ public final class ModelDeckEngineClient {
     }
 
     public func connectAndAuthenticate(descriptor: EngineRendezvousDescriptor) throws {
-        transportLock.lock()
-        cancelled = false
-        transportLock.unlock()
         try transport.open()
         let firstParams: [String: Any] = [
             "client_name": Self.clientName,
@@ -73,6 +71,9 @@ public final class ModelDeckEngineClient {
             throw EngineClientError.negotiationFailed("authenticated hello instance identity changed")
         }
         try validateHelloAPIProfile(secondObject["api_profile"], expected: descriptor.apiProfile)
+        transportLock.lock()
+        authenticated = true
+        transportLock.unlock()
     }
 
     public func listCatalogModels(connectionID: String, query: String? = nil) throws -> [CatalogListItem] {
@@ -106,6 +107,41 @@ public final class ModelDeckEngineClient {
         return ModelsListResult(items: parsed, cacheOnly: cacheOnly)
     }
 
+
+    /// Performs one authenticated, schema-validated call over the shared framing path.
+    ///
+    /// Encodes `params`, validates the request object against `paramsSchemaRef`,
+    /// sends exactly one JSON-RPC round-trip via the shared `call`, validates the
+    /// result against `resultSchemaRef`, and decodes the typed `Result`.
+    /// Throws `EngineClientError.protocolError` when the result does not decode.
+    /// Requires a completed `connectAndAuthenticate` first; the two-step hello
+    /// handshake uses the private `call` path before authentication completes.
+    public func invokeValidated<Params: Encodable, Result: Decodable>(
+        method: String,
+        params: Params,
+        paramsSchemaRef: String,
+        resultSchemaRef: String
+    ) throws -> Result {
+        transportLock.lock()
+        let isAuthenticated = authenticated
+        transportLock.unlock()
+        guard isAuthenticated else {
+            throw EngineClientError.negotiationFailed("engine client call requires completed authentication")
+        }
+        let paramsData = try JSONEncoder().encode(params)
+        guard let paramsObject = try JSONSerialization.jsonObject(with: paramsData) as? [String: Any] else {
+            throw EngineClientError.protocolError("request params must encode as an object")
+        }
+        try EngineJSONRPC.validateParams(paramsObject, schemaRef: paramsSchemaRef)
+        let result = try call(method: method, params: paramsObject)
+        try EngineJSONRPC.validateResult(result, schemaRef: resultSchemaRef)
+        let resultData = try JSONSerialization.data(withJSONObject: result)
+        do {
+            return try JSONDecoder().decode(Result.self, from: resultData)
+        } catch {
+            throw EngineClientError.protocolError("result did not decode")
+        }
+    }
 
     private func validateHelloResult(_ result: Any) throws {
         do {
