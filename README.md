@@ -6,6 +6,11 @@ A native macOS control panel for registered OpenRouter models, native mixed-prov
 
 ## Use
 
+Architecture development is tracked in the [B00–B27 delivery checklist](docs/plans/plugin-architecture/STATUS.md).
+The [subsystem catalog](docs/architecture/CATALOG.md) links implementation guides,
+contracts and extension boundaries. The architecture replacement is unfinished;
+the usage instructions below describe the existing application.
+
 Open **Model Deck** in Applications. The window is named **Model Deck for Codex**, with Overview, Models, Endpoints, Usage, and Advanced pages. OpenAI models are already built in; no endpoint setup is needed for them.
 
 In **Models**, search the unified library or filter by OpenAI or added models. OpenAI names come from the current native runtime; added entries come from actual local registrations. Selecting a row previews its connection and usage instructions; it does not change an active task. **Add models** opens a searchable checklist. Choose a saved connection and its catalog loads automatically. Check several models, keep searching without losing checked entries, and add the selection in one batch. Already-added models are skipped; failed additions remain selected so you can retry. A model registered on a different connection cannot be silently moved: remove that registration first. Registration does not run inference or prove native lifecycle compatibility.
