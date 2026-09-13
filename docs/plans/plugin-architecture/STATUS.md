@@ -337,3 +337,14 @@ production integration proof.
 
 Next / upcoming task: settle and implement that lifecycle revision handoff;
 review plugin authoring and storage wire integration in parallel.
+
+## Accepted storage wire adapter
+
+`3903397` connects the four storage broker methods to the existing trusted
+authority and data broker. Runtime activation identity is checked before broker
+access; request and result schemas are validated without inventing grants or
+coercing values. Independent review passed 36 wire/broker/SQLite tests; the parent
+ran the six new wire tests. Real subprocess-to-storage integration is underway.
+
+Next / upcoming task: resolve lifecycle revision synchronization, review authoring
+archive boundaries, and verify subprocess storage integration.

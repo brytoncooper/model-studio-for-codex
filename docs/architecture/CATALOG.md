@@ -44,6 +44,7 @@ defines generation binding and the shared write barrier required for updates.
 | Plugin invocation authority: shared B19 authorization decision used by the data, job, and event brokers. Not install/enable state, not transport auth, not lifecycle | [authority README](../../python/src/model_deck/engine/plugin_authority/README.md) |
 | Plugin data repository: revisioned per-plugin key/value store behind `plugin.v1/broker/storage.*`; not an authorization gate | [data README](../../python/src/model_deck/engine/plugin_data/README.md) |
 | Plugin data broker: supervisor-side dispatch over settled authority plus committed data repository | [data broker guide](../../python/src/model_deck/engine/plugin_data/BROKER.md) |
+| Plugin storage wire adapter: authenticated runtime calls into the data broker | [wire adapter guide](../../python/src/model_deck/engine/plugin_data/WIRE.md) |
 | Plugin event broker: in-memory publish/subscribe for plugin activations over exact registered descriptor event IDs | [events README](../../python/src/model_deck/engine/plugin_events/README.md) |
 
 ### Projections: host file synchronization
