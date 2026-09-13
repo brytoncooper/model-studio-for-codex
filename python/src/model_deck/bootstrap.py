@@ -16,7 +16,9 @@ from model_deck.adapters.storage.sqlite_model_repository import SQLiteModelRepos
 from model_deck.adapters.storage.sqlite_host_settings import SQLitePreviewStore, SQLiteSaveReceiptStore
 from model_deck.adapters.transport.rendezvous import build_rendezvous_payload, publish_rendezvous_file
 from model_deck.adapters.transport.unix_server import UnixSocketEngineServer
+from model_deck.adapters.transport.framing import encode_frame
 from model_deck.engine.dispatch import EngineDispatch
+from model_deck.engine.kernel_composition import KernelComposition
 from model_deck.engine.connections.use_cases import ListConnectionsUseCase, SaveConnectionUseCase
 from model_deck.engine.model_library.use_cases import (
     ListModelsUseCase,
@@ -76,6 +78,7 @@ def build_engine_server(
     enable_fixture_runs: bool = False,
     host_settings_document: SettingsDocumentPort | None = None,
     host_settings_caller: CallerContext | None = None,
+    kernel_composition: KernelComposition | None = None,
 ) -> EngineRuntime:
     if enable_fixture_runs and not enable_application_state:
         raise ValueError("enable_fixture_runs requires enable_application_state")
@@ -216,6 +219,8 @@ def build_engine_server(
         event_replay=event_replay,
         host_settings=host_settings,
         host_settings_caller=host_settings_caller,
+        kernel_composition=kernel_composition,
+        response_preflight=encode_frame,
     )
 
     socket_path = socket_root / "engine.sock"

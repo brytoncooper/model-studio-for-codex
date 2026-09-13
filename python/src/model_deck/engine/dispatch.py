@@ -5,7 +5,7 @@ import threading
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
 from model_deck_contracts.negotiation import (
@@ -80,6 +80,8 @@ from model_deck.engine.host_settings.ports import (
     SettingsVersionMismatchError,
 )
 from model_deck.engine.host_settings.service import HostSettingsService
+from model_deck.engine.kernel_composition import KernelComposition, KernelInputError, KernelInvocationError
+from model_deck.kernel import CompositionError, GrantDeniedError
 
 SERVER_API = ApiVersion(1, 0)
 SERVER_FEATURES = {"tools": "unsupported", "compaction": "unknown"}
@@ -365,6 +367,8 @@ class EngineDispatch:
         event_replay: RunEventReplayPort | None = None,
         host_settings: HostSettingsService | None = None,
         host_settings_caller: CallerContext | None = None,
+        kernel_composition: KernelComposition | None = None,
+        response_preflight: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         self._list_models = list_models
         self._identity = identity
@@ -385,7 +389,22 @@ class EngineDispatch:
         self._event_replay = event_replay
         self._host_settings = host_settings
         self._host_settings_caller = host_settings_caller
+        self._kernel_composition = kernel_composition
+        self._response_preflight = response_preflight
         self._implemented_methods = self._build_implemented_methods()
+        self._kernel_methods: frozenset[str] = frozenset()
+        if kernel_composition is not None:
+            if not isinstance(kernel_composition, KernelComposition):
+                raise CompositionError("kernel composition must be a KernelComposition")
+            self._kernel_methods = frozenset(row.operation_id for row in kernel_composition.operations())
+            if self._kernel_methods & {entry["operation_id"] for entry in _OPERATION_CATALOG}:
+                raise CompositionError("kernel operation collides with a reserved engine operation")
+            self._implemented_methods |= self._kernel_methods
+            try:
+                validate_schema_ref("contracts/engine.v1/methods/operations.list.result.schema.json",
+                                    {"operations": self._operation_catalog()})
+            except Exception:
+                raise CompositionError("combined operation discovery exceeds the public contract") from None
         self._authenticated_sessions: set[int] = set()
         self._connection_principals: dict[int, str] = {}
         self._subscriptions: dict[str, _ManagedSubscription] = {}
@@ -475,6 +494,8 @@ class EngineDispatch:
             return self._hello(frame.get("id"), params, connection_id)
         if not self._is_authenticated(connection_id):
             return self._domain_error(frame.get("id"), "capability_denied", "authentication required")
+        if method in self._kernel_methods:
+            return self._invoke_kernel(frame.get("id"), method, params)
         if method == "engine.v1.health":
             return self._success(frame.get("id"), {"status": "ok"})
         if method == "engine.v1.operations.list":
@@ -586,10 +607,33 @@ class EngineDispatch:
             return self._error(request_id, -32603, str(exc))
         return self._success(request_id, result)
 
-    def _operations_list(self, request_id: Any) -> dict[str, Any]:
+    def _invoke_kernel(self, request_id: Any, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = self._kernel_composition.invoke(method, params)
+        except KernelInputError:
+            return self._error(request_id, -32602, "invalid operation params")
+        except GrantDeniedError:
+            return self._domain_error(request_id, "capability_denied", "operation grant denied")
+        except KernelInvocationError:
+            return self._domain_error(request_id, "internal", "operation failed")
+        response = self._success(request_id, result)
+        if self._response_preflight is not None:
+            try:
+                self._response_preflight(response)
+            except Exception:
+                return self._domain_error(request_id, "internal", "operation failed")
+        return response
+
+    def _operation_catalog(self) -> list[dict[str, Any]]:
         operations = [
             dict(entry) for entry in _OPERATION_CATALOG if entry["operation_id"] in self._implemented_methods
         ]
+        if self._kernel_composition is not None:
+            operations.extend(self._kernel_composition.catalog())
+        return operations
+
+    def _operations_list(self, request_id: Any) -> dict[str, Any]:
+        operations = self._operation_catalog()
         result = {"operations": operations}
         try:
             validate_schema_ref(
