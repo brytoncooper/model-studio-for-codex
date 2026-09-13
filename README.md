@@ -1,56 +1,46 @@
 # Model Deck
 
-**Use different AI models together, from one native Mac app.**
+Model Deck brings models from OpenAI, Cursor, OpenRouter and compatible endpoints
+into the same Codex workflow. A lead agent can delegate work to different models
+while you keep one project, one conversation and one place to review the results.
 
-Model Deck connects Codex to OpenAI, Cursor, OpenRouter and compatible model
-endpoints. Pick models for different tasks, manage connections, and see which
-account pays for each request.
+## Why use it?
 
-## Why Model Deck?
+Different models are useful for different jobs. You might want a capable model to
+plan a change, a faster model to implement it, and another to review the result.
+Model Deck makes those choices available inside the workflow you're already using.
 
-A coding workflow shouldn't be limited to one model. Use one for implementation,
-another for review, and another for quick, inexpensive tasks—without juggling
-separate apps and conversations.
+The native Mac app lets you:
 
-Model Deck brings model discovery, routing and usage into one place. Codex keeps
-control of tools, approvals and task history. Each model uses its own configured
-connection; subscription allowances, API charges and estimated prices stay distinct.
+- **Choose your models:** browse catalogs and make selected models available to Codex.
+- **Connect your accounts:** use subscription-backed models, paid APIs and local endpoints.
+- **Understand usage:** see the billing route and available usage information, with estimates kept separate from actual charges.
+- **Stay in your workspace:** use the full app or its optional companion panel.
 
-## Using the app
+Codex retains control of tool execution, approvals and task history. Model Deck
+handles the connections and routing between models.
 
-1. Open Model Deck and add a connection.
-2. Browse its models and register the ones you want to use.
-3. Launch Codex from Model Deck to make those models available.
+## Extend Model Deck
 
-The app includes a model library, connection settings, a usage dashboard and an
-optional companion panel. Compatibility depends on the host and provider versions;
-see the [verification notes](VERIFICATION.md) and
-[Cursor integration guide](CURSOR-INTEGRATION.md).
+The architecture is being separated into a provider-independent Python engine,
+explicit host and provider adapters, and a native Swift interface. Each subsystem
+owns its implementation and exposes contracts that other systems can build on.
 
-## Built to extend
+Start with the [subsystem catalog](docs/architecture/CATALOG.md). It links the
+system guides, invariants, APIs and extension points. The
+[standalone provider example](examples/deterministic-provider/README.md) shows a
+plugin running outside the engine through the shared protocol.
 
-We're moving Model Deck toward a small, provider-independent Python engine with a
-native Swift interface. The guiding principle is **independent evolution**: each
-system owns its behavior and data, and connects to others through explicit contracts.
+## Documentation
 
-The kernel registers capabilities. Providers handle inference. Host adapters connect
-coding tools. The Mac app supplies the interface and platform services. New features
-should fit behind those boundaries without rewriting the engine.
+- [Architecture and principles](docs/plans/plugin-architecture/PLAN.md)
+- [API contracts](contracts/README.md)
+- [Building and packaging](scripts/package/README.md)
+- [Compatibility and verification](VERIFICATION.md)
+- [Cursor integration](CURSOR-INTEGRATION.md)
+- [Implementation status](docs/plans/plugin-architecture/STATUS.md)
 
-**This architecture is still being implemented.** The current app integrates with
-Codex on macOS; other hosts and platforms are possible future adaptations, not
-supported products today. The external plugin runtime has a working deterministic
-provider example; the complete plugin authoring and installation workflow is unfinished.
-
-## Explore the project
-
-| Start here | What you'll find |
-| --- | --- |
-| [Subsystem catalog](docs/architecture/CATALOG.md) | System guides, contracts, invariants and extension points |
-| [Architecture plan](docs/plans/plugin-architecture/PLAN.md) | Boundaries and independent evolution principles |
-| [Delivery checklist](docs/plans/plugin-architecture/STATUS.md) | Implemented, verified and remaining work |
-| [API contracts](contracts/README.md) | Shared schemas and protocol definitions |
-| [External provider example](examples/deterministic-provider/README.md) | A standalone plugin and its integration tests |
-| [Isolated app staging](scripts/package/README.md) | Build inputs, packaging and qualification requirements |
+The current app targets Codex on macOS. The plugin architecture and complete
+plugin-authoring workflow are still in development.
 
 Independent project; not affiliated with OpenAI, Cursor or OpenRouter.
