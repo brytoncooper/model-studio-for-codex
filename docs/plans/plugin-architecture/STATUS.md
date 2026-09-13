@@ -43,7 +43,7 @@ commit counts or the number of task headings.
 | B20 Package lifecycle | Artifact staging, lifecycle service, SQLite lifecycle transactions and versioned-data contract reviewed | Integrate real activation, versioned data and public lifecycle dispatch |
 | B21 Extension UI | Declarative schema, immutable decoder and native renderer reviewed | Public panel delivery, app attachment and extension management |
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
-| B23 Author tooling | Generic authenticated CLI invocation reviewed and pushed | SDK, author workflow and JavaScript fixture |
+| B23 Author tooling | Generic CLI invocation and plugin validate/pack reviewed and pushed | SDK, init/dev/test workflow and JavaScript fixture |
 | B24 Restricted execution | Reviewed feasibility document; no restricted runtime implemented | Isolated OS enforcement investigation and qualification |
 | B25 Native parity | Catalog path, authenticated settings persistence and native settings screen reviewed | App attachment and remaining native features |
 | B26 Distribution/docs | Isolated staging packager and subsystem catalog reviewed | Real staged packaging, compatibility wrappers and aggregate gate |
@@ -382,3 +382,18 @@ still needs HTTP execution composition and normalized host input.
 
 Next / upcoming task: review normalized message contracts and authoring repairs;
 implement the real lease adapter, Codex input conversion and JavaScript fixture.
+
+## Accepted normalized input and authoring commands
+
+`d91a23b` adds provider-neutral message/tool-history values and strict conversion.
+Nine focused tests plus independent privacy/Unicode probes passed; all 57 contract
+tests passed and all 200 schemas match both packaged copies. Existing public run
+input remains unmigrated pending coordinated host/provider adoption.
+
+`063bab9` adds `plugin validate` and `plugin pack`. Independent review and the
+parent passed 49 authoring/CLI tests. Finished archives are validated before
+atomic no-overwrite publication; bounded traversal/read and competing writer
+regressions passed. This does not complete SDK packaging or init/dev/test.
+
+Next / upcoming task: finish lease ownership review, host input conversion,
+provider request mapping and JavaScript protocol verification.

@@ -123,3 +123,10 @@ defines generation binding and the shared write barrier required for updates.
 | Deterministic port guidance | [deterministic ports](../../python/src/model_deck/adapters/providers/DETERMINISTIC.md) |
 | Deterministic provider example: standalone stdio subprocess fixture speaking `provider.execution/v1`, text/tool/wait/failure modes | [deterministic provider README](../../examples/deterministic-provider/README.md) |
 | Isolated app staging: `stage.py` packaging primitive assembling fresh legacy-compatible macOS app, inputs/guards | [staging guide](../../scripts/package/README.md) |
+
+## Authoring and normalized messages
+
+| System | Guide |
+| --- | --- |
+| Provider-neutral message values and strict codec | [Message contract](../../python/src/model_deck/engine/runs/INPUT.md) |
+| External plugin validation and deterministic packaging | [Authoring guide](../../python/src/model_deck/plugins/authoring/README.md) |
