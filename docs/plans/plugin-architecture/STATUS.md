@@ -387,8 +387,8 @@ implement the real lease adapter, Codex input conversion and JavaScript fixture.
 
 `d91a23b` adds provider-neutral message/tool-history values and strict conversion.
 Nine focused tests plus independent privacy/Unicode probes passed; all 57 contract
-tests passed and all 200 schemas match both packaged copies. Existing public run
-input remains unmigrated pending coordinated host/provider adoption.
+tests passed and all 200 schemas match both packaged copies. Public run
+input subsequently migrated in `3142779`, as recorded below.
 
 `063bab9` adds `plugin validate` and `plugin pack`. Independent review and the
 parent passed 49 authoring/CLI tests. Finished archives are validated before
@@ -412,3 +412,17 @@ production composition remain separate work.
 
 Next: public normalized-input admission, HTTP execution, JavaScript protocol
 verification, and real extension activation composition.
+
+## Accepted public normalized-input admission
+
+`3142779` enforces canonical tagged input before admission side effects and
+updates source fixtures and both packaged schema bundles. Independent review
+passed 50 focused tests and hash/zero-effect probes. Root generation validated
+200 schemas, full bundle byte parity, and 57 contract tests with 224 subtests.
+Stored legacy recovery is preserved explicitly; this is not a database migration.
+
+The wider engine check passed 902 tests and 386 subtests, with two stale test
+failures (a moved CLI import patch and a working-directory-dependent source path).
+The repaired modules passed 57 tests and 6 subtests from the repository root;
+independent review accepted both repairs and passed 57 tests from `python/`.
+This check does not qualify the complete app or close B27.

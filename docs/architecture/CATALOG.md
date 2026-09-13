@@ -80,6 +80,8 @@ defines generation binding and the shared write barrier required for updates.
 | Legacy import preview: deterministic, redacted, read-only fixture-only preview of legacy routing state | [migration preview README](../../python/src/model_deck/integrations/hosts/codex/migration_preview/README.md) |
 | Cursor provider guide | [Cursor provider](../providers/cursor.md) |
 | Cursor process adapter: `CursorProcessRuntime` over injected process port, event/tool-alias/usage normalization wiring | [process runtime guide](../../python/src/model_deck/integrations/providers/cursor/PROCESS_RUNTIME.md) |
+| Codex input normalization: host history converted to provider-neutral engine messages | [input guide](../../python/src/model_deck/integrations/hosts/codex/INPUT_NORMALIZATION.md) |
+| Provider request mapping: canonical runs to Responses and chat bodies | [mapping guide](../../python/src/model_deck/integrations/providers/openai_compatible/REQUEST_MAPPING.md) |
 | OpenAI-compatible streaming boundary: decodes stream bytes, checks run-event ordering; no HTTP/credentials/history | [streaming README](../../python/src/model_deck/integrations/providers/openai_compatible/README.md) |
 | OpenAI-compatible request translation: pure Responses-to-chat-completions translation | [translation guide](../../python/src/model_deck/integrations/providers/openai_compatible/TRANSLATION.md) |
 | Provider continuation helpers: verbatim-behavior extracts for compaction and continuation translation | [continuation README](../../python/src/model_deck/integrations/providers/continuation/README.md) |
@@ -100,6 +102,7 @@ defines generation binding and the shared write barrier required for updates.
 
 | Subsystem | Guide |
 |---|---|
+| Engine lease adapter: lifecycle ownership bound to the held process lease | [lease guide](../../python/src/model_deck/adapters/platform/macos/EXTENSION_LEASE.md) |
 | Plugin contracts (`contracts/plugin.v1/`) | [contracts README](../../contracts/README.md) |
 | External provider proxy: activation/run ownership, tool state and ordered event delivery | [provider proxy guide](../../python/src/model_deck/plugins/provider_proxy/README.md) |
 | Manifest inspection: pure in-memory validation against the frozen manifest schema | [manifest inspection README](../../python/src/model_deck/plugins/manifest_inspection/README.md) |
