@@ -4,21 +4,11 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "descriptor": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "panel_id": {
-          "$ref": "../../common/types.schema.json#/definitions/reverse_domain_id"
-        },
-        "schema_id": {
-          "type": "string",
-          "maxLength": 256
-        }
-      }
+    "panel": {
+      "$ref": "../../ui.panel.v1/tree.schema.json"
     }
   },
   "required": [
-    "descriptor"
+    "panel"
   ]
 }

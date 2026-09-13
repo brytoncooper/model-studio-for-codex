@@ -9,10 +9,14 @@
     },
     "input": {
       "$ref": "../../common/types.schema.json#/definitions/json_value"
+    },
+    "broker_context": {
+      "$ref": "../broker_context.schema.json"
     }
   },
   "required": [
     "operation_id",
-    "input"
+    "input",
+    "broker_context"
   ]
 }
