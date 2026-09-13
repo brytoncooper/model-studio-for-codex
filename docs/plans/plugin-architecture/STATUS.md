@@ -32,7 +32,7 @@ commit counts or the number of task headings.
 | B09 Projections | Committed snapshots, invalidation receipts and historical dependency recovery reviewed | Complete fixture composition and conflict resolution |
 | B10 Host bridge | Legacy bridge retained; new host helpers written | Extract and compose actual host bridge/launch policy |
 | B11 Migration | Preview supports preparation | Offline apply, recovery and rollback rehearsal |
-| B12 Sessions/runs | Durable fixture run path and exclusive-lock startup recovery integrated | Complete run/provider gate |
+| B12 Sessions/runs | Durable run path, exclusive-lock recovery and injected provider bootstrap reviewed | Complete real-provider and run acceptance gate |
 | B13 HTTP providers | Streaming, request helpers and owned HTTP transport reviewed | Provider execution composition, fallback and parity |
 | B14 Cursor provider | Coordinator and injected legacy-process adapter independently reviewed | Root SDK composition and parity |
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
@@ -192,7 +192,7 @@ lookup without source, and staged application behavior remain unverified.
 ## Current independent work
 
 - Extension lifecycle service review and cross-process storage tests.
-- Provider bootstrap validation repair and independent review.
+- Archived external provider integration through the public engine socket.
 - Native panel validation repair after independent Swift tests found failures.
 - Notebook protocol and HTTP provider composition boundary checks.
 
@@ -207,6 +207,14 @@ for all six mutations, and expose revision on get. Independent Sol review passed
 38 validation cases and verified canonical/Python/Swift copies match. The panel
 schema is also bundled in both languages. These contracts do not establish that
 extension commands are wired into public dispatch.
+
+Provider composition `1ba61e9`: bootstrap accepts an injected execution provider
+and copied route definitions, sharing the existing durable sessions, runs,
+recovery and usage services. Independent repair review passed 43 focused tests;
+the author ran 120 regressions. Invalid capability references fail before state
+creation, caller mutations cannot alter captured routes, and the caller retains
+provider cleanup ownership. Real archived-provider socket integration is next;
+live SDK behavior remains unqualified.
 
 The source audit exposed real missing integration and verification work. Earlier
 conversation percentages were estimates, not a measured delivery baseline; this
