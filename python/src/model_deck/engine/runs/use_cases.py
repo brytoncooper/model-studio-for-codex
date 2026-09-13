@@ -39,6 +39,7 @@ from model_deck.engine.runs.ports import (
     RunRequest,
     RunState,
     RunStateConflictError,
+    RunTerminalConflictError,
     StartRunCommand,
     SubmitToolResultCommand,
     SubmitToolResultResult,
@@ -714,22 +715,30 @@ class CancelRunUseCase:
                 refreshed = self._runs.get(GetRunCommand(run_id=run_id))
                 if refreshed.state not in TERMINAL_RUN_STATES:
                     expected = _active_state(refreshed)
-                    completion = self._runs.complete_terminal(
-                        CompleteTerminalCommand(
-                            run_id=run_id,
-                            expected_state=expected,
-                            terminal_result=TerminalResult(
-                                outcome=TerminalOutcome.CANCELLED,
-                                error=None,
-                            ),
-                            final_event_kind="run.cancelled",
-                            final_event_payload={
-                                "terminal_result": {"outcome": "cancelled"}
-                            },
-                            observed_at=self._cancel_deadline,
+                    try:
+                        completion = self._runs.complete_terminal(
+                            CompleteTerminalCommand(
+                                run_id=run_id,
+                                expected_state=expected,
+                                terminal_result=TerminalResult(
+                                    outcome=TerminalOutcome.CANCELLED,
+                                    error=None,
+                                ),
+                                final_event_kind="run.cancelled",
+                                final_event_payload={
+                                    "terminal_result": {"outcome": "cancelled"}
+                                },
+                                observed_at=self._cancel_deadline,
+                            )
                         )
-                    )
-                    self._coordinator._publish(completion.event)
+                    except RunTerminalConflictError:
+                        # The provider may commit a terminal after our read. The
+                        # persisted winner is authoritative; never publish twice.
+                        winner = self._runs.get(GetRunCommand(run_id=run_id))
+                        if winner.state not in TERMINAL_RUN_STATES:
+                            raise
+                    else:
+                        self._coordinator._publish(completion.event)
                     self._coordinator.pop_handle(run_id)
         refreshed = self._runs.get(GetRunCommand(run_id=run_id))
         return {"accepted": True, "state": refreshed.state.value}
