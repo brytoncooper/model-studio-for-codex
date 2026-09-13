@@ -53,7 +53,10 @@ full parity: maintain and verify cross-system behavior coverage.
 
 Use fresh worker contexts with this policy and a concise assignment; avoid
 inheriting long conversation histories or obsolete process instructions.
-Current requested implementation models: MiniMax-M3 and Muse Spark 1.3. Choose bounded assignments based on observed results.
+Use MiniMax-M3 for implementation subagents. GPT-5.6 Sol may be used when its
+judgment is useful. Do not use Muse or Cursor models. If the MiniMax-M3 agent
+route is unavailable, report that accurately and use permitted Sol workers for
+appropriate bounded work.
 No new synthetic comparisons unless requested.
 
 The lead owns cross-system decisions and final integration review. Coordinate
