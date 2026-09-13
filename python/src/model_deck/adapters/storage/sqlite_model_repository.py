@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from model_deck.adapters.storage.sqlite_model_schema import ensure_model_schema
 
 from model_deck.adapters.storage.sqlite_outbox import (
     ensure_projection_outbox_schema,
@@ -25,28 +26,6 @@ from model_deck.engine.model_library.ports import (
 _OPERATION_REGISTER = "register"
 _OPERATION_RENAME = "rename"
 _OPERATION_REMOVE = "remove"
-
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS registered_models (
-    registration_id TEXT PRIMARY KEY,
-    connection_id TEXT NOT NULL,
-    provider_model_id TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    active INTEGER NOT NULL CHECK (active IN (0, 1))
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_registered_models_active_pair
-    ON registered_models (connection_id, provider_model_id)
-    WHERE active = 1;
-CREATE TABLE IF NOT EXISTS model_idempotency (
-    operation TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
-    request_payload TEXT NOT NULL,
-    result_payload TEXT NOT NULL,
-    PRIMARY KEY (operation, idempotency_key)
-);
-"""
-
 
 class SQLiteModelRepository:
     def __init__(
@@ -268,7 +247,7 @@ class SQLiteModelRepository:
         return conn
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        conn.executescript(_SCHEMA_SQL)
+        ensure_model_schema(conn)
         ensure_projection_outbox_schema(conn)
 
 

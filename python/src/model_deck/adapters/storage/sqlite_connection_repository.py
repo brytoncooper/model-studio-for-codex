@@ -4,6 +4,8 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Any
+from model_deck.adapters.storage.sqlite_model_schema import ensure_model_schema
+from model_deck.adapters.storage.sqlite_model_projection_invalidation import invalidate_connection_models
 
 from model_deck.adapters.storage.sqlite_outbox import (
     ensure_projection_outbox_schema,
@@ -81,6 +83,7 @@ class SQLiteConnectionRepository:
                     endpoint_config_ref=record.endpoint_config_ref,
                     credential_ref=record.credential_ref,
                 )
+                invalidate_connection_models(conn, connection_id=record.connection_id)
                 result_payload = _serialize_result(record)
                 conn.execute(
                     "INSERT INTO connection_idempotency "
@@ -166,6 +169,7 @@ class SQLiteConnectionRepository:
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript(_SCHEMA_SQL)
         ensure_projection_outbox_schema(conn)
+        ensure_model_schema(conn)
 
 
 def _row_to_record(row: tuple[Any, ...]) -> ConnectionRecord:
