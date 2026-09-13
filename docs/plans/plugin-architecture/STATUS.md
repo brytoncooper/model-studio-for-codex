@@ -191,10 +191,14 @@ lookup without source, and staged application behavior remain unverified.
 
 ## Current independent work
 
-- Extension lifecycle service review and cross-process storage tests.
+- Extension lifecycle service repair: preserve completed freeze evidence through
+  crash recovery and share recovery execution ownership across service instances.
+- Cross-process lifecycle storage tests.
 - Archived external provider integration through the public engine socket.
 - Native panel validation repair after independent Swift tests found failures.
 - Notebook protocol and HTTP provider composition boundary checks.
+- Normalized run-options contracts for provider parity; persistence and consumers
+  will follow the shared contract review.
 
 SQLite lifecycle repository `755ef2a`: 19 focused repository/port tests passed
 in implementation and independent Sol review. Claims, phase revisions, selected
