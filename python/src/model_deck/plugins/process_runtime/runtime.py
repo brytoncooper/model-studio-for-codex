@@ -1,36 +1,46 @@
-"""One owned child, one stdout reader, bounded lifecycle/provider exchanges."""
+"""One owned child with bounded lifecycle, invocation, broker, and provider I/O."""
 from __future__ import annotations
 
 import copy
 import math
 import os
+import queue
 import select
 import subprocess
 import threading
 import time
 from collections import deque
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import Any
 
 from model_deck.plugins.lifecycle_session import LifecycleSession
 from model_deck.plugins.lifecycle_session.errors import SessionError
 from model_deck.plugins.stdio_codec import CodecError, StdioCodec, encode_frame
 
+from model_deck_contracts.inventory import iter_inventory_methods
 from model_deck_contracts.validator import SchemaValidationError, validate_schema_ref
 
 from .channel import ProviderChannel, ProviderMethod
 from .errors import ProcessRuntimeError, ProcessRuntimeErrorCode
+from .invocation_channel import BrokerRequestHandler, InvocationChannel
 
 _METHODS = {
     "hello": "plugin.v1.lifecycle.hello",
     "activate": "plugin.v1.lifecycle.activate",
     "drain": "plugin.v1.lifecycle.drain",
 }
+_INVOKE_METHOD = "plugin.v1.invoke"
+_BROKER_METHOD_PREFIX = "plugin.v1.broker."
+_INVENTORY_BROKER_METHODS = frozenset(
+    method for method in iter_inventory_methods() if method.startswith(_BROKER_METHOD_PREFIX)
+)
 
 _MAX_STDERR_RETAINED = 1_048_576
 _MAX_TIMEOUT_S = 60.0
 _MAX_FRAMES = 1024
+_BROKER_WORKER_COUNT = 2
+_BROKER_ERROR_CODE = -32000
 
 
 @dataclass(frozen=True)
@@ -113,11 +123,24 @@ class _PendingRequest:
     frames_seen: int = 0
 
 
+@dataclass(frozen=True)
+class _BrokerRequest:
+    request_id: int | str
+    method: str
+    params: dict[str, Any]
+    deadline: float
+    is_allowed_by_runtime: bool
+
+
 @dataclass
 class ProcessRuntime:
     """Owns one injected child process for lifecycle exchange."""
 
     config: ProcessRuntimeConfig
+    allowed_broker_methods: InitVar[tuple[str, ...]] = field(default=(), kw_only=True)
+    broker_request_handler: InitVar[BrokerRequestHandler | None] = field(
+        default=None, kw_only=True
+    )
     _proc: subprocess.Popen | None = field(default=None, init=False, repr=False)
     _request_id: int = field(default=0, init=False, repr=False)
     _stderr_tail: bytes = field(default=b"", init=False, repr=False)
@@ -139,6 +162,45 @@ class ProcessRuntime:
     _event_bytes: int = field(default=0, init=False, repr=False)
     _session: LifecycleSession | None = field(default=None, init=False, repr=False)
     _activation_id: str | None = field(default=None, init=False, repr=False)
+    _allowed_broker_methods: frozenset[str] = field(
+        default_factory=frozenset, init=False, repr=False
+    )
+    _broker_request_handler: BrokerRequestHandler | None = field(
+        default=None, init=False, repr=False
+    )
+    _broker_requests: queue.Queue[_BrokerRequest] = field(init=False, repr=False)
+    _broker_request_ids: set[int | str] = field(
+        default_factory=set, init=False, repr=False
+    )
+    _broker_request_deadlines: dict[int | str, float] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _broker_threads: list[threading.Thread] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _broker_deadline_thread: threading.Thread | None = field(
+        default=None, init=False, repr=False
+    )
+
+    def __post_init__(
+        self,
+        allowed_broker_methods: tuple[str, ...],
+        broker_request_handler: BrokerRequestHandler | None,
+    ) -> None:
+        if type(allowed_broker_methods) is not tuple:
+            raise ProcessRuntimeError("protocol", "allowed broker methods must be a tuple")
+        if any(
+            type(method) is not str or method not in _INVENTORY_BROKER_METHODS
+            for method in allowed_broker_methods
+        ):
+            raise ProcessRuntimeError("protocol", "allowed broker method is not in the inventory")
+        if len(set(allowed_broker_methods)) != len(allowed_broker_methods):
+            raise ProcessRuntimeError("protocol", "allowed broker methods contain duplicates")
+        if broker_request_handler is not None and not callable(broker_request_handler):
+            raise ProcessRuntimeError("protocol", "broker request handler must be callable")
+        self._allowed_broker_methods = frozenset(allowed_broker_methods)
+        self._broker_request_handler = broker_request_handler
+        self._broker_requests = queue.Queue(maxsize=self.config.max_pending_requests)
 
     def __repr__(self) -> str:
         return f"ProcessRuntime(closed={self._closed!r})"
@@ -204,6 +266,21 @@ class ProcessRuntime:
         thread = threading.Thread(target=self._drain_stderr, daemon=True)
         self._stderr_thread = thread
         thread.start()
+        for index in range(_BROKER_WORKER_COUNT):
+            broker_thread = threading.Thread(
+                target=self._service_broker_requests,
+                name=f"model-deck-broker-{index + 1}",
+                daemon=True,
+            )
+            self._broker_threads.append(broker_thread)
+            broker_thread.start()
+        deadline_thread = threading.Thread(
+            target=self._enforce_broker_request_deadlines,
+            name="model-deck-broker-deadlines",
+            daemon=True,
+        )
+        self._broker_deadline_thread = deadline_thread
+        deadline_thread.start()
         reader = threading.Thread(target=self._read_stdout, args=(self._proc,), daemon=True)
         self._reader_thread = reader
         reader.start()
@@ -255,6 +332,82 @@ class ProcessRuntime:
         finally:
             self._lifecycle_lock.release()
 
+    def invocation_channel(self) -> InvocationChannel:
+        """Return a generic invocation view only for the active bound session."""
+        try:
+            with self._condition:
+                self._require_invocation()
+        except ProcessRuntimeError as failure:
+            if self._activation_id is not None:
+                self._stop(failure)
+            raise
+        return InvocationChannel(self)
+
+    def _require_invocation(self) -> None:
+        self._raise_if_closed()
+        if self._activation_id is None or self._session is None:
+            raise ProcessRuntimeError("protocol", "plugin activation is not established")
+        if self._session.activation_id != self._activation_id:
+            raise ProcessRuntimeError("protocol", "plugin activation identity changed")
+        if self._session.state != "active":
+            raise ProcessRuntimeError("protocol", "plugin invocation is not available")
+
+    def _invocation_activation_id(self) -> str:
+        try:
+            with self._condition:
+                self._require_invocation()
+                assert self._activation_id is not None
+                return self._activation_id
+        except ProcessRuntimeError as failure:
+            self._stop(failure)
+            raise
+
+    @staticmethod
+    def _validate_invocation(kind: str, payload: Any) -> None:
+        try:
+            validate_schema_ref(
+                f"contracts/plugin.v1/lifecycle/invoke.{kind}.schema.json",
+                payload,
+            )
+        except (SchemaValidationError, ValueError, TypeError, RecursionError):
+            raise ProcessRuntimeError(
+                "protocol", "invocation payload failed schema validation"
+            ) from None
+
+    def _invocation_request(
+        self,
+        operation_id: str,
+        input: Any,
+        broker_context: Mapping[str, Any],
+        timeout_s: float | None,
+    ) -> dict[str, Any]:
+        try:
+            if not isinstance(broker_context, Mapping):
+                raise ProcessRuntimeError("protocol", "broker context must be an object")
+            try:
+                payload = copy.deepcopy(
+                    {
+                        "operation_id": operation_id,
+                        "input": input,
+                        "broker_context": dict(broker_context),
+                    }
+                )
+            except Exception:
+                raise ProcessRuntimeError(
+                    "protocol", "invocation params could not be copied"
+                ) from None
+            self._validate_invocation("params", payload)
+            with self._condition:
+                self._require_invocation()
+                if payload["broker_context"]["activation_id"] != self._activation_id:
+                    raise ProcessRuntimeError(
+                        "protocol", "broker context activation does not match runtime"
+                    )
+            return self._exchange_guarded(_INVOKE_METHOD, payload, timeout_s)
+        except ProcessRuntimeError as failure:
+            self._stop(failure)
+            raise
+
     def provider_channel(self) -> ProviderChannel:
         try:
             with self._condition:
@@ -293,6 +446,30 @@ class ProcessRuntime:
             validate_schema_ref(f"contracts/plugin.v1/provider/{name}.{kind}.schema.json", payload)
         except (SchemaValidationError, ValueError, TypeError, RecursionError):
             raise ProcessRuntimeError("protocol", "provider payload failed schema validation") from None
+
+    def _require_broker_activation(self) -> None:
+        self._raise_if_closed()
+        if self._activation_id is None or self._session is None:
+            raise ProcessRuntimeError("protocol", "broker activation is not established")
+        if self._session.activation_id != self._activation_id:
+            raise ProcessRuntimeError("protocol", "broker activation identity changed")
+        if self._session.state not in ("active", "draining"):
+            raise ProcessRuntimeError("protocol", "broker activation is not available")
+
+    @staticmethod
+    def _validate_broker(method: str, kind: str, payload: Any) -> None:
+        if method not in _INVENTORY_BROKER_METHODS:
+            raise ProcessRuntimeError("protocol", "broker method is not in the inventory")
+        name = method.removeprefix(_BROKER_METHOD_PREFIX)
+        try:
+            validate_schema_ref(
+                f"contracts/plugin.v1/broker/{name}.{kind}.schema.json",
+                payload,
+            )
+        except (SchemaValidationError, ValueError, TypeError, RecursionError):
+            raise ProcessRuntimeError(
+                "protocol", "broker payload failed schema validation"
+            ) from None
 
     def _provider_request(self, method, params, timeout_s):
         try:
@@ -351,7 +528,16 @@ class ProcessRuntime:
             proc, self._proc = self._proc, None
             self._events.clear()
             self._event_bytes = 0
+            self._broker_request_ids.clear()
+            self._broker_request_deadlines.clear()
             self._condition.notify_all()
+        while True:
+            try:
+                self._broker_requests.get_nowait()
+            except queue.Empty:
+                break
+            else:
+                self._broker_requests.task_done()
         try:
             if proc is not None:
                 self._terminate_and_reap(proc)
@@ -360,9 +546,15 @@ class ProcessRuntime:
                         proc.stdin.close()
                     except (OSError, ValueError):
                         pass
-            for thread in (self._reader_thread, self._stderr_thread):
+            threads = (
+                self._reader_thread,
+                self._stderr_thread,
+                self._broker_deadline_thread,
+                *self._broker_threads,
+            )
+            for thread in threads:
                 if thread is not None and thread is not threading.current_thread():
-                    thread.join(timeout=1.0)
+                    thread.join(timeout=0.2 if thread in self._broker_threads else 1.0)
             self._snapshot_stderr_tail()
         finally:
             self._cleanup_done.set()
@@ -443,18 +635,71 @@ class ProcessRuntime:
                 with self._condition:
                     # Commit the batch only after every frame validates. A valid
                     # hello bundled with an unknown reply must never succeed.
-                    responses, events = [], []
+                    responses, events, broker_requests = [], [], []
                     batch_ids = set()
+                    batch_broker_ids = set()
                     byte_count = self._event_bytes
                     for pending in self._pending.values():
-                        if pending.method.startswith("plugin.v1.lifecycle."):
+                        if (
+                            pending.method.startswith("plugin.v1.lifecycle.")
+                            or pending.method == _INVOKE_METHOD
+                        ):
                             pending.frames_seen += len(frames)
                             if pending.frames_seen > self.config.max_frames:
-                                raise ProcessRuntimeError("frame_limit", "lifecycle frame limit exceeded")
+                                raise ProcessRuntimeError(
+                                    "frame_limit", "lifecycle frame limit exceeded"
+                                )
                     for frame in frames:
                         if frame.get("jsonrpc") != "2.0":
                             raise ProcessRuntimeError("protocol", "invalid JSON-RPC envelope")
                         if "method" in frame:
+                            if "id" in frame:
+                                if set(frame) != {"jsonrpc", "id", "method", "params"}:
+                                    raise ProcessRuntimeError(
+                                        "protocol", "invalid worker request envelope"
+                                    )
+                                broker_request_id = frame["id"]
+                                if type(broker_request_id) not in (int, str):
+                                    raise ProcessRuntimeError(
+                                        "protocol", "worker request id must be an integer or string"
+                                    )
+                                if (
+                                    broker_request_id in self._broker_request_ids
+                                    or broker_request_id in batch_broker_ids
+                                ):
+                                    raise ProcessRuntimeError(
+                                        "id_mismatch", "duplicate worker request id"
+                                    )
+                                if (
+                                    len(self._broker_request_ids) + len(batch_broker_ids)
+                                    >= self.config.max_pending_requests
+                                ):
+                                    raise ProcessRuntimeError(
+                                        "frame_limit", "pending broker request limit exceeded"
+                                    )
+                                self._require_broker_activation()
+                                method = frame["method"]
+                                self._validate_broker(method, "params", frame["params"])
+                                try:
+                                    params = copy.deepcopy(dict(frame["params"]))
+                                except Exception:
+                                    raise ProcessRuntimeError(
+                                        "protocol", "broker params could not be copied"
+                                    ) from None
+                                batch_broker_ids.add(broker_request_id)
+                                broker_requests.append(
+                                    _BrokerRequest(
+                                        request_id=broker_request_id,
+                                        method=method,
+                                        params=params,
+                                        deadline=time.monotonic()
+                                        + float(self.config.timeout_s),
+                                        is_allowed_by_runtime=(
+                                            method in self._allowed_broker_methods
+                                        ),
+                                    )
+                                )
+                                continue
                             if (set(frame) != {"jsonrpc", "method", "params"}
                                     or frame["method"] != "plugin.v1.provider.event"):
                                 raise ProcessRuntimeError("protocol", "worker notification is not allowed")
@@ -478,8 +723,21 @@ class ProcessRuntime:
                             raise ProcessRuntimeError("protocol", "worker request failed")
                         if pending.method.startswith("plugin.v1.provider."):
                             self._validate_provider(pending.method, "result", frame["result"])
+                        elif pending.method == _INVOKE_METHOD:
+                            self._validate_invocation("result", frame["result"])
                         batch_ids.add(request_id)
                         responses.append((pending, frame["result"]))
+                    for broker_request in broker_requests:
+                        self._broker_request_ids.add(broker_request.request_id)
+                        self._broker_request_deadlines[
+                            broker_request.request_id
+                        ] = broker_request.deadline
+                        try:
+                            self._broker_requests.put_nowait(broker_request)
+                        except queue.Full:
+                            raise ProcessRuntimeError(
+                                "frame_limit", "pending broker request queue exceeded"
+                            ) from None
                     for pending, result in responses:
                         pending.result = result
                     self._events.extend(events)
@@ -489,6 +747,127 @@ class ProcessRuntime:
             self._stop(failure)
         except (OSError, ValueError, CodecError):
             self._stop(ProcessRuntimeError("transport", "child frame transport failed"))
+
+    def _enforce_broker_request_deadlines(self) -> None:
+        while True:
+            with self._condition:
+                if self._closed:
+                    return
+                if not self._broker_request_deadlines:
+                    self._condition.wait()
+                    continue
+                next_deadline = min(self._broker_request_deadlines.values())
+                remaining = next_deadline - time.monotonic()
+                if remaining > 0:
+                    self._condition.wait(remaining)
+                    continue
+            self._stop(ProcessRuntimeError("timeout", "broker request timed out"))
+            return
+
+    def _service_broker_requests(self) -> None:
+        while True:
+            with self._condition:
+                if self._closed:
+                    return
+            try:
+                request = self._broker_requests.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            try:
+                self._service_broker_request(request)
+            except Exception:
+                self._stop(
+                    ProcessRuntimeError("transport", "broker request worker failed")
+                )
+            finally:
+                self._broker_requests.task_done()
+
+    def _service_broker_request(self, request: _BrokerRequest) -> None:
+        try:
+            with self._condition:
+                self._require_broker_activation()
+                activation_id = self._activation_id
+                handler = self._broker_request_handler
+            if not request.is_allowed_by_runtime or handler is None:
+                raise ProcessRuntimeError("protocol", "broker request denied")
+            assert activation_id is not None
+            try:
+                result = handler(activation_id, request.method, request.params)
+            except Exception:
+                raise ProcessRuntimeError(
+                    "protocol", "broker request handler rejected request"
+                ) from None
+            if time.monotonic() >= request.deadline:
+                raise ProcessRuntimeError("timeout", "broker request timed out")
+            if not isinstance(result, Mapping):
+                raise ProcessRuntimeError("protocol", "broker result must be an object")
+            try:
+                payload = copy.deepcopy(dict(result))
+            except Exception:
+                raise ProcessRuntimeError(
+                    "protocol", "broker result could not be copied"
+                ) from None
+            self._validate_broker(request.method, "result", payload)
+            self._send_broker_response(request, result=payload)
+        except ProcessRuntimeError as failure:
+            self._send_broker_error(request)
+            self._stop(failure)
+
+    def _send_broker_response(
+        self,
+        request: _BrokerRequest,
+        *,
+        result: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> None:
+        if result is None and error is None:
+            raise ProcessRuntimeError("protocol", "broker response is empty")
+        if result is not None and error is not None:
+            raise ProcessRuntimeError("protocol", "broker response is ambiguous")
+        response: dict[str, Any] = {"jsonrpc": "2.0", "id": request.request_id}
+        if result is not None:
+            response["result"] = result
+        else:
+            response["error"] = error
+        try:
+            frame = encode_frame(response)
+        except CodecError as failure:
+            code = "frame_limit" if failure.code == "frame_too_large" else "protocol"
+            raise ProcessRuntimeError(
+                code, "broker response could not be encoded"
+            ) from None
+        remaining = request.deadline - time.monotonic()
+        if remaining <= 0:
+            raise ProcessRuntimeError("timeout", "broker response timed out")
+        if not self._write_lock.acquire(timeout=remaining):
+            raise ProcessRuntimeError("timeout", "broker response write timed out")
+        try:
+            with self._condition:
+                if self._closed:
+                    return
+                self._require_broker_activation()
+                proc = self._proc
+                self._broker_request_deadlines.pop(request.request_id, None)
+                self._condition.notify_all()
+            assert proc is not None
+            self._write_frame(proc, frame, request.deadline, request.method)
+            with self._condition:
+                self._broker_request_ids.discard(request.request_id)
+                self._condition.notify_all()
+        finally:
+            self._write_lock.release()
+
+    def _send_broker_error(self, request: _BrokerRequest) -> None:
+        try:
+            self._send_broker_response(
+                request,
+                error={
+                    "code": _BROKER_ERROR_CODE,
+                    "message": "broker request denied",
+                },
+            )
+        except (ProcessRuntimeError, OSError, ValueError, CodecError):
+            return
 
     def _write_frame(
         self, proc: subprocess.Popen, frame: bytes, deadline: float, method: str
