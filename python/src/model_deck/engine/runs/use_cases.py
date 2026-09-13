@@ -53,6 +53,7 @@ from model_deck.engine.runs.ports import (
     ToolDefinition,
     ToolResultIdempotencyConflictError,
 )
+from model_deck.engine.runs.input_codec import parse_normalized_messages
 from model_deck.engine.runs.options import parse_run_options, run_options_to_wire
 from model_deck.engine.runs.tool_definitions import parse_tool_definitions, tool_definitions_to_wire
 from model_deck.engine.sessions.ports import GetSessionCommand, SessionRepository
@@ -65,7 +66,6 @@ _OPAQUE_REF_PATTERN = re.compile(r"^ref:[a-z][a-z0-9._-]{0,120}$")
 _MAX_IDEMPOTENCY_KEY = 128
 _MAX_CLIENT_REQUEST_ID = 64
 _MAX_TOOL_FIELD = 128
-_MAX_MESSAGES = 256
 _MAX_TOOLS = 128
 
 _MAX_JSON_STRING = 1 << 20
@@ -262,12 +262,7 @@ def _validate_input_block(value: Any) -> NormalizedRunInput:
     if "messages" not in value:
         return NormalizedRunInput()
     messages = value["messages"]
-    if not isinstance(messages, list):
-        raise ValueError("input.messages must be an array")
-    if len(messages) > _MAX_MESSAGES:
-        raise ValueError("input.messages must contain at most 256 items")
-    normalized = tuple(_validate_json_value("input.messages[]", item) for item in messages)
-    return NormalizedRunInput(messages=normalized)
+    return parse_normalized_messages(messages)
 
 
 def _validate_tools_block(value: Any) -> tuple[ToolDefinition, ...]:

@@ -190,7 +190,11 @@ class RunOptionsAdmissionTests(unittest.TestCase):
     def test_options_count_toward_combined_request_payload_limit(self) -> None:
         runs, sessions, routes, provider, _, start = self._build()
         params = _start_params(
-            input={"messages": [{"content": "i" * 525_000}]},
+            input={"messages": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "i" * 525_000}],
+            }]},
             options={
                 "output_format": {
                     "type": "json_schema",

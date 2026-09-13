@@ -56,7 +56,7 @@ outside the common JSON bounds.
 ## Host and provider extension
 
 B10 host conversion may accept legacy shorthand at its own ingress, but it
-must emit only this tagged union. Host-specific agent messages, compaction,
+must emit only this tagged union before calling `runs.start`. Host-specific agent messages, compaction,
 reasoning, encrypted metadata, and custom-tool history require their existing
 explicit conversion, continuation, or unsupported behavior; they cannot pass
 through this codec as arbitrary JSON.
@@ -65,9 +65,17 @@ B13 and other provider adapters consume `NormalizedRunInput` and translate
 every item. If a provider cannot represent a valid item or part, the adapter
 fails before starting a billed request rather than omitting or coercing it.
 
-The existing `runs.start.input.messages` schema and run-use-case parser still
-accept their unreleased legacy arbitrary-JSON shape. Migrating those consumers
-to this definition is a separate coordinated change.
+`runs.start.input.messages`, the shared `run_request` vocabulary, and run
+admission now require this definition. Already canonical payloads retain their
+item order and bytes for admission hashing; omitted input and options keep their
+existing defaults. Scalar strings and untagged `{role, content}` objects are
+rejected rather than coerced.
+
+Durable rows written by the earlier unreleased fixture path are not migrated by
+this codec. Restart recovery reconstructs and dispatches stored input under the
+repository's existing compatibility behavior; it does not reinterpret an old
+row as newly admitted normalized input. A future storage-version migration must
+make any stronger compatibility decision explicitly.
 
 ## Tests and current limit
 

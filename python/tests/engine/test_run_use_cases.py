@@ -1,4 +1,6 @@
 import dataclasses
+import hashlib
+import json
 import unittest
 from typing import Any
 
@@ -103,7 +105,15 @@ def _start_params(**overrides: Any) -> dict[str, Any]:
         "client_request_id": "client-1",
         "idempotency_key": "idem-1",
         "registration_id": REGISTRATION_ID,
-        "input": {"messages": [{"role": "user", "content": "hi"}]},
+        "input": {
+            "messages": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hi"}],
+                }
+            ]
+        },
     }
     base.update(overrides)
     return base
@@ -411,6 +421,31 @@ class RunUseCaseTests(unittest.TestCase):
         self.assertEqual(provider.starts[0].route_snapshot.provider_model_id, "provider/captured")
         self.assertEqual(first["run"]["run_id"], second["run"]["run_id"])
 
+    def test_canonical_input_keeps_existing_admission_hash_shape(self) -> None:
+        runs, _, _, _, _, start = self._build()
+        params = _start_params()
+
+        start.execute(
+            params,
+            principal_id=PRINCIPAL_ID,
+            authorized_host_context_ref=HOST_CTX,
+        )
+
+        hash_payload = {
+            "session_id": params["session_id"],
+            "client_request_id": params["client_request_id"],
+            "idempotency_key": params["idempotency_key"],
+            "registration_id": params["registration_id"],
+            "input": params["input"],
+            "tools": [],
+        }
+        expected = hashlib.sha256(
+            json.dumps(
+                hash_payload, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(runs.admit_calls[0].request_hash, expected)
+
     def test_provider_start_failure_interrupts_without_retry(self) -> None:
         runs, _, _, provider, _, start = self._build()
         provider.fail_start = True
@@ -421,7 +456,7 @@ class RunUseCaseTests(unittest.TestCase):
         self.assertEqual(len(runs.complete_calls), 1)
         self.assertEqual(result["run"]["state"], "interrupted")
 
-    def test_recovery_claims_and_starts_durable_request_without_readmission(self) -> None:
+    def test_recovery_dispatches_stored_legacy_input_without_readmission(self) -> None:
         runs, _, _, provider, coordinator, _ = self._build()
         request = RunRequest(
             run_id=RUN_ID,
@@ -451,6 +486,10 @@ class RunUseCaseTests(unittest.TestCase):
         self.assertEqual(runs.admit_calls, [])
         self.assertEqual(runs.claim_calls, [ClaimDispatchCommand(RUN_ID, RUN_ID)])
         self.assertEqual(provider.starts, [request])
+        self.assertEqual(
+            provider.starts[0].input.messages,
+            ({"role": "user", "content": "resume"},),
+        )
         self.assertIs(coordinator.get_handle(RUN_ID), provider.handle)
 
     def test_recovery_start_failure_interrupts_once_at_recovery_time(self) -> None:
@@ -651,10 +690,29 @@ class RunUseCaseTests(unittest.TestCase):
         _, _, _, _, _, start = self._build()
         with self.assertRaises(ValueError):
             start.execute(
-                _start_params(input={"messages": [{"x": float("nan")}]}),
+                _start_params(input={"messages": [{
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "tool",
+                    "arguments": '{"x":NaN}',
+                }]}),
                 principal_id=PRINCIPAL_ID,
                 authorized_host_context_ref=HOST_CTX,
             )
+
+    def test_rejects_legacy_scalar_and_untagged_start_messages(self) -> None:
+        for messages in (["hello"], [{"role": "user", "content": "hello"}]):
+            runs, sessions, routes, provider, _, start = self._build()
+            with self.subTest(messages=messages), self.assertRaises(ValueError):
+                start.execute(
+                    _start_params(input={"messages": messages}),
+                    principal_id=PRINCIPAL_ID,
+                    authorized_host_context_ref=HOST_CTX,
+                )
+            self.assertEqual(runs.admit_calls, [])
+            self.assertEqual(sessions.get_calls, [])
+            self.assertEqual(routes.requests, [])
+            self.assertEqual(provider.starts, [])
 
     def test_rejects_explicit_null_input_and_tools(self) -> None:
         _, _, _, _, _, start = self._build()

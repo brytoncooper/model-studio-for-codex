@@ -6,8 +6,14 @@
   "input": {
     "messages": [
       {
+        "type": "message",
         "role": "user",
-        "content": "hi"
+        "content": [
+          {
+            "type": "input_text",
+            "text": "hi"
+          }
+        ]
       }
     ]
   },

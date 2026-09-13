@@ -30,7 +30,7 @@
         "messages": {
           "type": "array",
           "items": {
-            "$ref": "../../common/types.schema.json#/definitions/json_value"
+            "$ref": "../vocabulary.schema.json#/definitions/normalized_input_item"
           },
           "maxItems": 256
         }
