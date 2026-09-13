@@ -37,7 +37,7 @@ commit counts or the number of task headings.
 | B14 Cursor provider | Coordinator and injected legacy-process adapter independently reviewed | Root SDK composition and parity |
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
 | B16 Usage/evidence | Durable committed-event reconciliation and exact ledger queries reviewed | Public query composition, pricing and refresh jobs |
-| B17 Kernel | Generic registry written | Built-in composition and generic engine dispatch |
+| B17 Kernel | Generic composed operations integrated with authenticated dispatch and discovery | Migrate static built-ins; external schema/principal lifecycle integration |
 | B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
 | B20 Package lifecycle | Archive validation and immutable staging reviewed | Install/enable/update/remove coordinator and transactional pointers |
@@ -146,6 +146,13 @@ composition remains pending.
 HTTP transport `e93e2ac`: nine independently run tests verify exact POST inputs,
 failure cleanup and once-only concurrent close. The primitive remains unwired;
 local close does not claim confirmed remote cancellation.
+
+Kernel composition `300ce44`: 15 final composition tests and independent socket
+probes passed after authorization/static regression checks. Unknown namespaced
+operations are discoverable and invocable through trusted composition. Seven
+invalid/oversized result probes return fixed errors and preserve connection
+usability. Static built-ins and external schema/principal lifecycle remain outside
+this integration.
 
 Staging packager `456a465`: independent review passed 28 tests on macOS Python
 3.12, including benign child cleanup and timeout fixtures. Explicit offline
