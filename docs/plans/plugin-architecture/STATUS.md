@@ -111,7 +111,14 @@ proves waiting-for-tool, result submission, replay without duplicate forwarding,
 and one completed terminal. Slow sinks and blocked acknowledgements remain
 isolated per run. The archived external-process integration is still underway.
 
-Staging packager follow-up: independent review passed 28 tests on macOS Python
+Tool-event integration `9e476f0`: independent acceptance passed 37 focused tests
+and a real SQLite/authenticated-socket probe. Internal tool fields remain flat;
+only the public notification nests `tool_call`. Submission returns the run to
+running, arguments are detached, and invalid payloads do not escape on the wire.
+This supersedes the earlier tool-capability limit on the socket fixture; durable
+restart replay remains a separate requirement.
+
+Staging packager `456a465`: independent review passed 28 tests on macOS Python
 3.12, including benign child cleanup and timeout fixtures. Explicit offline
 vendor bytes, supplied helper identity, fresh output publication and supported
 resource layout are checked. Actual Swift compilation, signatures, resource
