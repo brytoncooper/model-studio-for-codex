@@ -52,19 +52,36 @@ and connection rows without matching proof remain visible. A historical database
 without the receipt table uses the original read-only pending query; reading
 never creates tables or acknowledges old events.
 
-Historical unexpanded rows need a separate recovery policy. Do not silently
-acknowledge them or create an empty receipt based on a later observation. A
-future transactional handler must recheck committed current connection/model
-state, generate fresh monotonic model invalidations and record expansion once;
-the policy for superseded connection revisions must be explicit. This handler
-is not implemented. Materialization, consumer scheduling and filesystem/SQLite
-atomicity remain outside this storage slice.
+Historical recovery is explicit through
+`recover_connection_dependencies(db_path, limit=100)` in
+`sqlite_projection_dependency_recovery`. The existing database is opened without
+creating one; model/receipt schema initialization happens before the transaction.
+A single `BEGIN IMMEDIATE` selects up to 1..1000 unproven pending connection events,
+validates all selected source/proof bindings and current dependencies, groups
+valid rows by connection and invalidates current active models once per group.
+Every selected valid source receives its own receipt referencing those new
+upserts. The current connection revision must be at least the historical event's
+revision: newer committed desired state intentionally supersedes old settings.
+Historical payloads never restore old connection configuration or tombstones.
+
+The frozen report contains `expanded_outbox_ids` and conflicts with outbox ID
+and fixed reason (`event_invalid`, `proof_conflict`, `connection_missing`,
+`connection_invalid`, `connection_revision_future`). Conflicting rows remain
+pending, existing mismatched proofs are never replaced, and unknown kinds are
+not selected. Repeating successful recovery adds nothing. Failures roll back
+all selected-group mutations/proofs and raise fixed `DependencyRecoveryError`.
+No file writes or file-applied receipts occur. Repeated batches with persistent
+conflicts at their head require explicit operator resolution or a later
+pagination policy; this helper does not silently skip/acknowledge those rows.
+Materialization, consumer scheduling and filesystem/SQLite atomicity remain
+outside this storage slice; startup/poller composition is not added here.
 
 Focused checks from `python/`:
 
 ```sh
 PYTHONPATH=src python -B -m unittest tests.engine.test_model_projection_invalidation
 PYTHONPATH=src python -B -m unittest tests.engine.test_projection_dependency_expansions
+PYTHONPATH=src python -B -m unittest tests.engine.test_projection_dependency_recovery
 ```
 
 Tests use temporary real SQLite databases and separate connections. They cover
