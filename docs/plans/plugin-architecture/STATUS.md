@@ -29,7 +29,7 @@ commit counts or the number of task headings.
 | B06 MCP | Real entrypoint read composition reviewed; existing registry/formatting/search reused | Converge available mutations; qualify packaged entrypoint |
 | B07 Application state | Revisioned SQLite model/connection operations integrated | Shared repository conformance and active-run removal proof |
 | B08 Import preview | Deterministic read-only preview written | Record current full preview acceptance |
-| B09 Projections | Committed snapshots, transactional invalidation and new-save dependency receipts reviewed | Historical dependency recovery and complete fixture composition |
+| B09 Projections | Committed snapshots, invalidation receipts and historical dependency recovery reviewed | Complete fixture composition and conflict resolution |
 | B10 Host bridge | Legacy bridge retained; new host helpers written | Extract and compose actual host bridge/launch policy |
 | B11 Migration | Preview supports preparation | Offline apply, recovery and rollback rehearsal |
 | B12 Sessions/runs | Durable fixture run path and exclusive-lock startup recovery integrated | Complete run/provider gate |
@@ -141,6 +141,12 @@ Dependency receipts `4fec8a3`: 43 independently run tests passed. Exact expansio
 proof is committed with connection/model changes; proven metadata is excluded
 before pending-batch limits, without claiming a file was applied. Receipt failure
 rolls back the save. Historical unexpanded rows remain visible and need recovery.
+
+Historical dependency recovery follow-up: M3 reviewed the transaction, grouping,
+replay and conflict behavior; parent independently ran all 29 related tests.
+Valid historical events expand against current committed state without reviving
+tombstones. Invalid rows retain explicit pending conflicts; no file projection
+is claimed by recovery.
 
 Usage reconciliation `64a283d`: 16 reader/reconciliation tests and independent
 SQLite integration passed, alongside the previously reviewed ledger tests.
