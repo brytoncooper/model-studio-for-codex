@@ -2,12 +2,18 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from dataclasses import replace
 
 from model_deck.adapters.platform.macos.isolated_roots import validate_isolated_roots
-from model_deck.adapters.providers.deterministic import DETERMINISTIC_PROVIDER_ID
+from model_deck.adapters.providers.deterministic import (
+    DETERMINISTIC_PROVIDER_ID, DeterministicProviderExecutionPort, EmitStarted, EmitToolRequested,
+)
 from model_deck.adapters.transport.rendezvous import load_rendezvous_file
 from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
 from model_deck.bootstrap import build_engine_server
+from model_deck.engine.dispatch import _flatten_application_run_event
+from model_deck.engine.runs.ports import ApplicationRunEvent
+from model_deck.engine.routing.ports import CapabilityFeature, CapabilityTriState
 from model_deck_contracts.paths import repo_root
 from model_deck_contracts.validator import validate_schema_ref
 
@@ -95,7 +101,7 @@ class EngineEventDispatchTests(unittest.TestCase):
         self.assertEqual(len(notifications), expected_count)
         return notifications
 
-    def _fixture_run_id(self, session, descriptor, credential: str, client_name: str = CLIENT_NAME) -> str:
+    def _fixture_run_id(self, session, descriptor, credential: str, client_name: str = CLIENT_NAME, tools=None) -> str:
         self._authenticate(session, descriptor, credential, client_name=client_name)
         session.call(
             {
@@ -146,6 +152,7 @@ class EngineEventDispatchTests(unittest.TestCase):
                     "client_request_id": "client_request_with_underscores",
                     "idempotency_key": "idempotency_key_with_underscores",
                     "registration_id": registration_id,
+                    **({"tools": tools} if tools is not None else {}),
                 },
             }
         )
@@ -253,6 +260,48 @@ class EngineEventDispatchTests(unittest.TestCase):
                     self.assertEqual(event.get("delta"), "fixture text")
                     break
             self.assertTrue(seen_delta)
+
+    def test_authenticated_tool_notification_uses_frozen_nested_wire_shape(self) -> None:
+        provider = DeterministicProviderExecutionPort(auto_advance=True, script=(
+            EmitStarted(), EmitToolRequested("call_fixture", "lookup", {"q": "fixture"})))
+        with mock.patch("model_deck.bootstrap.DeterministicProviderExecutionPort", return_value=provider), \
+                mock.patch("model_deck.bootstrap.CapabilityFeature",
+                           return_value=CapabilityFeature("tools", CapabilityTriState.SUPPORTED)):
+            runtime = self._start_runtime()
+        descriptor = load_rendezvous_file(runtime.rendezvous_path)
+        credential = runtime.enrollment.credential_path.read_text(encoding="utf-8").strip()
+        with UnixSocketEngineClient(descriptor.socket_path).session() as session:
+            run_id = self._fixture_run_id(session, descriptor, credential, tools=[{
+                "name": "lookup", "input_schema": {"type": "object"}, "host_execution_required": False}])
+            state = session.call({"jsonrpc": "2.0", "id": 30, "method": "engine.v1.runs.get",
+                                  "params": {"run_id": run_id}})
+            self.assertEqual(state["result"]["run"]["state"], "waiting_for_tool")
+            subscribed = session.call({"jsonrpc": "2.0", "id": 31, "method": "engine.v1.events.subscribe",
+                                       "params": {"topics": [f"run:{run_id}"], "initial_credit": 8}})
+            self.assertIn("result", subscribed, subscribed)
+            notifications = self._read_fixture_run_notifications(session, expected_count=2)
+        for notification in notifications:
+            validate_schema_ref("contracts/engine.v1/notifications/event.schema.json", notification)
+        event = notifications[-1]["params"]["event"]
+        self.assertEqual(event["kind"], "tool.requested")
+        self.assertEqual(event["tool_call"], {"call_id": "call_fixture", "tool_name": "lookup", "arguments": {"q": "fixture"}})
+        self.assertNotIn("call_id", event)
+
+    def test_tool_wire_conversion_detaches_and_rejects_invalid_payloads(self) -> None:
+        payload = {"call_id": "call_fixture", "tool_name": "lookup", "arguments": {"q": ["fixture"]}}
+        event = ApplicationRunEvent(kind="tool.requested", run_id=CONNECTION_ID, session_id=CONNECTION_ID,
+            sequence=2, event_schema_version=1, observed_at="2026-09-12T00:00:01Z", payload=payload)
+        converted = _flatten_application_run_event(event)
+        self.assertEqual(converted["tool_call"], payload)
+        converted["tool_call"]["arguments"]["q"].append("later")
+        self.assertEqual(payload["arguments"]["q"], ["fixture"])
+        for invalid in (None, [], {}, {"tool_call": payload}, {**payload, "extra": True},
+                        {**payload, "tool_call": payload}, {**payload, "call_id": 3},
+                        {**payload, "tool_name": "x" * 129},
+                        {"call_id": "c", "tool_name": "lookup"},
+                        {**payload, "arguments": float("nan")}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                _flatten_application_run_event(replace(event, payload=invalid))
 
     def test_duplicate_cumulative_ack_does_not_mint_extra_credit(self) -> None:
         runtime = self._start_runtime()

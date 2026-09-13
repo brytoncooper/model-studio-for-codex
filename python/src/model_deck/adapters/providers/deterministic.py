@@ -270,11 +270,9 @@ class DeterministicProviderRunHandle:
                 self._publish(
                     "tool.requested",
                     {
-                        "tool_call": {
-                            "call_id": step.call_id,
-                            "tool_name": step.tool_name,
-                            "arguments": step.arguments,
-                        }
+                        "call_id": step.call_id,
+                        "tool_name": step.tool_name,
+                        "arguments": step.arguments,
                     },
                     step.observed_at,
                 )

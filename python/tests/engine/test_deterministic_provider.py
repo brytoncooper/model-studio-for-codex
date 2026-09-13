@@ -479,7 +479,7 @@ class ToolDefinitionCarryTests(unittest.TestCase):
         handle, sink = _start(script)
         handle.emit_next()
         self.assertEqual(sink.events[0].kind, "tool.requested")
-        tool_call = sink.events[0].payload["tool_call"]
+        tool_call = sink.events[0].payload
         self.assertEqual(
             tool_call,
             {"call_id": "call-1", "tool_name": "search", "arguments": {"q": "contracts"}},

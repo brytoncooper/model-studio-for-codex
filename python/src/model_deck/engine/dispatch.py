@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import threading
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any, Protocol
@@ -315,6 +316,12 @@ def _flatten_application_run_event(event: ApplicationRunEvent) -> dict[str, Any]
         "observed_at": event.observed_at,
     }
     payload = event.payload
+    if event.kind == "tool.requested":
+        # The application/store payload is flat; only the public event nests it.
+        # Validate the whole payload so extra or mixed shapes cannot be dropped.
+        validate_schema_ref("contracts/engine.v1/vocabulary.schema.json#/definitions/tool_call", payload)
+        flattened["tool_call"] = deepcopy(payload)
+        return flattened
     if payload is None:
         return flattened
     if not isinstance(payload, dict):
