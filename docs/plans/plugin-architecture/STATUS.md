@@ -40,7 +40,7 @@ commit counts or the number of task headings.
 | B17 Kernel | Generic composed operations integrated with authenticated dispatch and discovery | Migrate static built-ins; external schema/principal lifecycle integration |
 | B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
-| B20 Package lifecycle | Artifact staging, recoverable lifecycle contracts and SQLite lifecycle transactions reviewed; service in review | Integrate lifecycle service, activation and versioned data |
+| B20 Package lifecycle | Artifact staging, lifecycle service, SQLite lifecycle transactions and versioned-data contract reviewed | Integrate real activation, versioned data and public lifecycle dispatch |
 | B21 Extension UI | Declarative panel schema reviewed; native values/validation underway | Renderer, public panel delivery and extension management |
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
 | B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
@@ -191,9 +191,8 @@ lookup without source, and staged application behavior remain unverified.
 
 ## Current independent work
 
-- Extension lifecycle service repair: preserve completed freeze evidence through
-  crash recovery and share recovery execution ownership across service instances.
-- Cross-process lifecycle storage tests.
+- Versioned SQLite plugin data implementation against the accepted contract.
+- Cross-process lifecycle storage test cleanup repair.
 - Archived external provider integration through the public engine socket.
 - Native panel validation repair after independent Swift tests found failures.
 - Notebook protocol and HTTP provider composition boundary checks.
@@ -219,6 +218,18 @@ the author ran 120 regressions. Invalid capability references fail before state
 creation, caller mutations cannot alter captured routes, and the caller retains
 provider cleanup ownership. Real archived-provider socket integration is next;
 live SDK behavior remains unqualified.
+
+Lifecycle coordination `ad2ae1a`: parent ran 45 service/port/SQLite tests after
+independent review reproduced and verified both repairs. Abort now persists a
+completed freeze with restoration intent, so restart thaws before admission.
+Lease-owned execution rejects competing recovery across two repository objects
+on the same database before effects. The production lease/activation/data
+composition is still required; these tests use explicit temporary databases.
+
+Versioned-data contract `74bf69a`: independent review passed three contract tests.
+Bindings capture namespace, data reference and activation generation; storage
+must share the broker mutation barrier and explicitly control writable state.
+Real generation storage, freeze races and staged migration tests are underway.
 
 The source audit exposed real missing integration and verification work. Earlier
 conversation percentages were estimates, not a measured delivery baseline; this
