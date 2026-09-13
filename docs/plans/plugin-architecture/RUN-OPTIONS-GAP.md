@@ -1,7 +1,7 @@
 # Run options: implementation and remaining parity work
 
 The shared contract is implemented. Engine admission, serialization and SQLite
-recovery are implemented and undergoing final review. Provider-specific mappings
+recovery are implemented, independently reviewed and committed. Provider-specific mappings
 and end-to-end behavior remain unfinished.
 
 ## Contract

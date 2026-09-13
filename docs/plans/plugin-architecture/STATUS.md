@@ -305,3 +305,16 @@ by the process runtime worker; independent re-review is required.
 
 Next / upcoming task: verify real lifecycle/data composition and repaired broker
 deadlines, while plugin validate/pack authoring commands are implemented separately.
+
+## Archived provider socket proof
+
+`7a6e8a8` qualifies four isolated archived-provider scenarios over the real
+authenticated engine socket: text, tool result roundtrip, confirmed cancellation
+and durable usage query. Independent review and the parent each passed all four
+tests. The child runs from an extracted ZIP under isolated Python imports. Event
+consumption now waits for pushed notifications and acknowledges only consumed
+events. This does not qualify live SDK credentials, full plugin supervision or
+the packaged Mac app.
+
+Next / upcoming task: review broker deadline repairs and real lifecycle/data
+composition; continue authoring commands and HTTP provider composition planning.
