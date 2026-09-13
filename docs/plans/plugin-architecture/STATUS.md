@@ -41,7 +41,7 @@ commit counts or the number of task headings.
 | B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
 | B20 Package lifecycle | Artifact staging, lifecycle service, SQLite lifecycle transactions and versioned-data contract reviewed | Integrate real activation, versioned data and public lifecycle dispatch |
-| B21 Extension UI | Declarative panel schema and immutable native decoder reviewed; renderer under review | Renderer acceptance, public panel delivery and extension management |
+| B21 Extension UI | Declarative schema, immutable decoder and native renderer reviewed | Public panel delivery, app attachment and extension management |
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
 | B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
 | B24 Restricted execution | Reviewed feasibility document; no restricted runtime implemented | Isolated OS enforcement investigation and qualification |
@@ -192,9 +192,10 @@ lookup without source, and staged application behavior remain unverified.
 ## Current independent work
 
 - Versioned SQLite plugin data implementation against the accepted contract.
-- Cross-process lifecycle storage test cleanup repair.
+- Public socket asynchronous event-delivery repair; acknowledgements must not
+  serve as polling requests for newly published provider events.
 - Archived external provider integration through the public engine socket.
-- Native renderer review against the accepted panel decoder.
+- Generic CLI invocation review and boundary repairs.
 - Notebook protocol and HTTP provider composition boundary checks.
 - Normalized run-options contracts for provider parity; persistence and consumers
   will follow the shared contract review.
@@ -242,6 +243,22 @@ Contracts `f053c88` and `35ffb6c`: external invocation now requires supervisor
 broker context, panel fetch returns a tree, and run options have shared schema
 and Python types. Parent ran all 57 contract tests; all 200 canonical schemas
 match both generated bundles. Runtime consumers remain in progress.
+
+Native renderer `f63689b`: independent library-only compilation passed two
+renderer tests, 42 decoder tests and two additional state/lookup probes. It uses
+trusted operation lookup, emits action intents, rejects stale lookup results,
+and disables stale/non-ready controls. Public fetch and native app attachment
+remain separate work.
+
+Cross-process lifecycle tests `cec7142`: five tests pass in about one second,
+including distinct-key exclusion, pending/settled replay across processes and a
+cleanup fault probe. Independent review verified all children are reaped and
+temporary resources cleaned even after a worker failure.
+
+Archived-provider socket qualification found a real streaming gap: the server
+only drained notifications after client requests, and the fixture used repeated
+acks to poll. The integration slice remains unaccepted until delayed events reach
+an idle subscribed client without another request. Transport repair is assigned.
 
 The source audit exposed real missing integration and verification work. Earlier
 conversation percentages were estimates, not a measured delivery baseline; this
