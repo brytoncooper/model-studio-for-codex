@@ -66,6 +66,7 @@ defines generation binding and the shared write barrier required for updates.
 | Adapters overview | [adapters README](../../python/src/model_deck/adapters/README.md) |
 | Host-settings storage adapter | [storage HOST_SETTINGS](../../python/src/model_deck/adapters/storage/HOST_SETTINGS.md) |
 | SQLite storage adapters: ownership, transactions, recovery and extension points | [storage guide](../../python/src/model_deck/adapters/storage/README.md) |
+| Versioned plugin data: generation isolation, freeze proofs and staged migration | [versioned data guide](../../python/src/model_deck/adapters/storage/VERSIONED_PLUGIN_DATA.md) |
 
 ## Hosts and providers
 

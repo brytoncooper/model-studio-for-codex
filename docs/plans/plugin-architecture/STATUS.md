@@ -282,3 +282,26 @@ fixture remain B23 requirements.
 
 Next / upcoming task: accept the idle-event disconnect repair and versioned
 data freeze-ownership repair, then integrate external invocation and brokers.
+
+## Accepted event delivery and data generations
+
+`7be28e3` delivers events to idle subscribed sockets without polling RPCs and
+removes both dispatch and replay subscriptions when their connection closes.
+Independent review and the parent each passed 63 focused tests, including
+partial frames, credit, ownership and real disconnect cleanup. Archived-provider
+socket tests are being updated to consume notifications without the former
+ack-as-poll workaround.
+
+`150eb43` adds versioned SQLite plugin data. Independent review and the parent
+passed 29 adapter, legacy CRUD and contract tests. Active freeze references
+fence replay, thaw and staging even when two freezes have the same data revision;
+migration incarnations fence callbacks from replaced stages. Lifecycle service
+composition with this real store remains to be verified.
+
+Generic external invocation remains unaccepted: final review reproduced hanging
+unsolicited broker callbacks without deadline enforcement and oversized response
+encoding that abandoned a worker without closing the runtime. Repairs are owned
+by the process runtime worker; independent re-review is required.
+
+Next / upcoming task: verify real lifecycle/data composition and repaired broker
+deadlines, while plugin validate/pack authoring commands are implemented separately.
