@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import base64
+import hmac
+import secrets
+import struct
 import sqlite3
 import uuid
 from collections.abc import Callable
@@ -52,6 +56,11 @@ from model_deck.engine.runs.ports import (
     ToolCallNotOutstandingError,
     ToolResultIdempotencyConflictError,
 )
+from model_deck.engine.runs.usage_events import (
+    CommittedUsageCursor, CommittedUsageCursorError, CommittedUsageEvent,
+    CommittedUsagePage, CommittedUsageReadError,
+    MAX_COMMITTED_USAGE_PAGE_BYTES, MAX_COMMITTED_USAGE_PAGE_EVENTS,
+)
 from model_deck.engine.sessions.ports import (
     CreateSessionCommand,
     GetSessionCommand,
@@ -63,6 +72,10 @@ from model_deck.engine.sessions.ports import (
 )
 
 from model_deck.engine.runs.tool_definitions import parse_tool_definitions, tool_definitions_to_wire
+
+def _reject_nonfinite_usage_constant(value: str) -> None:
+    raise ValueError("nonfinite JSON constant")
+
 
 _EVENT_SCHEMA_VERSION = 1
 _ACTIVE_RUN_STATES: frozenset[str] = frozenset(
@@ -172,6 +185,76 @@ class SQLiteSessionRunRepository:
         self._uuid_factory = uuid_factory or (lambda: str(uuid.uuid4()))
         self._utc_clock = utc_clock or (lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
         self._connect_factory = connect or self._default_connect
+        self._usage_cursor_key = secrets.token_bytes(32)
+
+    def _usage_cursor(self, high_water: int, after: int) -> CommittedUsageCursor:
+        body = b"U1" + struct.pack(">QQ", high_water, after)
+        signature = hmac.digest(self._usage_cursor_key, body, "sha256")
+        return CommittedUsageCursor(base64.urlsafe_b64encode(body + signature).decode("ascii"))
+
+    def _read_usage_cursor(self, cursor: CommittedUsageCursor) -> tuple[int, int]:
+        try:
+            if type(cursor) is not CommittedUsageCursor or type(cursor.token) is not str or len(cursor.token) != 68:
+                raise ValueError()
+            raw = base64.b64decode(cursor.token, altchars=b"-_", validate=True)
+            if len(raw) != 50 or raw[:2] != b"U1" or base64.urlsafe_b64encode(raw).decode("ascii") != cursor.token:
+                raise ValueError()
+            if not hmac.compare_digest(raw[18:], hmac.digest(self._usage_cursor_key, raw[:18], "sha256")):
+                raise ValueError()
+            high_water, after = struct.unpack(">QQ", raw[2:18])
+            if not 0 < after <= high_water <= 9223372036854775807:
+                raise ValueError()
+            return high_water, after
+        except (ValueError, TypeError, UnicodeError, struct.error):
+            raise CommittedUsageCursorError("invalid committed usage cursor") from None
+
+    def read_committed_usage_events(self, *, cursor: CommittedUsageCursor | None = None,
+                                    limit: int = 256) -> CommittedUsagePage:
+        if type(limit) is not int or not 1 <= limit <= MAX_COMMITTED_USAGE_PAGE_EVENTS:
+            raise ValueError("committed usage page limit must be in 1..256")
+        position = self._read_usage_cursor(cursor) if cursor is not None else None
+        conn = self._connect_factory(self._db_path)
+        try:
+            self._ensure_schema(conn)
+            conn.execute("BEGIN")
+            if position is None:
+                high_water = conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM run_application_events").fetchone()[0]
+                after = 0
+            else:
+                high_water, after = position
+            rows = conn.execute(
+                "SELECT e.rowid, e.run_id, r.session_id, e.sequence, e.event_schema_version, e.observed_at, "
+                "length(CAST(e.payload_json AS BLOB)), "
+                "CASE WHEN length(CAST(e.payload_json AS BLOB)) <= ? THEN e.payload_json ELSE NULL END "
+                "FROM run_application_events e JOIN runs r ON r.run_id = e.run_id "
+                "WHERE e.kind = 'usage.observed' AND e.rowid > ? AND e.rowid <= ? ORDER BY e.rowid LIMIT ?",
+                (MAX_COMMITTED_USAGE_PAGE_BYTES, after, high_water, limit + 1))
+            events = []
+            payload_bytes = 0
+            next_cursor = None
+            for row in rows:
+                if len(events) == limit:
+                    next_cursor = self._usage_cursor(high_water, after)
+                    break
+                size, payload = row[6], row[7]
+                if payload is None or size is None or size > MAX_COMMITTED_USAGE_PAGE_BYTES:
+                    raise CommittedUsageReadError("committed usage payload exceeds bound or is missing")
+                if type(payload) is not str:
+                    raise CommittedUsageReadError("committed usage payload is not JSON text")
+                try:
+                    decoded = json.loads(payload, parse_constant=_reject_nonfinite_usage_constant)
+                    json.dumps(decoded, allow_nan=False)
+                except (ValueError, TypeError, RecursionError):
+                    raise CommittedUsageReadError("committed usage payload is not finite JSON") from None
+                if payload_bytes + size > MAX_COMMITTED_USAGE_PAGE_BYTES:
+                    next_cursor = self._usage_cursor(high_water, after)
+                    break
+                events.append(CommittedUsageEvent(row[1], row[2], row[3], row[4], row[5], payload))
+                payload_bytes += size
+                after = row[0]
+            return CommittedUsagePage(tuple(events), high_water, next_cursor)
+        finally:
+            conn.close()
 
     def create(self, command: CreateSessionCommand) -> SessionRecord:
         conn = self._connect_factory(self._db_path)
