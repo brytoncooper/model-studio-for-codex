@@ -318,3 +318,22 @@ the packaged Mac app.
 
 Next / upcoming task: review broker deadline repairs and real lifecycle/data
 composition; continue authoring commands and HTTP provider composition planning.
+
+## Accepted external invocation transport
+
+`3609da8` adds canonical plugin invocation and authenticated broker request
+transport. Independent review and the parent passed 50 runtime/provider/external
+integration tests after repairing two reproduced failures. An independent deadline
+owner now closes the child for stuck unsolicited callbacks; oversized responses
+fail closed and clear correlation state. Python callbacks cannot be forcibly
+terminated, so this remains trusted execution rather than OS containment.
+
+Real lifecycle/data integration currently reproduces a missing handoff: install
+and disabled update can settle without activating the corresponding storage
+binding. The selected data revision must reach synchronization and survive recovery,
+including rollback to a removed first-install record. A red integration test and
+contract review are in progress; no test-only revision map is being accepted as
+production integration proof.
+
+Next / upcoming task: settle and implement that lifecycle revision handoff;
+review plugin authoring and storage wire integration in parallel.
