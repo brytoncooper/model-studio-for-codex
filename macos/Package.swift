@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .executable(name: "ModelDeck", targets: ["ModelDeck"]),
+        .executable(name: "ModelDeckPanelDemo", targets: ["ModelDeckPanelDemo"]),
         .library(name: "ModelDeckPresentation", targets: ["ModelDeckPresentation"]),
         .library(name: "ModelDeckPlatform", targets: ["ModelDeckPlatform"]),
         .library(name: "ModelDeckClient", targets: ["ModelDeckClient"]),
@@ -59,6 +60,13 @@ let package = Package(
             name: "ModelDeckPlatformTests",
             dependencies: ["ModelDeckPlatform"],
             path: "Tests/ModelDeckPlatformTests"
+        ),
+        .executableTarget(
+            name: "ModelDeckPanelDemo",
+            dependencies: ["ModelDeckPresentation", "ModelDeckPlatform", "ModelDeckClient", "ModelDeckContracts"],
+            path: "Sources/ModelDeckPanelDemo",
+            exclude: ["README.md"],
+            linkerSettings: [.linkedFramework("AppKit")]
         ),
         .executableTarget(
             name: "ModelDeck",
