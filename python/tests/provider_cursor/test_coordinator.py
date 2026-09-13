@@ -1449,3 +1449,67 @@ class FinalReviewRegressionTest(unittest.TestCase):
             with self.subTest(timestamp=timestamp), self.assertRaises(CursorProtocolError):
                 runtime.sessions[0].emit(CursorSdkEvent('usage.observed', {'usage':dict(run_id=RUN_ID,session_id=SESSION_ID,observed_at=timestamp,units=1,unit_kind='requests')}))
         self.assertEqual(sink.kinds(), ('run.started',))
+
+
+class CursorProcessCompatibilityTests(unittest.TestCase):
+    def test_early_failure_and_interruption_without_fabricated_start(self):
+        for kind in ('run.failed', 'run.interrupted'):
+            runtime, sink = FakeCursorRuntime(), RecordingSink()
+            coordinator = CursorExecutionCoordinator(runtime)
+            handle = coordinator.start(_run_request(), sink)
+            runtime.sessions[0].emit(CursorSdkEvent(kind, {'terminal_result': {'outcome':kind.split('.')[1]}}))
+            self.assertEqual(sink.kinds(), (kind,))
+            self.assertTrue(handle.is_terminal)
+
+    def test_submit_callback_completion_waits_for_accepted_receipt(self):
+        runtime, sink = FakeCursorRuntime(), RecordingSink()
+        coordinator = CursorExecutionCoordinator(runtime)
+        handle = coordinator.start(_run_request(), sink)
+        session = runtime.sessions[0]
+        session.emit(CursorSdkEvent('run.started'))
+        session.emit(_tool_event(call_id='c1'))
+        def submit(call_id, result):
+            session.emit(CursorSdkEvent('run.completed', {'terminal_result':{'outcome':'completed'}}))
+            self.assertFalse(handle.is_terminal)
+            return SubmitToolResultProviderResult(SubmitToolResultProviderOutcome.ACCEPTED)
+        session.submit_tool_result = submit
+        self.assertEqual(handle.submit_tool_result('c1', {}).outcome, SubmitToolResultProviderOutcome.ACCEPTED)
+        self.assertEqual(sink.kinds(), ('run.started','tool.requested','run.completed'))
+        self.assertTrue(handle.is_terminal)
+
+    def test_submit_callback_cannot_complete_rejected_or_failed_tool(self):
+        for failed in (False, True):
+            runtime, sink = FakeCursorRuntime(), RecordingSink()
+            coordinator = CursorExecutionCoordinator(runtime)
+            handle = coordinator.start(_run_request(), sink)
+            session = runtime.sessions[0]
+            session.emit(CursorSdkEvent('run.started'))
+            session.emit(_tool_event(call_id='c1'))
+            def submit(call_id, result):
+                session.emit(CursorSdkEvent('run.completed', {'terminal_result':{'outcome':'completed'}}))
+                if failed:
+                    raise RuntimeError('injected write failure')
+                return SubmitToolResultProviderResult(SubmitToolResultProviderOutcome.REJECTED)
+            session.submit_tool_result = submit
+            with self.assertRaises(CursorProtocolError):
+                handle.submit_tool_result('c1', {})
+            self.assertEqual(handle.outstanding_call_id, 'c1')
+            self.assertFalse(handle.is_terminal)
+            self.assertEqual(sink.kinds(), ('run.started','tool.requested'))
+
+    def test_tool_event_reaches_real_application_coordinator_and_sqlite(self):
+        from tempfile import TemporaryDirectory
+        from model_deck.engine.runs.use_cases import RunApplicationCoordinator
+        from model_deck.engine.runs.ports import GetRunCommand, RunState
+        from model_deck.integrations.providers.cursor import CursorProviderRunHandle
+        from tests.engine.test_sqlite_session_run_repository import _repo, _create_session, _start_command
+        with TemporaryDirectory() as directory:
+            repo = _repo(directory)
+            _create_session(repo)
+            run = repo.admit(_start_command()).run
+            application = RunApplicationCoordinator(repo)
+            handle = CursorProviderRunHandle(run_id=run.run_id, sink=application.provider_sink(), now=lambda: NOW)
+            handle.on_sdk_event(CursorSdkEvent('run.started'))
+            handle.on_sdk_event(_tool_event(call_id='c1', tool_name='search', arguments={'q':1}))
+            stored = repo.get(GetRunCommand(run_id=run.run_id))
+            self.assertEqual(stored.state, RunState.WAITING_FOR_TOOL)

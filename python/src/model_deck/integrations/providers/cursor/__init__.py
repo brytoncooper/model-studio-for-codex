@@ -23,3 +23,7 @@ __all__ = [
     "CursorSdkSessionPort",
     "CursorStartRequest",
 ]
+
+from .process_runtime import CursorProcessPort, CursorProcessRuntime, PreparedCursorRun
+
+__all__ += ["CursorProcessPort", "CursorProcessRuntime", "PreparedCursorRun"]

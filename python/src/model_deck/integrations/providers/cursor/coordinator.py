@@ -424,6 +424,8 @@ class CursorProviderRunHandle:
         self._active_operations = 0
         self._publication_queue: deque[ProviderRunEvent] = deque()
         self._publishing = False
+        self._sdk_events: deque[CursorSdkEvent] = deque()
+        self._draining_sdk_events = False
 
     @property
     def run_id(self) -> str:
@@ -456,20 +458,62 @@ class CursorProviderRunHandle:
     def on_sdk_event(self, event: CursorSdkEvent) -> None:
         if not isinstance(event, CursorSdkEvent):
             raise CursorProtocolError("sdk event must be a CursorSdkEvent")
+        detached = CursorSdkEvent(event.kind, _detached_json(event.payload))
+        with self._lock:
+            if len(self._sdk_events) >= 256:
+                raise CursorProtocolError("pending SDK event limit exceeded")
+            self._sdk_events.append(detached)
+        self._drain_sdk_events()
+
+    def _drain_sdk_events(self) -> None:
+        with self._lock:
+            if self._forward_pending is not None or self._draining_sdk_events:
+                return
+            self._draining_sdk_events = True
+        owns_drain = True
+        first_error = None
+        try:
+            while True:
+                with self._lock:
+                    if self._forward_pending is not None or not self._sdk_events:
+                        self._draining_sdk_events = False
+                        owns_drain = False
+                        break
+                    event = self._sdk_events.popleft()
+                try:
+                    self._accept_sdk_event(event)
+                except BaseException as error:
+                    if first_error is None:
+                        first_error = error
+        finally:
+            if owns_drain:
+                with self._lock:
+                    self._draining_sdk_events = False
+        if first_error is not None:
+            raise first_error
+
+    def _accept_sdk_event(self, event: CursorSdkEvent) -> None:
+        if not isinstance(event, CursorSdkEvent):
+            raise CursorProtocolError("sdk event must be a CursorSdkEvent")
         kind = event.kind
         if not isinstance(kind, str) or kind not in _ALLOWED_SDK_EVENT_KINDS:
             raise CursorProtocolError(f"unknown sdk event kind: {kind!r}")
         detached = _detached_json(event.payload)
 
         with self._lock:
+            # A submission may reserve its outcome after the drain popped this
+            # event. Put it back until the receipt/outstanding state is settled.
+            if self._forward_pending is not None:
+                self._sdk_events.appendleft(CursorSdkEvent(kind, detached))
+                return
             if self._terminal_kind is not None:
                 raise CursorProtocolError(
                     "sdk event arrived after terminal event"
                 )
             if not self._started:
-                if kind != "run.started":
+                if kind not in ("run.started", "run.failed", "run.interrupted"):
                     raise CursorProtocolError(
-                        "first sdk event must be run.started"
+                        "first sdk event must be run.started or an unsuccessful terminal event"
                     )
             elif kind == "run.started":
                 raise CursorProtocolError("duplicate run.started event")
@@ -499,7 +543,7 @@ class CursorProviderRunHandle:
                 kind=kind,
                 run_id=self._run_id,
                 observed_at=self._now(),
-                payload=detached,
+                payload=detached["tool_call"] if kind == "tool.requested" else detached,
             )
             self._publication_queue.append(provider_event)
             if self._publishing:
@@ -588,6 +632,7 @@ class CursorProviderRunHandle:
             session_to_close = self._take_close_locked()
         if session_to_close is not None:
             session_to_close.close()
+        self._drain_sdk_events()
         if sdk_error is not None:
             return SubmitToolResultProviderResult(
                 outcome=SubmitToolResultProviderOutcome.REJECTED
