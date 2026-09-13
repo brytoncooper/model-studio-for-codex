@@ -34,6 +34,9 @@ from model_deck.engine.runs.ports import (
     RunAdmissionKey,
     RunAdmissionRequestHashConflictError,
     RunAdmissionResult,
+    RunNamedToolChoice,
+    RunNoToolChoice,
+    RunOptions,
     RunRecord,
     RunRepository,
     RunRequest,
@@ -50,6 +53,7 @@ from model_deck.engine.runs.ports import (
     ToolDefinition,
     ToolResultIdempotencyConflictError,
 )
+from model_deck.engine.runs.options import parse_run_options, run_options_to_wire
 from model_deck.engine.runs.tool_definitions import parse_tool_definitions, tool_definitions_to_wire
 from model_deck.engine.sessions.ports import GetSessionCommand, SessionRepository
 
@@ -234,17 +238,21 @@ def _validate_json_value(name: str, value: Any) -> Any:
     return _validate_bounded_json_value(name, value)
 
 
-def _validate_run_input_tools_payload_size(
+def _validate_run_request_payload_size(
     input_block: NormalizedRunInput,
     tools: tuple[ToolDefinition, ...],
+    options: RunOptions,
 ) -> None:
     payload = {
         "input": {"messages": list(input_block.messages)},
         "tools": tool_definitions_to_wire(tools),
     }
+    options_wire = run_options_to_wire(options)
+    if options_wire:
+        payload["options"] = options_wire
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(encoded) > _MAX_RUN_INPUT_TOOLS_PAYLOAD:
-        raise ValueError("run input and tools payload exceeds maximum size")
+        raise ValueError("run input, tools, and options payload exceeds maximum size")
 
 
 def _validate_input_block(value: Any) -> NormalizedRunInput:
@@ -276,6 +284,7 @@ def _validate_start_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
             "registration_id",
             "input",
             "tools",
+            "options",
             "capability_snapshot_ref",
         }
     )
@@ -292,7 +301,14 @@ def _validate_start_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
         tools = _validate_tools_block(params["tools"])
     else:
         tools = ()
-    _validate_run_input_tools_payload_size(input_block, tools)
+    if "options" in params:
+        if params["options"] is None:
+            raise ValueError("options must be an object")
+        options = parse_run_options(params["options"])
+    else:
+        options = RunOptions()
+    _validate_named_tool_choice(options, tools)
+    _validate_run_request_payload_size(input_block, tools, options)
     return {
         "session_id": _validate_uuid_field("session_id", params.get("session_id")),
         "client_request_id": _validate_client_request_id(params.get("client_request_id")),
@@ -300,6 +316,7 @@ def _validate_start_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
         "registration_id": _validate_uuid_field("registration_id", params.get("registration_id")),
         "input": input_block,
         "tools": tools,
+        "options": options,
         "capability_snapshot_ref": (
             _validate_opaque_ref("capability_snapshot_ref", params["capability_snapshot_ref"])
             if "capability_snapshot_ref" in params
@@ -322,9 +339,49 @@ def _request_hash_from_start(validated: dict[str, Any]) -> str:
         "input": {"messages": list(validated["input"].messages)},
         "tools": tool_definitions_to_wire(validated["tools"]),
     }
+    options_wire = run_options_to_wire(validated["options"])
+    if options_wire:
+        payload["options"] = options_wire
     if validated["capability_snapshot_ref"] is not None:
         payload["capability_snapshot_ref"] = validated["capability_snapshot_ref"]
     return _canonical_request_hash(payload)
+
+
+def _validate_named_tool_choice(
+    options: RunOptions,
+    tools: tuple[ToolDefinition, ...],
+) -> None:
+    choice = options.tool_choice
+    if not isinstance(choice, RunNamedToolChoice):
+        return
+    if choice.tool_name not in {tool.name for tool in tools}:
+        raise ValueError("named tool_choice must reference an authorized tool")
+
+
+def _tools_advertised_to_provider(
+    tools: tuple[ToolDefinition, ...],
+    options: RunOptions,
+) -> tuple[ToolDefinition, ...]:
+    if isinstance(options.tool_choice, RunNoToolChoice):
+        return ()
+    return tools
+
+
+def _detached_options(options: RunOptions) -> RunOptions:
+    return parse_run_options(run_options_to_wire(options))
+
+
+def _provider_request(request: RunRequest) -> RunRequest:
+    return RunRequest(
+        run_id=request.run_id,
+        session_id=request.session_id,
+        client_request_id=request.client_request_id,
+        idempotency_key=request.idempotency_key,
+        route_snapshot=request.route_snapshot,
+        input=request.input,
+        tools=_tools_advertised_to_provider(request.tools, request.options),
+        options=_detached_options(request.options),
+    )
 
 
 def _run_summary(record: RunRecord) -> dict[str, Any]:
@@ -436,8 +493,9 @@ class RunApplicationCoordinator:
         claimed = self._runs.claim_dispatch(
             ClaimDispatchCommand(run_id=request.run_id, dispatch_token=request.run_id)
         )
+        provider_request = _provider_request(request)
         try:
-            handle = provider.start(request, self.provider_sink())
+            handle = provider.start(provider_request, self.provider_sink())
         except Exception:
             refreshed = self._runs.get(GetRunCommand(run_id=claimed.run_id))
             if refreshed.state in TERMINAL_RUN_STATES:
@@ -577,8 +635,11 @@ class StartRunUseCase:
             raise ValueError(
                 "authorized host context does not match session host context"
             )
+        provider_tools = _tools_advertised_to_provider(
+            validated["tools"], validated["options"]
+        )
         capability_requirements = None
-        if validated["tools"]:
+        if provider_tools:
             capability_requirements = (
                 CapabilityFeature("tools", CapabilityTriState.SUPPORTED),
             )
@@ -599,6 +660,7 @@ class StartRunUseCase:
             input=validated["input"],
             tools=validated["tools"],
             authorized_host_context_ref=authorized_host_context_ref,
+            options=validated["options"],
         )
         admission = self._runs.admit(command)
         if not admission.dispatch_required:
@@ -608,6 +670,7 @@ class StartRunUseCase:
             idempotency_key=validated["idempotency_key"],
             normalized_input=validated["input"],
             tools=validated["tools"],
+            options=validated["options"],
         )
         return {"run": _run_summary(run)}
 
@@ -618,6 +681,7 @@ class StartRunUseCase:
         idempotency_key: str,
         normalized_input: NormalizedRunInput,
         tools: tuple[ToolDefinition, ...],
+        options: RunOptions,
     ) -> RunRecord:
         run = admission.run
         claimed = self._runs.claim_dispatch(
@@ -630,7 +694,8 @@ class StartRunUseCase:
             idempotency_key=idempotency_key,
             route_snapshot=claimed.route_snapshot,
             input=normalized_input,
-            tools=tools,
+            tools=_tools_advertised_to_provider(tools, options),
+            options=_detached_options(options),
         )
         try:
             handle = self._provider.start(request, self._coordinator.provider_sink())
