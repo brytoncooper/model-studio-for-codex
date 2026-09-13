@@ -43,7 +43,7 @@ commit counts or the number of task headings.
 | B20 Package lifecycle | Artifact staging, lifecycle service, SQLite lifecycle transactions and versioned-data contract reviewed | Integrate real activation, versioned data and public lifecycle dispatch |
 | B21 Extension UI | Declarative schema, immutable decoder and native renderer reviewed | Public panel delivery, app attachment and extension management |
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
-| B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
+| B23 Author tooling | Generic authenticated CLI invocation reviewed and pushed | SDK, author workflow and JavaScript fixture |
 | B24 Restricted execution | Reviewed feasibility document; no restricted runtime implemented | Isolated OS enforcement investigation and qualification |
 | B25 Native parity | Catalog path, authenticated settings persistence and native settings screen reviewed | App attachment and remaining native features |
 | B26 Distribution/docs | Isolated staging packager and subsystem catalog reviewed | Real staged packaging, compatibility wrappers and aggregate gate |
@@ -263,3 +263,22 @@ an idle subscribed client without another request. Transport repair is assigned.
 The source audit exposed real missing integration and verification work. Earlier
 conversation percentages were estimates, not a measured delivery baseline; this
 checklist replaces them as the source of status.
+
+## Accepted run-options pipeline
+
+`664fb02`, `b93968e` and `fba4688` add strict options conversion, versioned
+SQLite persistence and admission/provider-request propagation. Independent Sol
+reviews accepted each slice after malformed-value and recovery fixes. Parent
+ran 70 combined codec, admission, persistence, use-case and startup recovery
+tests successfully. Omitted options retain the legacy request hash; explicit
+false/empty values survive; malformed stored options fail closed. Provider
+specific mapping and enforcement remain unfinished; see [remaining parity
+work](RUN-OPTIONS-GAP.md). No live application data was migrated.
+
+CLI `bbf52d2` adds authenticated discovery and generic invocation of advertised
+operations with bounded input and fixed failure handling. Independent review
+passed 32 CLI tests. Plugin SDK, package authoring commands and the JavaScript
+fixture remain B23 requirements.
+
+Next / upcoming task: accept the idle-event disconnect repair and versioned
+data freeze-ownership repair, then integrate external invocation and brokers.
