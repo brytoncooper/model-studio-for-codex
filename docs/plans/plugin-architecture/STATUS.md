@@ -348,3 +348,20 @@ ran the six new wire tests. Real subprocess-to-storage integration is underway.
 
 Next / upcoming task: resolve lifecycle revision synchronization, review authoring
 archive boundaries, and verify subprocess storage integration.
+
+## Accepted provider event alignment and broker composition
+
+`d65b424` aligns the HTTP stream validator with engine events: tool requests use
+flat provider payloads, and failed/interrupted runs may terminate before start.
+Independent review and the parent passed all 84 SSE tests; existing terminal,
+sequence and outstanding-tool checks remain enforced. HTTP execution and actual
+endpoint resolution are still required.
+
+`3c95068` proves the isolated child -> invocation runtime -> storage wire adapter
+-> authority/data broker -> SQLite path. Independent review passed four integration
+tests and 25 adjacent tests; the parent also passed the four integration tests.
+The tests reject forged namespaces, revoked handles and mismatched activations
+without replacing the broker dispatcher with a mock.
+
+Next / upcoming task: complete lifecycle revision synchronization and archive
+packing repairs; reuse the existing chat-stream translator in the HTTP package.
