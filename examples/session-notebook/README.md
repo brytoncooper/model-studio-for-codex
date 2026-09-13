@@ -47,17 +47,18 @@ job wire, public job cancellation service, or export-result attachment seam.
 
 ## Panels
 
-`panels/notebook-list.json` and `panels/notebook-editor.json` are complete
-`ui.panel.v1` documents. The editor binds title and body inputs to create and
-binds note id, title and body to update. Its update action targets revision 1,
-which makes the demonstration's edit intentionally a single edit of a freshly
-created note. The list panel can refresh the collection and fetch a note by id.
+`panels/notebook-list.json` and `panels/notebook-editor.json` are the initial
+`ui.panel.v1` documents. Notebook operations may return a newer validated panel
+document beside their ordinary output. Refresh returns real note rows with
+per-note Open actions. Create and Open return a populated editor; each successful
+Save returns another editor whose update action carries the note's new current
+revision, so the same note can be edited repeatedly. A stale revision returns a
+recoverable conflict and leaves the stored note unchanged.
 
-Installed resources are served through `engine.v1.ui.*`. The separate
-`ModelDeckPanelDemo` executable discovers those panels, decodes them with the
-generic immutable decoder, renders them with `PanelRenderer`, and invokes only
-operation descriptors returned by the engine. It requires explicit isolated
-rendezvous and credential paths and never discovers or starts a live service.
+Installed resources are served through `engine.v1.ui.*`. Native clients decode
+both fetched and action-returned documents with the generic immutable decoder,
+render them with `PanelRenderer`, and invoke only operation descriptors returned
+by the engine. Panel and operation identifiers remain opaque outside the plugin.
 
 ## Wire behavior
 
@@ -153,7 +154,11 @@ owned SQLite note data is retained for a later re-enable.
 
 ## Current integration boundary
 
-This walkthrough proves an externally packaged Notebook against isolated engine
-and native-demo processes. It does not install or replace the shipping app.
+The commands above remain the low-level CLI and panel-demo walkthrough. The
+[Model Deck V2 application guide](../../macos/Sources/ModelDeckV2/README.md)
+documents the normal isolated app flow: app-owned engine startup, generic
+install and enable, dynamic list and repeated editing, clean quit, reopen, and
+disable with retained data. Neither path installs or replaces the shipping app.
+
 Cancellable export jobs and optional session metadata remain outside this
 example and must be added through their owning public contracts.

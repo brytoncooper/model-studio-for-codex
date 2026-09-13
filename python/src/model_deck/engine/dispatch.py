@@ -1261,13 +1261,13 @@ class EngineDispatch:
                     ]
                 }
             elif method_name == "operations.invoke":
-                output = host.invoke(
+                envelope = host.invoke_result(
                     params["operation"],
                     params["input"],
                     principal=principal,
                     idempotency_key=params["idempotency_key"],
                 )
-                result = {"output": output}
+                result = envelope
             elif method_name == "ui.contributions.list":
                 extension_id = params.get("extension_id")
                 panels = host.ui_contributions()

@@ -130,12 +130,52 @@ class ExternalExtensionTransportTests(unittest.TestCase):
             "panel_id": "org.example.notebook.list",
         })["result"]["panel"]
         self.assertEqual(panel["panel_id"], "org.example.notebook.list")
-        created = self._call(session, 8, "engine.v1.operations.invoke", {
+        created_result = self._call(session, 8, "engine.v1.operations.invoke", {
             "operation": "org.example.notebook.notes.create",
             "input": {"title": "First", "body": "Retained", "metadata": {}},
             "idempotency_key": "create",
-        })["result"]["output"]
+        })["result"]
+        created = created_result["output"]
         self.assertEqual(created["body"], "Retained")
+        self.assertEqual(created_result["panel"]["panel_id"], "org.example.notebook.editor")
+        first_update = self._call(session, 81, "engine.v1.operations.invoke", {
+            "operation": "org.example.notebook.notes.update",
+            "input": {
+                "note_id": created["note_id"], "expected_revision": created["revision"],
+                "title": "First", "body": "Edited once", "metadata": {},
+            },
+            "idempotency_key": "update-once",
+        })["result"]
+        second_update = self._call(session, 82, "engine.v1.operations.invoke", {
+            "operation": "org.example.notebook.notes.update",
+            "input": {
+                "note_id": created["note_id"],
+                "expected_revision": first_update["output"]["revision"],
+                "title": "First", "body": "Edited twice", "metadata": {},
+            },
+            "idempotency_key": "update-twice",
+        })["result"]
+        self.assertEqual(second_update["output"]["revision"], 3)
+        self.assertEqual(
+            second_update["panel"]["root"]["children"][2]["params"]["expected_revision"],
+            3,
+        )
+        stale = self._call(session, 83, "engine.v1.operations.invoke", {
+            "operation": "org.example.notebook.notes.update",
+            "input": {
+                "note_id": created["note_id"],
+                "expected_revision": first_update["output"]["revision"],
+                "title": "Stale", "body": "Must not win", "metadata": {},
+            },
+            "idempotency_key": "update-stale",
+        })
+        self.assertEqual(stale["error"]["data"]["code"], "conflict")
+        after_conflict = self._call(session, 84, "engine.v1.operations.invoke", {
+            "operation": "org.example.notebook.notes.get",
+            "input": {"note_id": created["note_id"]},
+            "idempotency_key": "get-after-conflict",
+        })["result"]["output"]
+        self.assertEqual(after_conflict["body"], "Edited twice")
 
         current = self._call(session, 9, "engine.v1.extensions.get", {
             "extension_id": "org.example.notebook",

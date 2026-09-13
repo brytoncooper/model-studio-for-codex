@@ -31,6 +31,21 @@ _MANIFEST_ENTRY_NAME = "manifest.json"
 _DETERMINISTIC_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 _DETERMINISTIC_MODE = (0o644 & 0xFFFF) << 16
 _READ_CHUNK_BYTES = 64 * 1024
+_PYCACHE_DIRECTORY_NAME = "__pycache__"
+_PYCACHE_FILE_SUFFIX = ".pyc"
+
+
+def _should_skip_cache_entry(entry_name: str) -> bool:
+    """Return ``True`` for Python bytecode cache artifacts.
+
+    The packer must ignore both the ``__pycache__`` directory at any
+    depth and any loose ``.pyc`` file. Both are build-time artifacts
+    that do not belong in a published plugin archive; including them
+    would also break archive determinism across Python versions.
+    """
+    if entry_name == _PYCACHE_DIRECTORY_NAME:
+        return True
+    return entry_name.endswith(_PYCACHE_FILE_SUFFIX)
 
 
 @dataclass(frozen=True)
@@ -220,6 +235,8 @@ def _read_project_files(
                 ) from None
             with entries:
                 for entry in entries:
+                    if _should_skip_cache_entry(entry.name):
+                        continue
                     relative_parts = (*directory.relative_parts, entry.name)
                     archive_name = "/".join(relative_parts)
                     try:

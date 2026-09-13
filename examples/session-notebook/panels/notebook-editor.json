@@ -8,13 +8,6 @@
     "kind": "stack",
     "children": [
       {
-        "id": "note_id",
-        "kind": "text_input",
-        "value": "",
-        "multiline": false,
-        "label": "Note id"
-      },
-      {
         "id": "title",
         "kind": "text_input",
         "value": "",
@@ -35,20 +28,6 @@
         "operation_id": "org.example.notebook.notes.create",
         "params": {},
         "field_bindings": {
-          "title": "title",
-          "body": "body"
-        }
-      },
-      {
-        "id": "update_note",
-        "kind": "button",
-        "label": "Update fresh note",
-        "operation_id": "org.example.notebook.notes.update",
-        "params": {
-          "expected_revision": 1
-        },
-        "field_bindings": {
-          "note_id": "note_id",
           "title": "title",
           "body": "body"
         }

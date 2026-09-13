@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .executable(name: "ModelDeck", targets: ["ModelDeck"]),
         .executable(name: "ModelDeckPanelDemo", targets: ["ModelDeckPanelDemo"]),
+        .executable(name: "ModelDeckV2", targets: ["ModelDeckV2"]),
         .library(name: "ModelDeckPresentation", targets: ["ModelDeckPresentation"]),
         .library(name: "ModelDeckPlatform", targets: ["ModelDeckPlatform"]),
         .library(name: "ModelDeckClient", targets: ["ModelDeckClient"]),
@@ -77,6 +78,18 @@ let package = Package(
                 .linkedFramework("Security"),
                 .linkedFramework("ApplicationServices"),
             ]
+        ),
+        .executableTarget(
+            name: "ModelDeckV2",
+            dependencies: ["ModelDeckPresentation", "ModelDeckPlatform", "ModelDeckClient", "ModelDeckContracts"],
+            path: "Sources/ModelDeckV2",
+            exclude: ["README.md"],
+            linkerSettings: [.linkedFramework("AppKit")]
+        ),
+        .testTarget(
+            name: "ModelDeckV2Tests",
+            dependencies: ["ModelDeckV2"],
+            path: "Tests/ModelDeckV2Tests"
         ),
     ]
 )

@@ -20,7 +20,7 @@ final class EngineExtensionPanelServiceTests: XCTestCase {
                 "effect": "write",
                 "required_grants": ["storage.write"],
             ]]]),
-            response(id: "md-6", result: ["output": ["saved": true]]),
+            response(id: "md-6", result: ["output": ["saved": true], "panel": readyPanel()]),
             response(id: "md-7", result: ["output": ["saved": true]]),
         ])
         let service = EngineExtensionPanelService(
@@ -33,10 +33,15 @@ final class EngineExtensionPanelServiceTests: XCTestCase {
         XCTAssertEqual(try service.listPanels(), [ExtensionPanelContribution(panelID: "org.example.panel", title: "Example")])
         XCTAssertEqual(try service.fetchPanel(panelID: "org.example.panel"), .object(readyPanelJSONValue()))
         XCTAssertEqual(try service.listOperations().first?.operationID, "org.example.save")
+        let result = try service.invokeOperation(
+            operationID: "org.example.save",
+            input: .object(["title": .string("Changed")])
+        )
         XCTAssertEqual(
-            try service.invokeOperation(operationID: "org.example.save", input: .object(["title": .string("Changed")])).output,
+            result.output,
             .object(["saved": .bool(true)])
         )
+        XCTAssertEqual(result.panel, .object(readyPanelJSONValue()))
         _ = try service.invokeOperation(operationID: "org.example.save", input: .object([:]))
 
         let requests = try transport.recordedFrames().map(requestObject)
@@ -53,6 +58,57 @@ final class EngineExtensionPanelServiceTests: XCTestCase {
         let secondKey = try XCTUnwrap(secondInvokeParams["idempotency_key"] as? String)
         XCTAssertNotNil(UUID(uuidString: firstKey))
         XCTAssertNotEqual(firstKey, secondKey)
+    }
+
+    func testInstallsAndChangesExtensionStateThroughFrozenRPCs() throws {
+        let transport = FakeEngineTransport(responses: [
+            response(id: "md-1", result: hello(authenticated: false)),
+            response(id: "md-2", result: hello(authenticated: true)),
+            response(id: "md-3", result: ["extensions": [[
+                "extension_id": "org.example.notebook",
+                "status": "installed",
+            ]]]),
+            response(id: "md-4", result: [
+                "extension_id": "org.example.notebook",
+                "status": "installed",
+                "version": "1.0.0",
+                "revision": 1,
+            ]),
+            response(id: "md-5", result: [
+                "extension_id": "org.example.notebook",
+                "version": "1.0.0",
+            ]),
+            response(id: "md-6", result: ["enabled": true]),
+            response(id: "md-7", result: ["enabled": false]),
+        ])
+        let service = EngineExtensionPanelService(
+            rendezvous: descriptor(),
+            transport: transport,
+            credentialProvider: FixedPanelCredential()
+        )
+
+        try service.connect()
+        XCTAssertEqual(try service.listInstalledExtensions().first?.extensionID, "org.example.notebook")
+        let detail = try service.extensionDetail(extensionID: "org.example.notebook")
+        XCTAssertEqual(detail.revision, 1)
+        XCTAssertEqual(try service.installExtension(archivePath: "/tmp/notebook.zip"), "org.example.notebook")
+        try service.setExtensionEnabled(extensionID: "org.example.notebook", revision: 1, enabled: true)
+        try service.setExtensionEnabled(extensionID: "org.example.notebook", revision: 2, enabled: false)
+
+        let requests = try transport.recordedFrames().map(requestObject)
+        XCTAssertEqual(requests.map { $0["method"] as? String }, [
+            "engine.v1.hello", "engine.v1.hello",
+            "engine.v1.extensions.list", "engine.v1.extensions.get",
+            "engine.v1.extensions.install", "engine.v1.extensions.enable",
+            "engine.v1.extensions.disable",
+        ])
+        let installParams = try XCTUnwrap(requests[4]["params"] as? [String: Any])
+        XCTAssertEqual(installParams["archive_path"] as? String, "/tmp/notebook.zip")
+        XCTAssertEqual(installParams["expected_revision"] as? Int, 0)
+        let enableParams = try XCTUnwrap(requests[5]["params"] as? [String: Any])
+        let disableParams = try XCTUnwrap(requests[6]["params"] as? [String: Any])
+        XCTAssertEqual(enableParams["expected_revision"] as? Int, 1)
+        XCTAssertEqual(disableParams["expected_revision"] as? Int, 2)
     }
 
     private func descriptor() -> EngineRendezvousDescriptor {

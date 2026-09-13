@@ -10,6 +10,9 @@
     "job_id": {
       "type": "string",
       "format": "uuid"
+    },
+    "panel": {
+      "$ref": "../../ui.panel.v1/tree.schema.json"
     }
   },
   "required": [

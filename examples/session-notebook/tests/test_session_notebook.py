@@ -310,16 +310,32 @@ class RunningNotebook:
         context_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         invocation_handle = handle or self.issue_handle(operation_id)
+        response = self.invoke_result(
+            operation_id,
+            operation_input,
+            handle=invocation_handle,
+            context_overrides=context_overrides,
+        )
+        return response["output"]
+
+    def invoke_result(
+        self,
+        operation_id: str,
+        operation_input: dict[str, Any],
+        *,
+        handle: str | None = None,
+        context_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        invocation_handle = handle or self.issue_handle(operation_id)
         context = self.broker_context(invocation_handle)
         if context_overrides:
             context.update(context_overrides)
-        response = self.channel.invoke(
+        return self.channel.invoke(
             operation_id,
             operation_input,
             context,
             timeout_s=3.0,
         )
-        return response["output"]
 
 
 class PackageContractTests(unittest.TestCase):
@@ -362,6 +378,9 @@ class PackageContractTests(unittest.TestCase):
             validate_schema_ref("contracts/ui.panel.v1/tree.schema.json", panel)
             self.assertEqual(panel["panel_id"], panel_entry["id"])
             self._assert_panel_semantics(panel, manifest_operation_ids)
+            if panel_entry["id"] == "org.example.notebook.editor":
+                child_ids = [child["id"] for child in panel["root"]["children"]]
+                self.assertEqual(child_ids, ["title", "body", "save_note"])
 
         source = PLUGIN_PATH.read_text(encoding="utf-8")
         self.assertNotIn("import model_deck", source)
@@ -574,20 +593,21 @@ class RealStorageBrokerTests(unittest.TestCase):
         first.close()
 
         stale = self.start_notebook()
-        with self.assertRaises(ProcessRuntimeError):
-            stale.invoke(
-                UPDATE_NOTE,
-                {
-                    "note_id": created["note_id"],
-                    "expected_revision": created["revision"],
-                    "title": "Stale",
-                    "body": "Lost",
-                },
-            )
-
-        verifier = self.start_notebook()
+        conflict = stale.invoke_result(
+            UPDATE_NOTE,
+            {
+                "note_id": created["note_id"],
+                "expected_revision": created["revision"],
+                "title": "Stale",
+                "body": "Lost",
+            },
+        )
         self.assertEqual(
-            verifier.invoke(GET_NOTE, {"note_id": created["note_id"]}),
+            conflict,
+            {"error": {"code": "conflict", "message": "note revision changed"}},
+        )
+        self.assertEqual(
+            stale.invoke(GET_NOTE, {"note_id": created["note_id"]}),
             current,
         )
 

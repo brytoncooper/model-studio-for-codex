@@ -25,6 +25,8 @@ LIST_NOTES = "org.example.notebook.notes.list"
 UPDATE_NOTE = "org.example.notebook.notes.update"
 DELETE_NOTE = "org.example.notebook.notes.delete"
 PREVIEW_EXPORT = "org.example.notebook.export.preview"
+LIST_PANEL = "org.example.notebook.list"
+EDITOR_PANEL = "org.example.notebook.editor"
 
 STORAGE_GET = "plugin.v1.broker.storage.get"
 STORAGE_LIST = "plugin.v1.broker.storage.list"
@@ -56,6 +58,10 @@ class NotebookInputError(ValueError):
 
 class BrokerCallError(RuntimeError):
     """A broker request failed without exposing its private response."""
+
+
+class NotebookConflictError(RuntimeError):
+    """The note changed after the editor loaded its current revision."""
 
 
 def _reject_non_finite(_value: str) -> None:
@@ -327,6 +333,7 @@ class SessionNotebookWorker:
         self._activation_id: str | None = None
         self._allowed_broker_methods: frozenset[str] = frozenset()
         self._stopped = False
+        self._panel_revision = 0
 
     def serve(self) -> None:
         while not self._stopped:
@@ -470,12 +477,125 @@ class SessionNotebookWorker:
             or broker_context["revocation_generation"] < 0
         ):
             raise NotebookInputError()
-        output = self._invoke_operation(
-            operation_id,
-            invocation_input,
-            broker_context["invocation_handle"],
+        try:
+            output = self._invoke_operation(
+                operation_id,
+                invocation_input,
+                broker_context["invocation_handle"],
+            )
+        except NotebookConflictError:
+            return {
+                "error": {
+                    "code": "conflict",
+                    "message": "note revision changed",
+                }
+            }
+        panel = self._panel_for(operation_id, output)
+        result = {"output": output}
+        if panel is not None:
+            result["panel"] = panel
+        return result
+
+    def _panel_for(
+        self,
+        operation_id: str,
+        output: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if operation_id == LIST_NOTES:
+            return self._list_panel(output["notes"])
+        if operation_id in {CREATE_NOTE, GET_NOTE, UPDATE_NOTE}:
+            return self._editor_panel(output)
+        return None
+
+    def _next_panel_revision(self) -> int:
+        self._panel_revision += 1
+        return self._panel_revision
+
+    def _list_panel(self, notes: list[dict[str, Any]]) -> dict[str, Any]:
+        children: list[dict[str, Any]] = [
+            {"id": "list_heading", "kind": "text", "value": "Notes"}
+        ]
+        if not notes:
+            children.append(
+                {"id": "empty_message", "kind": "text", "value": "No notes yet."}
+            )
+        for index, note in enumerate(notes[:60]):
+            children.append(
+                {
+                    "id": f"note_{index}",
+                    "kind": "stack",
+                    "children": [
+                        {
+                            "id": f"title_{index}",
+                            "kind": "text",
+                            "value": note["title"] or "Untitled",
+                        },
+                        {
+                            "id": f"open_{index}",
+                            "kind": "button",
+                            "label": "Open",
+                            "operation_id": GET_NOTE,
+                            "params": {"note_id": note["note_id"]},
+                        },
+                    ],
+                }
+            )
+        children.append(
+            {
+                "id": "refresh_notes",
+                "kind": "button",
+                "label": "Refresh notes",
+                "operation_id": LIST_NOTES,
+                "params": {},
+            }
         )
-        return {"output": output}
+        return {
+            "panel_id": LIST_PANEL,
+            "revision": self._next_panel_revision(),
+            "title": "Session Notebook",
+            "state": "ready",
+            "root": {"id": "notes", "kind": "stack", "children": children},
+        }
+
+    def _editor_panel(self, note: dict[str, Any]) -> dict[str, Any]:
+        note_revision = note["revision"]
+        return {
+            "panel_id": EDITOR_PANEL,
+            "revision": self._next_panel_revision(),
+            "title": note["title"] or "Untitled",
+            "state": "ready",
+            "root": {
+                "id": "editor",
+                "kind": "stack",
+                "children": [
+                    {
+                        "id": "title",
+                        "kind": "text_input",
+                        "value": note["title"],
+                        "multiline": False,
+                        "label": "Title",
+                    },
+                    {
+                        "id": "body",
+                        "kind": "text_input",
+                        "value": note["body"],
+                        "multiline": True,
+                        "label": "Body",
+                    },
+                    {
+                        "id": "save",
+                        "kind": "button",
+                        "label": "Save",
+                        "operation_id": UPDATE_NOTE,
+                        "params": {
+                            "note_id": note["note_id"],
+                            "expected_revision": note_revision,
+                        },
+                        "field_bindings": {"title": "title", "body": "body"},
+                    },
+                ],
+            },
+        }
 
     def _invoke_operation(
         self,
@@ -607,6 +727,8 @@ class SessionNotebookWorker:
         note_id = _require_note_id(values["note_id"])
         expected_revision = _require_revision(values["expected_revision"])
         current = self._load_note(note_id, invocation_handle)
+        if current["revision"] != expected_revision:
+            raise NotebookConflictError()
         note = {
             "note_id": note_id,
             "title": _require_text(values["title"], 256),
@@ -638,7 +760,9 @@ class SessionNotebookWorker:
         )
         note_id = _require_note_id(values["note_id"])
         expected_revision = _require_revision(values["expected_revision"])
-        self._load_note(note_id, invocation_handle)
+        current = self._load_note(note_id, invocation_handle)
+        if current["revision"] != expected_revision:
+            raise NotebookConflictError()
         params = self._storage_params(invocation_handle)
         params.update(
             {

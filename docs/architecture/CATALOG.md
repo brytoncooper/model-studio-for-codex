@@ -99,6 +99,7 @@ defines generation binding and the shared write barrier required for updates.
 | MCP client adapter: model-read orchestration converged onto `model_library` use cases | [MCP client README](../../python/src/model_deck/integrations/clients/mcp/README.md) |
 | macOS host-settings service and wire notes | [HOST_SETTINGS_SERVICE](../../macos/Sources/ModelDeckClient/HOST_SETTINGS_SERVICE.md), [HOST_SETTINGS](../../macos/Sources/ModelDeckClient/HOST_SETTINGS.md) |
 | Isolated generic extension-panel client and executable demonstration | [panel demo README](../../macos/Sources/ModelDeckPanelDemo/README.md) |
+| Isolated Model Deck V2 application, owned engine lifecycle, and Notebook walkthrough | [V2 application guide](../../macos/Sources/ModelDeckV2/README.md), [V2 builder](../../scripts/v2/README.md) |
 
 ## Plugin system
 

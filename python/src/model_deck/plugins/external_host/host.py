@@ -34,8 +34,11 @@ from model_deck.plugins.activation_lifecycle import (
 from model_deck.plugins.artifact_store import stage_archive
 from model_deck.plugins.authoring.validation import validate_project_archive
 from model_deck.plugins.process_runtime import ProcessRuntimeConfig
+from model_deck.plugins.panel_validation import validate_panel_semantics
 from model_deck.plugins.schema_bundle import PluginSchemaBundle
 from model_deck_contracts.validator import validate_schema_ref
+
+_STORED_INVOKE_RESULT_KEY = "__model_deck_invoke_result_v1__"
 
 
 class HostConflictError(RuntimeError):
@@ -268,6 +271,11 @@ class ExternalExtensionHost:
 
     def invoke(self, operation_id: str, input: Any, *, idempotency_key: str,
                principal: str) -> Any:
+        return self.invoke_result(operation_id, input, idempotency_key=idempotency_key,
+                                  principal=principal)["output"]
+
+    def invoke_result(self, operation_id: str, input: Any, *, idempotency_key: str,
+                      principal: str) -> dict[str, Any]:
         descriptor = next((item for item in self.operation_catalog() if item["id"] == operation_id), None)
         if descriptor is None:
             raise HostNotServingError(operation_id)
@@ -280,7 +288,13 @@ class ExternalExtensionHost:
         digest = self._digest({"operation": operation_id, "input": checked_input, "principal": principal})
         replay = self._claim_invocation(principal, idempotency_key, digest)
         if replay is not None:
-            return replay
+            if (
+                isinstance(replay, dict)
+                and set(replay) == {_STORED_INVOKE_RESULT_KEY}
+                and isinstance(replay[_STORED_INVOKE_RESULT_KEY], dict)
+            ):
+                return replay[_STORED_INVOKE_RESULT_KEY]
+            return {"output": replay}
         serving = self._activation.serving(extension_id)
         if serving is None:
             raise HostNotServingError(extension_id)
@@ -304,9 +318,33 @@ class ExternalExtensionHost:
              "invocation_handle": handle, "revocation_generation": state.revocation_generation},
             timeout_s=self._timeout_s,
         )
+        if response.get("error", {}).get("code") == "conflict":
+            raise HostConflictError("plugin invocation conflict")
         output = bundle.validate(descriptor["output_schema"], response["output"])
-        self._complete_invocation(principal, idempotency_key, digest, output)
-        return output
+        envelope: dict[str, Any] = {"output": output}
+        if "panel" in response:
+            panel = response["panel"]
+            validate_schema_ref("contracts/ui.panel.v1/tree.schema.json", panel)
+            contributed = {item["id"] for item in self.ui_contributions()
+                           if item["extension_id"] == extension_id}
+            if panel["panel_id"] not in contributed:
+                raise HostConflictError("plugin returned an undeclared panel")
+            operation_ids = {item["id"] for item in self.operation_catalog()
+                             if item["extension_id"] == extension_id}
+            report = validate_panel_semantics(
+                panel, declared_panel_id=panel["panel_id"],
+                declared_operation_ids=operation_ids,
+            )
+            if not report.ok:
+                raise HostConflictError("plugin returned an invalid panel")
+            envelope["panel"] = panel
+        self._complete_invocation(
+            principal,
+            idempotency_key,
+            digest,
+            {_STORED_INVOKE_RESULT_KEY: envelope},
+        )
+        return envelope
 
     def _execute(self, action, extension_id, principal, key, revision, *, candidate=None, approved_scopes=()):
         semantic = {"action": action.value, "extension_id": extension_id, "expected_revision": revision,

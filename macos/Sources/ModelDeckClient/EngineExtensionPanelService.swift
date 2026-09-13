@@ -35,10 +35,42 @@ public struct ExtensionOperationDescriptor: Codable, Equatable {
 public struct ExtensionOperationResult: Codable, Equatable {
     public let output: JSONValue
     public let jobID: String?
+    public let panel: JSONValue?
 
     enum CodingKeys: String, CodingKey {
         case output
         case jobID = "job_id"
+        case panel
+    }
+
+    public init(output: JSONValue, jobID: String? = nil, panel: JSONValue? = nil) {
+        self.output = output
+        self.jobID = jobID
+        self.panel = panel
+    }
+}
+
+public struct InstalledExtension: Codable, Equatable {
+    public let extensionID: String
+    public let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case extensionID = "extension_id"
+        case status
+    }
+}
+
+public struct ExtensionDetail: Codable, Equatable {
+    public let extensionID: String
+    public let status: String
+    public let version: String?
+    public let revision: Int
+
+    enum CodingKeys: String, CodingKey {
+        case extensionID = "extension_id"
+        case status
+        case version
+        case revision
     }
 }
 
@@ -108,6 +140,55 @@ public final class EngineExtensionPanelService: @unchecked Sendable {
         ) }
     }
 
+    public func listInstalledExtensions() throws -> [InstalledExtension] {
+        let result: ExtensionsListResult = try withSerializedRequest {
+            try client.invokeValidated(
+                method: "engine.v1.extensions.list",
+                params: EmptyParams(),
+                paramsSchemaRef: "contracts/engine.v1/methods/extensions.list.params.schema.json",
+                resultSchemaRef: "contracts/engine.v1/methods/extensions.list.result.schema.json"
+            )
+        }
+        return result.extensions
+    }
+
+    public func extensionDetail(extensionID: String) throws -> ExtensionDetail {
+        try withSerializedRequest {
+            try client.invokeValidated(
+                method: "engine.v1.extensions.get",
+                params: ExtensionIDParams(extensionID: extensionID),
+                paramsSchemaRef: "contracts/engine.v1/methods/extensions.get.params.schema.json",
+                resultSchemaRef: "contracts/engine.v1/methods/extensions.get.result.schema.json"
+            )
+        }
+    }
+
+    @discardableResult
+    public func installExtension(archivePath: String) throws -> String {
+        let result: InstallResult = try withSerializedRequest {
+            try client.invokeValidated(
+                method: "engine.v1.extensions.install",
+                params: InstallParams(archivePath: archivePath),
+                paramsSchemaRef: "contracts/engine.v1/methods/extensions.install.params.schema.json",
+                resultSchemaRef: "contracts/engine.v1/methods/extensions.install.result.schema.json"
+            )
+        }
+        return result.extensionID
+    }
+
+    public func setExtensionEnabled(extensionID: String, revision: Int, enabled: Bool) throws {
+        let method = enabled ? "engine.v1.extensions.enable" : "engine.v1.extensions.disable"
+        let operation = enabled ? "enable" : "disable"
+        let _: EnabledResult = try withSerializedRequest {
+            try client.invokeValidated(
+                method: method,
+                params: ExtensionStateParams(extensionID: extensionID, expectedRevision: revision),
+                paramsSchemaRef: "contracts/engine.v1/methods/extensions.\(operation).params.schema.json",
+                resultSchemaRef: "contracts/engine.v1/methods/extensions.\(operation).result.schema.json"
+            )
+        }
+    }
+
     private func withSerializedRequest<Result>(_ request: () throws -> Result) rethrows -> Result {
         requestLock.lock()
         defer { requestLock.unlock() }
@@ -144,4 +225,54 @@ private struct OperationInvokeParams: Encodable {
         case operation, input
         case idempotencyKey = "idempotency_key"
     }
+}
+
+private struct EmptyParams: Encodable {}
+
+private struct ExtensionsListResult: Decodable {
+    let extensions: [InstalledExtension]
+}
+
+private struct ExtensionIDParams: Encodable {
+    let extensionID: String
+
+    enum CodingKeys: String, CodingKey {
+        case extensionID = "extension_id"
+    }
+}
+
+private struct InstallParams: Encodable {
+    let archivePath: String
+    let idempotencyKey = UUID().uuidString.lowercased()
+    let expectedRevision = 0
+
+    enum CodingKeys: String, CodingKey {
+        case archivePath = "archive_path"
+        case idempotencyKey = "idempotency_key"
+        case expectedRevision = "expected_revision"
+    }
+}
+
+private struct InstallResult: Decodable {
+    let extensionID: String
+
+    enum CodingKeys: String, CodingKey {
+        case extensionID = "extension_id"
+    }
+}
+
+private struct ExtensionStateParams: Encodable {
+    let extensionID: String
+    let expectedRevision: Int
+    let idempotencyKey = UUID().uuidString.lowercased()
+
+    enum CodingKeys: String, CodingKey {
+        case extensionID = "extension_id"
+        case expectedRevision = "expected_revision"
+        case idempotencyKey = "idempotency_key"
+    }
+}
+
+private struct EnabledResult: Decodable {
+    let enabled: Bool
 }

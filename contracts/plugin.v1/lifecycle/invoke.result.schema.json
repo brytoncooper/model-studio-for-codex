@@ -9,9 +9,52 @@
     },
     "job_id": {
       "$ref": "../../common/types.schema.json#/definitions/uuid"
+    },
+    "panel": {
+      "$ref": "../../ui.panel.v1/tree.schema.json"
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "conflict"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
     }
   },
-  "required": [
-    "output"
+  "oneOf": [
+    {
+      "required": [
+        "output"
+      ],
+      "not": {
+        "required": [
+          "error"
+        ]
+      }
+    },
+    {
+      "required": [
+        "error"
+      ],
+      "not": {
+        "required": [
+          "output"
+        ]
+      }
+    }
   ]
 }

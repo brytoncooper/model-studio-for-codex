@@ -7,6 +7,7 @@ no downloads, no global discovery, no live app processes.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -131,6 +132,14 @@ class _Watchdog:
 
 
 class HandshakeTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "POSIX process groups required")
+    def test_spawned_child_has_its_own_process_group(self) -> None:
+        rt = _runtime(NEVER_READS_CHILD)
+        self.addCleanup(rt.close)
+        rt.spawn()
+        assert rt._proc is not None
+        self.assertNotEqual(os.getpgid(rt._proc.pid), os.getpgrp())
+
     def test_successful_handshake_and_drain(self) -> None:
         rt = _runtime(GOOD_CHILD)
         self.addCleanup(rt.close)

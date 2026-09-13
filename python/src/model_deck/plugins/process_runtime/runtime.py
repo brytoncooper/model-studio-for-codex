@@ -246,6 +246,9 @@ class ProcessRuntime:
                 stderr=subprocess.PIPE,
                 shell=False,
                 close_fds=True,
+                # Keep the worker out of the engine's terminal process group.
+                # Cleanup remains deliberately scoped to this Popen object.
+                start_new_session=(os.name == "posix"),
             )
         except (OSError, ValueError):
             raise ProcessRuntimeError(
