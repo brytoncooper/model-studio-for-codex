@@ -100,9 +100,33 @@ complete source scan, not snapshot isolation of the final ledger query.
 
 ## Error mapping
 
-`UsageEventMismatchError` and `UsageQueryValidationError` are
-`invalid_argument`; `UsageConflictError` is `conflict`;
-`UsageResourceExhaustedError` is `resource_exhausted`.
+The authenticated dispatcher rejects schema-invalid request parameters with
+JSON-RPC `-32602` before scanning. `UsageQueryValidationError` maps to
+`invalid_argument`, `UsageConflictError` to `conflict`, and
+`UsageResourceExhaustedError` to `resource_exhausted`. A mismatched committed event
+is stored-source corruption rather than caller input: `UsageEventMismatchError`
+and `UsageReconciliationError` map to `internal`. All messages are fixed and omit
+exception details. Invalid result shapes reject, and the response frame is
+preflighted before returning it; an oversized response becomes a bounded
+`resource_exhausted` error without disconnecting the client.
+
+## Isolated engine socket integration
+
+`bootstrap.build_engine_server` constructs the usage repository in the existing
+isolated `engine/state.sqlite3` only when its run repository is configured
+(currently application-state plus fixture-run mode). It injects the real run
+repository as `CommittedUsageEventReader` into `ReconciledUsageQueryUseCase`,
+then supplies that use case to `EngineDispatch(usage_query=...)`. The frozen
+`engine.v1.usage.query` descriptor is advertised only with that injection.
+Default and application-state-without-runs compositions leave it unavailable.
+Kernel composition and transport preflight retain their existing ownership.
+
+An authenticated `usage.query` reads committed usage across the application's
+isolated ledger, optionally filtered by `since`/`until`. It does not infer a
+per-principal filter absent from the accepted usage contract. No external source
+refresh, provider request or event-publisher subscriber is installed. Runs commit
+their normal events independently; query-time reconciliation makes a recording
+failure retryable without turning a completed provider run into a failure.
 
 ## Tests
 
@@ -111,6 +135,7 @@ Run from the Architecture `python` directory:
 ```sh
 PYTHONPATH=src /opt/homebrew/bin/python3.12 -m pytest tests/engine/test_usage_records.py -q
 PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_usage_reconciliation
+PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_usage_bootstrap
 ```
 
 The suite uses real temporary SQLite files and covers identical
@@ -121,12 +146,17 @@ Reconciliation tests combine a fake public snapshot reader with real SQLite
 usage storage, covering multiple pages, inserts after snapshot capture,
 crash/reopen/retry, conflicting replay, absent/null amounts, changed high-water
 marks, cursor cycles and safe failures without partial query results.
+Socket tests use the real engine/bootstrap, run store, usage store and
+deterministic provider with request-aware fixture observations. They cover
+actual run/session identities, absent/null costs, filtered queries, recording
+failure after run-event commit, retry, restart without provider resubmission,
+authentication, discovery, unconfigured modes and sanitized result/errors.
 
 ## Limitations
 
-- The reconciliation use case is available for composition; bootstrap and
-  authenticated dispatch wiring are a separate integration slice. Its local
-  fake-reader tests do not prove actual run-store/socket composition.
+- Socket integration is fixture-qualified; real provider usage adapters, legacy
+  ledger import, native/MCP consumers, pricing and refresh jobs remain separate
+  work. It does not establish the complete B16 backlog gate or live billing parity.
 - No scheduler, aggregation, or cost derivation. Unknown costs stay unknown.
 
 No migration of databases from earlier unaccepted prototype layouts is provided.

@@ -161,7 +161,8 @@ class EngineRunDispatchTests(unittest.TestCase):
                 }
             )
         operation_ids = {entry["operation_id"] for entry in response["result"]["operations"]}
-        self.assertEqual(operation_ids, _BASE_OPERATION_IDS | _B07_OPERATION_IDS | _B12_OPERATION_IDS)
+        self.assertEqual(operation_ids, _BASE_OPERATION_IDS | _B07_OPERATION_IDS | _B12_OPERATION_IDS
+                         | {"engine.v1.usage.query"})
 
     def test_fixture_run_lifecycle_completes_with_fixture_text(self) -> None:
         runtime = self._start_runtime(enable_application_state=True, enable_fixture_runs=True)

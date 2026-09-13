@@ -82,6 +82,11 @@ from model_deck.engine.host_settings.ports import (
 from model_deck.engine.host_settings.service import HostSettingsService
 from model_deck.engine.kernel_composition import KernelComposition, KernelInputError, KernelInvocationError
 from model_deck.kernel import CompositionError, GrantDeniedError
+from model_deck.engine.usage.ports import (
+    UsageConflictError, UsageEventMismatchError, UsageQueryValidationError, UsageResourceExhaustedError,
+)
+from model_deck.engine.usage.reconciliation import ReconciledUsageQueryUseCase, UsageReconciliationError
+from model_deck.engine.usage.use_cases import USAGE_QUERY_PARAMS_REF, USAGE_QUERY_RESULT_REF
 
 SERVER_API = ApiVersion(1, 0)
 SERVER_FEATURES = {"tools": "unsupported", "compaction": "unknown"}
@@ -141,6 +146,12 @@ _RUN_TOPIC_PATTERN = re.compile(
 )
 
 _OPERATION_CATALOG: tuple[dict[str, str], ...] = (
+    {
+        "operation_id": "engine.v1.usage.query",
+        "input_schema_id": USAGE_QUERY_PARAMS_REF,
+        "output_schema_id": USAGE_QUERY_RESULT_REF,
+        "effect": "read",
+    },
     {
         "operation_id": "engine.v1.hello",
         "input_schema_id": "contracts/engine.v1/methods/hello.params.schema.json",
@@ -369,6 +380,7 @@ class EngineDispatch:
         host_settings_caller: CallerContext | None = None,
         kernel_composition: KernelComposition | None = None,
         response_preflight: Callable[[dict[str, Any]], Any] | None = None,
+        usage_query: ReconciledUsageQueryUseCase | None = None,
     ) -> None:
         self._list_models = list_models
         self._identity = identity
@@ -391,6 +403,7 @@ class EngineDispatch:
         self._host_settings_caller = host_settings_caller
         self._kernel_composition = kernel_composition
         self._response_preflight = response_preflight
+        self._usage_query = usage_query
         self._implemented_methods = self._build_implemented_methods()
         self._kernel_methods: frozenset[str] = frozenset()
         if kernel_composition is not None:
@@ -414,6 +427,8 @@ class EngineDispatch:
 
     def _build_implemented_methods(self) -> frozenset[str]:
         methods = set(_BASE_IMPLEMENTED_METHODS)
+        if self._usage_query is not None:
+            methods.add("engine.v1.usage.query")
         if self._register_model is not None:
             methods.add("engine.v1.models.register")
         if self._rename_model is not None:
@@ -504,6 +519,8 @@ class EngineDispatch:
             return self._success(frame.get("id"), {"features": SERVER_FEATURES})
         if method == "engine.v1.models.list":
             return self._models_list(frame.get("id"), params)
+        if method == "engine.v1.usage.query":
+            return self._query_usage(frame.get("id"), params)
         if method == "engine.v1.models.register":
             return self._models_register(frame.get("id"), params)
         if method == "engine.v1.models.rename":
@@ -643,6 +660,34 @@ class EngineDispatch:
         except SchemaValidationError as exc:
             return self._error(request_id, -32603, str(exc))
         return self._success(request_id, result)
+
+    def _query_usage(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            validate_schema_ref(USAGE_QUERY_PARAMS_REF, dict(params))
+        except SchemaValidationError:
+            return self._error(request_id, -32602, "invalid usage query params")
+        if self._usage_query is None:
+            return self._domain_error(request_id, "unsupported_capability", "usage query not configured")
+        try:
+            result = self._usage_query.query(since=params.get("since"), until=params.get("until")).to_wire()
+            validate_schema_ref(USAGE_QUERY_RESULT_REF, result)
+        except UsageQueryValidationError:
+            return self._domain_error(request_id, "invalid_argument", "invalid usage query bounds")
+        except UsageConflictError:
+            return self._domain_error(request_id, "conflict", "usage observation conflict")
+        except UsageResourceExhaustedError:
+            return self._domain_error(request_id, "resource_exhausted", "usage query limit exceeded")
+        except (UsageEventMismatchError, UsageReconciliationError):
+            return self._domain_error(request_id, "internal", "committed usage unavailable")
+        except Exception:
+            return self._domain_error(request_id, "internal", "usage query failed")
+        response = self._success(request_id, result)
+        if self._response_preflight is not None:
+            try:
+                self._response_preflight(response)
+            except Exception:
+                return self._domain_error(request_id, "resource_exhausted", "usage response exceeds transport limit")
+        return response
 
     def _models_list(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
         try:

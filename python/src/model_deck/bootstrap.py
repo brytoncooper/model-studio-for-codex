@@ -39,6 +39,9 @@ from model_deck.adapters.providers.deterministic import (
 )
 from model_deck.adapters.routing.registered import ProviderRouteDefinition, RegisteredRouteResolver
 from model_deck.adapters.storage.sqlite_session_run_repository import SQLiteSessionRunRepository
+from model_deck.adapters.storage.sqlite_usage import SqliteUsageRepository
+from model_deck.engine.usage.use_cases import QueryUsageUseCase, RecordUsageUseCase
+from model_deck.engine.usage.reconciliation import ReconciledUsageQueryUseCase
 from model_deck.engine.routing.ports import CapabilityFeature, CapabilityTriState, ExecutionMode
 from model_deck.engine.runs.use_cases import (
     CancelRunUseCase,
@@ -117,6 +120,7 @@ def build_engine_server(
     submit_tool_result = None
     run_repository = None
     event_replay = None
+    usage_query = None
     host_settings = None
     if host_settings_document is not None and host_settings_caller is not None:
         settings_database = paths.state_root() / "engine" / "host-settings.sqlite3"
@@ -143,6 +147,12 @@ def build_engine_server(
         if enable_fixture_runs:
             session_run_repository = SQLiteSessionRunRepository(application_database_path)
             run_repository = session_run_repository
+            usage_repository = SqliteUsageRepository(application_database_path)
+            usage_query = ReconciledUsageQueryUseCase(
+                reader=session_run_repository,
+                record_usage=RecordUsageUseCase(usage_repository),
+                query_usage=QueryUsageUseCase(usage_repository),
+            )
             route_resolver = RegisteredRouteResolver(
                 model_repository=sqlite_models,
                 connection_repository=sqlite_connections,
@@ -221,6 +231,7 @@ def build_engine_server(
         host_settings_caller=host_settings_caller,
         kernel_composition=kernel_composition,
         response_preflight=encode_frame,
+        usage_query=usage_query,
     )
 
     socket_path = socket_root / "engine.sock"
