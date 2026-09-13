@@ -38,7 +38,7 @@ commit counts or the number of task headings.
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
 | B16 Usage/evidence | Genuine engine usage recording/query storage reviewed; legacy implementations retained | Public query/event composition, pricing and refresh jobs |
 | B17 Kernel | Generic registry written | Built-in composition and generic engine dispatch |
-| B18 External runtime | Process channel and provider proxy reviewed, including real coordinator tool transitions | Real external package and credential-scope proof |
+| B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
 | B20 Package lifecycle | Archive validation and immutable staging reviewed | Install/enable/update/remove coordinator and transactional pointers |
 | B21 Extension UI | Contracts exist | Declarative renderer and extension management |
@@ -117,6 +117,13 @@ only the public notification nests `tool_call`. Submission returns the run to
 running, arguments are detached, and invalid payloads do not escape on the wire.
 This supersedes the earlier tool-capability limit on the socket fixture; durable
 restart replay remains a separate requirement.
+
+Archived provider `ec56ad1` and cancellation repair `74ef7ed`: independent
+acceptance passed 11 integration/regression tests, followed by 10 cancellations
+and 10 tool-result runs with zero failures. The real ZIP/staging/process pipeline
+uses isolated imports and actual engine repositories. The terminal-race repair
+preserves the committed winner without duplicate publication; unrelated failures
+propagate. Credential brokering and live provider parity remain pending.
 
 Staging packager `456a465`: independent review passed 28 tests on macOS Python
 3.12, including benign child cleanup and timeout fixtures. Explicit offline
