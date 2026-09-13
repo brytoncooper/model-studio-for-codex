@@ -395,5 +395,20 @@ parent passed 49 authoring/CLI tests. Finished archives are validated before
 atomic no-overwrite publication; bounded traversal/read and competing writer
 regressions passed. This does not complete SDK packaging or init/dev/test.
 
-Next / upcoming task: finish lease ownership review, host input conversion,
-provider request mapping and JavaScript protocol verification.
+## Accepted host input, provider mapping and engine lease
+
+`f5786c2` binds extension lifecycle ownership to the real engine file lease.
+Independent checks cover ownership shared between wrappers, held state and PID
+fencing; five adapter and five startup tests passed.
+
+`123609b` converts Codex history into the engine-owned normalized input contract.
+Eighteen focused host/codec tests and independent legacy parity and private-error
+probes passed. Opaque reasoning and compaction remain explicit host collaborators.
+
+`0b49f7c` maps typed engine requests into Responses and chat request bodies.
+Independent review passed 44 tests, including malformed tools, error sanitization
+and preservation of image detail. These are pure mappings; HTTP execution and
+production composition remain separate work.
+
+Next: public normalized-input admission, HTTP execution, JavaScript protocol
+verification, and real extension activation composition.
