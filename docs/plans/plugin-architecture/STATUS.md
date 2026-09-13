@@ -1,6 +1,6 @@
 # Architecture delivery status
 
-Updated 2026-09-12 against implementation through `3551838`. This is the master
+Baseline audited 2026-09-12 through `3551838`; accepted follow-ups are recorded below. This is the master
 delivery checklist for the full B00–B27 plan. A component commit does not close
 its parent task. The running application has not been replaced or reconfigured.
 
@@ -20,7 +20,7 @@ commit counts or the number of task headings.
 
 | Task | Current implementation and integration | Remaining requirement |
 | --- | --- | --- |
-| B00 Isolation | Guards and isolated worktree tooling written | Supported staged packaging and artifact checks |
+| B00 Isolation | Guards, isolated worktree tooling and staging packager reviewed | Real staged packaging and artifact qualification |
 | B01 Contracts | Shared schemas, resources and language clients written; tool contract corrected | Complete cross-language gate at current revision |
 | B02 Headless model library | CLI/socket/model read path integrated | Record full current G2 acceptance |
 | B03 Architecture enforcement | Runtime classification repaired; parent verified 30 checker tests and full 156-file graph with zero findings | Keep graph gate current as integrations land |
@@ -46,7 +46,7 @@ commit counts or the number of task headings.
 | B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
 | B24 Restricted execution | No implementation found | Feasibility investigation and qualified OS enforcement |
 | B25 Native parity | Catalog path, authenticated settings persistence and native settings screen reviewed | App attachment and remaining native features |
-| B26 Distribution/docs | Legacy packaging remains; subsystem catalog written | Supported staged packaging, compatibility wrappers and aggregate gate |
+| B26 Distribution/docs | Isolated staging packager and subsystem catalog reviewed | Real staged packaging, compatibility wrappers and aggregate gate |
 | B27 Live qualification | Not started | Complete staged readiness, then schedule protected-runtime cutover |
 
 Detailed source audits: [B00–B09](status/B00-B09.md),
@@ -111,12 +111,18 @@ proves waiting-for-tool, result submission, replay without duplicate forwarding,
 and one completed terminal. Slow sinks and blocked acknowledgements remain
 isolated per run. The archived external-process integration is still underway.
 
+Staging packager follow-up: independent review passed 28 tests on macOS Python
+3.12, including benign child cleanup and timeout fixtures. Explicit offline
+vendor bytes, supplied helper identity, fresh output publication and supported
+resource layout are checked. Actual Swift compilation, signatures, resource
+lookup without source, and staged application behavior remain unverified.
+
 ## Current independent work
 
-- Native settings app attachment planning.
-- Bidirectional external provider process channel.
-- Engine usage recording from genuine run/session identities.
-- Independent usage-recording review and external provider proxy implementation.
+- Real archived-provider integration and cancellation-race repair.
+- Cursor process adapter and tool-event wire integration acceptance.
+- Durable usage composition and committed projection composition scoping.
+- Generic kernel composition and restricted-execution feasibility.
 
 The source audit exposed real missing integration and verification work. Earlier
 conversation percentages were estimates, not a measured delivery baseline; this
