@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import select
 import socket
 import stat
 import struct
@@ -15,6 +16,8 @@ ConnectionHandler = Callable[[dict[str, Any], int, threading.Event], dict[str, A
 DisconnectHandler = Callable[[int], None]
 PeerCredentialChecker = Callable[[socket.socket], bool]
 NotificationProvider = Callable[[int], Sequence[dict[str, Any]]]
+
+_NOTIFICATION_POLL_INTERVAL_SECONDS = 0.05
 
 
 def peer_uid_from_socket(conn: socket.socket) -> int | None:
@@ -152,37 +155,48 @@ class UnixSocketEngineServer:
         stop = threading.Event()
         try:
             while not stop.is_set() and not self._stop.is_set():
-                chunk = conn.recv(65536)
-                if not chunk:
-                    break
-                buffer.extend(chunk)
-                while True:
+                try:
+                    readable, _writable, _exceptional = select.select(
+                        [conn],
+                        [],
+                        [],
+                        _NOTIFICATION_POLL_INTERVAL_SECONDS,
+                    )
+                except OSError:
+                    return
+                if readable:
                     try:
-                        frame = decode_frame(buffer)
-                    except FrameError:
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": None,
-                            "error": {"code": -32700, "message": "parse error"},
-                        }
-                        conn.sendall(encode_frame(response))
+                        chunk = conn.recv(65536)
+                    except OSError:
                         return
-                    if frame is None:
+                    if not chunk:
                         break
-                    response = self._handler(frame, connection_id, stop)
-                    if response is not None:
+                    buffer.extend(chunk)
+                    while True:
                         try:
+                            frame = decode_frame(buffer)
+                        except FrameError:
+                            response = {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {"code": -32700, "message": "parse error"},
+                            }
                             conn.sendall(encode_frame(response))
+                            return
+                        if frame is None:
+                            break
+                        response = self._handler(frame, connection_id, stop)
+                        if response is not None:
+                            try:
+                                conn.sendall(encode_frame(response))
+                            except OSError:
+                                return
+                if self._notification_provider is not None:
+                    for notification in self._notification_provider(connection_id):
+                        try:
+                            conn.sendall(encode_frame(notification))
                         except OSError:
                             return
-                        if self._notification_provider is not None:
-                            for notification in self._notification_provider(
-                                connection_id
-                            ):
-                                try:
-                                    conn.sendall(encode_frame(notification))
-                                except OSError:
-                                    return
         finally:
             conn.close()
             if self._on_disconnect is not None:

@@ -309,6 +309,7 @@ class _ManagedSubscription:
     subscription_id: str
     run_id: str
     principal_id: str
+    connection_id: int
     handle: ReplaySubscriptionHandle
 
 
@@ -460,6 +461,49 @@ class EngineDispatch:
         return frozenset(methods)
 
     def drain_notifications(self, connection_id: int) -> tuple[dict[str, Any], ...]:
+        event_replay = self._event_replay
+        if event_replay is not None:
+            with self._lock:
+                subscriptions = tuple(
+                    managed
+                    for managed in self._subscriptions.values()
+                    if managed.connection_id == connection_id
+                )
+            for managed in subscriptions:
+                try:
+                    page = event_replay.read_available(managed.handle)
+                except KeyError:
+                    with self._lock:
+                        current = self._subscriptions.get(managed.subscription_id)
+                        if current is managed:
+                            self._subscriptions.pop(managed.subscription_id, None)
+                            self._subscription_last_acked.pop(
+                                managed.subscription_id,
+                                None,
+                            )
+                    continue
+                if page.outcome != EventReplayOutcome.DELIVERED:
+                    continue
+                try:
+                    notifications = [
+                        self._build_event_notification(managed.subscription_id, event)
+                        for event in page.events
+                    ]
+                except (SchemaValidationError, ValueError):
+                    self._drop_managed_subscription(
+                        managed.handle,
+                        connection_id=connection_id,
+                    )
+                    continue
+                if notifications:
+                    with self._lock:
+                        current = self._subscriptions.get(managed.subscription_id)
+                        if current is managed:
+                            queue = self._notification_queues.setdefault(
+                                connection_id,
+                                [],
+                            )
+                            queue.extend(notifications)
         with self._lock:
             queued = self._notification_queues.pop(connection_id, None)
         if not queued:
@@ -468,9 +512,20 @@ class EngineDispatch:
 
     def disconnect(self, connection_id: int) -> None:
         with self._lock:
+            subscriptions = tuple(
+                managed
+                for managed in self._subscriptions.values()
+                if managed.connection_id == connection_id
+            )
+            for managed in subscriptions:
+                self._subscriptions.pop(managed.subscription_id, None)
+                self._subscription_last_acked.pop(managed.subscription_id, None)
             self._authenticated_sessions.discard(connection_id)
             self._connection_principals.pop(connection_id, None)
             self._notification_queues.pop(connection_id, None)
+        if self._event_replay is not None:
+            for managed in subscriptions:
+                self._event_replay.unsubscribe(managed.handle)
 
     def handle(self, frame: dict[str, Any], connection_id: int) -> dict[str, Any] | None:
         if frame.get("jsonrpc") != "2.0":
@@ -1107,6 +1162,7 @@ class EngineDispatch:
             subscription_id=handle.subscription_id,
             run_id=run_id,
             principal_id=principal,
+            connection_id=connection_id,
             handle=handle,
         )
         with self._lock:
@@ -1133,7 +1189,12 @@ class EngineDispatch:
             return self._error(request_id, -32602, str(exc))
         subscription_id = str(params["subscription_id"])
         sequence = params["sequence"]
-        managed = self._require_subscription_owner(request_id, subscription_id, principal)
+        managed = self._require_subscription_owner(
+            request_id,
+            subscription_id,
+            principal,
+            connection_id,
+        )
         if isinstance(managed, dict):
             return managed
         with self._lock:
@@ -1192,13 +1253,18 @@ class EngineDispatch:
         except SchemaValidationError as exc:
             return self._error(request_id, -32602, str(exc))
         subscription_id = str(params["subscription_id"])
-        managed = self._require_subscription_owner(request_id, subscription_id, principal)
+        managed = self._require_subscription_owner(
+            request_id,
+            subscription_id,
+            principal,
+            connection_id,
+        )
         if isinstance(managed, dict):
             return managed
-        self._event_replay.unsubscribe(managed.handle)
-        with self._lock:
-            self._subscriptions.pop(subscription_id, None)
-            self._subscription_last_acked.pop(subscription_id, None)
+        self._drop_managed_subscription(
+            managed.handle,
+            connection_id=connection_id,
+        )
         result = {"unsubscribed": True}
         try:
             validate_schema_ref(
@@ -1242,13 +1308,20 @@ class EngineDispatch:
             self._remove_queued_subscription_notifications(connection_id, subscription_id)
 
     def _require_subscription_owner(
-        self, request_id: Any, subscription_id: str, principal_id: str
+        self,
+        request_id: Any,
+        subscription_id: str,
+        principal_id: str,
+        connection_id: int,
     ) -> _ManagedSubscription | dict[str, Any]:
         with self._lock:
             managed = self._subscriptions.get(subscription_id)
         if managed is None:
             return self._domain_error(request_id, "not_found", "subscription not found")
-        if managed.principal_id != principal_id:
+        if (
+            managed.principal_id != principal_id
+            or managed.connection_id != connection_id
+        ):
             return self._domain_error(request_id, "capability_denied", "subscription ownership required")
         return managed
 

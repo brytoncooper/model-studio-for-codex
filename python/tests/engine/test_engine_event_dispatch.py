@@ -360,7 +360,7 @@ class EngineEventDispatchTests(unittest.TestCase):
             )
             self.assertEqual(duplicate_ack["result"]["credit"], credit_after_first)
 
-    def test_ack_denies_different_principal(self) -> None:
+    def test_ack_after_owner_disconnect_returns_not_found(self) -> None:
         runtime = self._start_runtime()
         descriptor = load_rendezvous_file(runtime.rendezvous_path)
         credential = runtime.enrollment.credential_path.read_text(encoding="utf-8").strip()
@@ -392,7 +392,7 @@ class EngineEventDispatchTests(unittest.TestCase):
                     },
                 }
             )
-        self.assertEqual(denied["error"]["data"]["code"], "capability_denied")
+        self.assertEqual(denied["error"]["data"]["code"], "not_found")
 
     def test_unsubscribe_owned_subscription(self) -> None:
         runtime = self._start_runtime()
