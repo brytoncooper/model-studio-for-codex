@@ -7,7 +7,6 @@ import sys
 import uuid
 from pathlib import Path
 
-from model_deck.adapters.providers.deterministic import DETERMINISTIC_PROVIDER_ID
 from model_deck.adapters.transport.framing import (
     MAX_FRAME_BYTES,
     FrameError,
@@ -15,10 +14,19 @@ from model_deck.adapters.transport.framing import (
 )
 from model_deck.adapters.transport.rendezvous import RendezvousDescriptor, RendezvousError, load_rendezvous_file
 from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
-from model_deck.bootstrap import build_engine_server
 from model_deck_contracts.negotiation import rendezvous_matches
 from model_deck_contracts.paths import repo_root
 from model_deck_contracts.validator import SchemaValidationError, validate_schema_ref
+from model_deck.plugins.archive_inspection import (
+    DEFAULT_ARCHIVE_BYTES,
+    ArchiveInspectionError,
+)
+from model_deck.plugins.authoring import (
+    AuthoringError,
+    pack_project_archive,
+    validate_project_archive,
+    entrypoint_present,
+)
 
 DETERMINISTIC_CONNECTION_ID = "550e8400-e29b-41d4-a716-446655440002"
 FIXTURE_CLI_CONNECTION_IDEMPOTENCY_KEY = "model-deck-cli-fixture-connection"
@@ -36,6 +44,8 @@ def _stderr(message: str) -> None:
 
 
 def _cmd_engine_serve(args: argparse.Namespace) -> int:
+    from model_deck.bootstrap import build_engine_server
+
     catalog_cache_path = Path(args.catalog_cache) if args.catalog_cache else None
     runtime = build_engine_server(
         state_root=Path(args.state_root),
@@ -274,6 +284,10 @@ def _cmd_models_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_runs_fixture_text(args: argparse.Namespace) -> int:
+    from model_deck.adapters.providers.deterministic import (
+        DETERMINISTIC_PROVIDER_ID,
+    )
+
     try:
         descriptor = load_rendezvous_file(Path(args.rendezvous))
     except (RendezvousError, OSError, json.JSONDecodeError) as exc:
@@ -714,6 +728,93 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
 
 
 
+def _cmd_plugin_validate(args: argparse.Namespace) -> int:
+    archive_path = Path(args.archive)
+    if not archive_path.is_absolute():
+        _stderr("plugin validate requires an absolute archive path")
+        return 1
+    try:
+        with archive_path.open("rb") as archive_file:
+            archive_bytes = archive_file.read(DEFAULT_ARCHIVE_BYTES + 1)
+    except FileNotFoundError:
+        _stderr(f"plugin validate: archive not found: {archive_path}")
+        return 1
+    except OSError:
+        _stderr("plugin validate: could not read archive")
+        return 1
+    if len(archive_bytes) > DEFAULT_ARCHIVE_BYTES:
+        _stderr("plugin validate: input_too_large: archive exceeds byte limit")
+        return 1
+    try:
+        report = validate_project_archive(archive_bytes)
+    except (
+        AuthoringError,
+        ArchiveInspectionError,
+    ) as exc:
+        code = getattr(exc, "code", "unknown")
+        _stderr(f"plugin validate: {code}: {exc}")
+        return 1
+    has_entrypoint = entrypoint_present(report)
+    summary = {
+        "archive": {
+            "total_entries": report.archive.total_entries,
+            "total_uncompressed_size": report.archive.total_uncompressed_size,
+            "ok": report.archive.ok,
+        },
+        "manifest": {
+            "ok": report.manifest.ok,
+            "errors": [
+                {
+                    "code": failure.code,
+                    "field": failure.field,
+                    "detail": failure.detail,
+                }
+                for failure in report.manifest.errors
+            ],
+            "entrypoint": {
+                "present": has_entrypoint,
+                "path": report.manifest.entrypoint.path,
+                "runtime": report.manifest.entrypoint.runtime,
+            },
+            "identity": {
+                "id": report.manifest.identity.manifest_id,
+                "manifest_version": report.manifest.identity.manifest_version,
+                "version": report.manifest.identity.version,
+            },
+            "api": {
+                "major": report.manifest.api.major,
+                "minimum_minor": report.manifest.api.minimum_minor,
+            },
+        },
+    }
+    print(json.dumps(summary, indent=2, allow_nan=False, ensure_ascii=False))
+    return 0 if report.ok else 1
+
+
+def _cmd_plugin_pack(args: argparse.Namespace) -> int:
+    project_root = Path(args.project)
+    output_path = Path(args.output)
+    if not project_root.is_absolute():
+        _stderr("plugin pack requires an absolute project root")
+        return 1
+    if not output_path.is_absolute():
+        _stderr("plugin pack requires an absolute --output path")
+        return 1
+    try:
+        result = pack_project_archive(project_root, output_path=output_path)
+    except AuthoringError as exc:
+        _stderr(f"plugin pack: {exc}")
+        return 1
+    summary = {
+        "output_path": str(result.output_path),
+        "sha256": result.sha256,
+        "entry_count": result.entry_count,
+        "total_bytes": result.total_bytes,
+    }
+    print(json.dumps(summary, indent=2, allow_nan=False, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="model-deck")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -759,6 +860,29 @@ def main(argv: list[str] | None = None) -> int:
     fixture_text_cmd.add_argument("--rendezvous", required=True)
     fixture_text_cmd.add_argument("--credential", required=True)
     fixture_text_cmd.set_defaults(func=_cmd_runs_fixture_text)
+
+    plugin = sub.add_parser("plugin", help="plugin authoring commands")
+    plugin_sub = plugin.add_subparsers(dest="plugin_command", required=True)
+    validate_cmd = plugin_sub.add_parser(
+        "validate", help="validate a packed plugin archive",
+    )
+    validate_cmd.add_argument(
+        "archive",
+        help="absolute path to a packed plugin archive",
+    )
+    validate_cmd.set_defaults(func=_cmd_plugin_validate)
+    pack_cmd = plugin_sub.add_parser(
+        "pack", help="pack a plugin project tree into a deterministic archive",
+    )
+    pack_cmd.add_argument(
+        "project",
+        help="absolute path to the plugin project root",
+    )
+    pack_cmd.add_argument(
+        "--output", required=True,
+        help="absolute path that does not yet exist; the archive is written here",
+    )
+    pack_cmd.set_defaults(func=_cmd_plugin_pack)
 
     invoke_cmd = sub.add_parser(
         "invoke",

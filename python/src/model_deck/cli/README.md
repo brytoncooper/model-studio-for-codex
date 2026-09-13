@@ -124,3 +124,65 @@ model-deck invoke com.example.plugin.run \
   "items": []
 }
 ```
+
+
+
+# `model-deck plugin validate / pack` — B23 author-side archive commands
+
+The `plugin` subcommand group hosts the B23 author-side archive tooling. The
+helpers live in :mod:`model_deck.plugins.authoring` and depend only on the
+pure :mod:`model_deck.plugins.archive_inspection` and
+:mod:`model_deck.plugins.manifest_inspection` modules. They never import
+the engine, never execute plugin code, and never make a network call.
+
+## `model-deck plugin validate <archive>`
+
+```
+model-deck plugin validate <absolute-path>
+```
+
+Reads the packed archive and validates its archive structure and manifest.
+Exit code is `0` only when inspection succeeds and the declared entrypoint is
+present. Duplicate-contribution findings and a missing entrypoint appear in the
+JSON summary on stdout with exit code `1`.
+
+Missing or malformed manifests, schema/API/path inspection errors and hostile
+archives produce a one-line `code: detail` error on stderr, no stdout, and exit
+code `1`. The default caller plugin API version is `(1, 0)`; library callers may
+supply another supported version explicitly.
+
+## `model-deck plugin pack <project> --output <archive>`
+
+```
+model-deck plugin pack <absolute-project> --output <absolute-archive>
+```
+
+Walks `<absolute-project>` and produces a deterministic ZIP at
+`<absolute-archive>`. Determinism is provided by sorted POSIX path order,
+a fixed `(1980-01-01 00:00:00)` entry timestamp, fixed mode bits, and a
+fixed `ZIP_DEFLATED` method for every entry. `manifest.json` is written
+first so archive readers can locate it without scanning.
+
+Hard refusals (each surfaces a stable `code` on stderr, never a partial
+archive):
+
+| Condition | `code` |
+|-----------|--------|
+| non-absolute project or output path | `input_not_readable` / `output_not_absolute` |
+| project root is not a directory | `input_not_a_directory` |
+| project contains a symlink, socket, FIFO, or other non-regular entry | `input_symlink_or_special` |
+| project file count or uncompressed bytes exceed the inspector's default budget | `input_out_of_budget` |
+| `manifest.json` is missing, unreadable, decodes to a non-object, or fails inspection | `missing_manifest` / `manifest_read_failed` |
+| declared entrypoint file is not present in the project tree | `entrypoint_file_missing` |
+| output path already exists | `output_exists` |
+| output path is nested under the project root | `output_nested_in_input` |
+| output directory is not writable | `output_unwritable` |
+
+Success prints a JSON summary including the archive `sha256`. Re-packing
+the same project tree produces a byte-identical archive (same sha256,
+same entry order).
+
+The packer writes and validates a temporary archive, then publishes it with an
+atomic no-overwrite link. If another writer creates the destination first, its
+file is preserved. The temporary file is removed after success or failure; the
+destination never exposes a partially written archive.
