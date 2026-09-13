@@ -40,8 +40,8 @@ commit counts or the number of task headings.
 | B17 Kernel | Generic composed operations integrated with authenticated dispatch and discovery | Migrate static built-ins; external schema/principal lifecycle integration |
 | B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
-| B20 Package lifecycle | Archive validation and immutable staging reviewed | Install/enable/update/remove coordinator and transactional pointers |
-| B21 Extension UI | Contracts exist | Declarative renderer and extension management |
+| B20 Package lifecycle | Artifact staging and recoverable lifecycle contracts reviewed; service/storage underway | Implement and integrate lifecycle transactions, activation and versioned data |
+| B21 Extension UI | Declarative panel schema reviewed; native values/validation underway | Renderer, public panel delivery and extension management |
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
 | B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
 | B24 Restricted execution | Reviewed feasibility document; no restricted runtime implemented | Isolated OS enforcement investigation and qualification |
@@ -164,6 +164,18 @@ timestamp probe passed. Configured fixture runs feed genuine committed events
 through reconciliation; authentication, restart/retry, exact optional fields and
 fixed error responses are verified. Pricing, refresh jobs and live billing parity
 remain separate work.
+
+Lifecycle contracts `280a578`: 11 tests and independent transition review passed.
+Abort/rollback retain recoverable restoration claims until external synchronization
+completes. This is a port freeze, not storage or crash-recovery implementation proof.
+
+Panel contract `34fbb08`: 11 tests and independent strict offline schema validation
+passed. The tree includes labeled inputs and explicit stale-state/binding rules.
+Semantic validation, native rendering and public panel transport remain pending.
+
+Cursor preparation `b66afc7`: 23 independently run tests and parity probes passed.
+The existing manager reuses a pure payload helper; invalid new prompts preserve
+paused sessions. Engine composition and live SDK qualification remain pending.
 
 Staging packager `456a465`: independent review passed 28 tests on macOS Python
 3.12, including benign child cleanup and timeout fixtures. Explicit offline
