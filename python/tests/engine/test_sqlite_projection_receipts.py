@@ -674,7 +674,7 @@ class SQLiteProjectionReceiptStoreTests(unittest.TestCase):
                 )
 
     def test_record_paths_use_begin_immediate(self) -> None:
-        adapter_path = Path("python/src/model_deck/adapters/storage/sqlite_projection_receipts.py")
+        adapter_path = Path(__file__).resolve().parents[2] / "src/model_deck/adapters/storage/sqlite_projection_receipts.py"
         source = adapter_path.read_text()
         # Three record paths (record_applied, record_deleted, record_conflict) plus
         # one for the v1 -> v2 schema migration inside ensure_projection_receipt_schema.

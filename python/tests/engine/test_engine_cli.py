@@ -263,7 +263,7 @@ class EngineCliServeForwardingTests(unittest.TestCase):
         runtime = mock.MagicMock()
         runtime.server.serve_forever.side_effect = lambda: None
         with mock.patch(
-            "model_deck.cli.main.build_engine_server",
+            "model_deck.bootstrap.build_engine_server",
             return_value=runtime,
         ) as build_mock:
             with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as artifact, tempfile.TemporaryDirectory() as socket_root:
