@@ -1,9 +1,11 @@
 """Cursor callback routing contract without credentials, SDK installation, or inference."""
 import queue
+import copy
 import unittest
+from unittest import mock
 
 import context_compaction
-from cursor_agent import CursorAgentManager, _prompt_message
+from cursor_agent import CursorAgentManager, _prompt_message, build_cursor_payload
 from cursor_sdk_runtime import CursorRuntimeError
 
 
@@ -106,6 +108,29 @@ class CursorAgentTests(unittest.TestCase):
         with self.assertRaises(CursorRuntimeError):
             list(self.stream(metadata={"agent_name": "root"}))
         self.assertEqual(self.processes, [])
+
+    def test_invalid_new_prompt_preserves_paused_run_for_valid_continuation(self):
+        list(self.stream())
+        paused = self.processes[0]
+        invalid = request(input=[{'type':'message', 'role':'user', 'content':[
+            {'type':'input_image', 'image_url':'file:///not-an-accepted-image'}]}])
+        with self.assertRaises(CursorRuntimeError):
+            list(self.stream(invalid))
+        self.assertEqual(len(self.processes), 1)
+        self.assertFalse(paused.closed)
+        self.assertEqual(paused.results, [])
+        list(self.stream(self.continuation()))
+        self.assertEqual(paused.results, [('cursor-call-one', 'ok')])
+        self.assertTrue(paused.closed)
+
+    def test_manager_uses_public_payload_builder_for_new_generation(self):
+        self.initial = [{'type':'done', 'status':'finished'}]
+        with mock.patch('cursor_agent.build_cursor_payload', wraps=build_cursor_payload) as prepare:
+            list(self.stream(request(reasoning={'effort':'high'}, service_tier='priority')))
+        prepare.assert_called_once()
+        payload = self.processes[0].payload
+        self.assertEqual(payload['reasoning'], {'effort':'high'})
+        self.assertEqual(payload['service_tier'], 'priority')
 
     def test_expired_callback_is_not_replayed_as_new_inference(self):
         with self.assertRaises(CursorRuntimeError):
@@ -210,3 +235,61 @@ class CursorAgentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CursorPayloadTests(unittest.TestCase):
+    def test_direct_helper_preserves_payload_and_inputs_without_starting_process(self):
+        body = request(reasoning={'effort':'xhigh'}, service_tier='priority',
+            text={'format':{'type':'json_object'}}, tool_choice='auto',
+            input=[{'type':'message', 'role':'user', 'content':[
+                {'type':'input_text','text':'Literal \\n and café'},
+                {'type':'input_image','image_url':'https://example.invalid/image.png'}]}])
+        metadata = dict(METADATA, cwd='/fixture/project')
+        before_body, before_metadata = copy.deepcopy(body), copy.deepcopy(metadata)
+        with mock.patch('cursor_agent.CursorSdkProcess') as process, mock.patch('subprocess.Popen') as spawn:
+            payload, aliases = build_cursor_payload(body, metadata, 'fixture-secret')
+        process.assert_not_called()
+        spawn.assert_not_called()
+        self.assertEqual(body, before_body)
+        self.assertEqual(metadata, before_metadata)
+        self.assertEqual(set(payload), {'model','api_key','tools','message','reasoning','service_tier'})
+        self.assertEqual(payload['model'], 'composer-test')
+        self.assertEqual(payload['api_key'], 'fixture-secret')
+        self.assertEqual(payload['reasoning'], {'effort':'xhigh'})
+        self.assertEqual(payload['service_tier'], 'priority')
+        self.assertEqual(payload['message'], _prompt_message(before_body, before_metadata))
+        self.assertEqual(payload['message']['images'], [{'url':'https://example.invalid/image.png'}])
+        self.assertEqual(aliases, {'exec_command': (None, 'exec_command')})
+        self.assertEqual(payload['tools'][0]['name'], 'exec_command')
+
+    def test_direct_helper_defaults_and_tool_choice_none(self):
+        payload, aliases = build_cursor_payload(request(tool_choice='none'), {}, 'fixture-secret')
+        self.assertEqual(payload['tools'], [])
+        self.assertEqual(aliases, {})
+        self.assertIsNone(payload['reasoning'])
+        self.assertIsNone(payload['service_tier'])
+
+    def test_direct_helper_preserves_validation_without_process_start(self):
+        cases = (
+            (request(), {}),
+            (request(model='other/model'), METADATA),
+            (request(input=[{'type':'compaction_trigger'}]), METADATA),
+            (request(input=[{'type':'agent_message','encrypted_content':'opaque'}]), METADATA),
+        )
+        with mock.patch('subprocess.Popen') as spawn:
+            for body, metadata in cases:
+                with self.subTest(body=body):
+                    before = copy.deepcopy(body)
+                    with self.assertRaises(CursorRuntimeError):
+                        build_cursor_payload(body, metadata, 'fixture-secret')
+                    self.assertEqual(body, before)
+        spawn.assert_not_called()
+
+    def test_direct_helper_preserves_compaction_summary_framing(self):
+        body = context_compaction.summarization_request(request())
+        expected = _prompt_message(body, METADATA)
+        payload, aliases = build_cursor_payload(body, METADATA, 'fixture-secret')
+        self.assertEqual(payload['message'], expected)
+        self.assertIn('context checkpoint summary', payload['message']['text'])
+        self.assertEqual(payload['tools'], [])
+        self.assertEqual(aliases, {})

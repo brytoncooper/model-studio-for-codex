@@ -70,6 +70,33 @@ def _prompt_message(request, metadata):
     return dict(text=text, images=images) if images else {"text": text}
 
 
+def build_cursor_payload(request, metadata, api_key):
+    """Prepare a new generation without starting a process or owning a session.
+
+    Returns (SDK payload, wire-name -> (namespace, name) aliases). Existing
+    prompt, tool and input rules are shared with the legacy manager entry path.
+    """
+    from local_router import flatten_tools
+    try:
+        reject_encrypted_agent_messages(request)
+    except AgentMessageError as error:
+        raise CursorRuntimeError(str(error)) from None
+    tools, aliases = flatten_tools(request.get("tools") or [])
+    if request.get("tool_choice") == "none":
+        tools, aliases = [], {}
+    if tools and not metadata.get("thread_id"):
+        raise CursorRuntimeError("Cursor tool execution requires Codex thread identity. Start a new task.")
+    if not str(request.get("model", "")).startswith("cursor/"):
+        raise CursorRuntimeError("Invalid Cursor model id.")
+    if any(isinstance(item, dict) and item.get("type") == "compaction_trigger"
+           for item in request.get("input") or []):
+        raise CursorRuntimeError("Cursor remote compaction is unavailable. Start a new task.")
+    payload = {"model": request["model"][len("cursor/"):], "api_key": api_key,
+               "tools": tools, "message": _prompt_message(request, metadata),
+               "reasoning": request.get("reasoning"), "service_tier": request.get("service_tier")}
+    return payload, aliases
+
+
 class _CursorSession:
     def __init__(self, identity, aliases, process, turn_id=None):
         self.identity = identity
@@ -168,7 +195,6 @@ class CursorAgentManager:
             self._forget(session)
 
     def _session_for(self, request, metadata, api_key, account):
-        from local_router import flatten_tools
         try:
             reject_encrypted_agent_messages(request)
         except AgentMessageError as error:
@@ -215,25 +241,13 @@ class CursorAgentManager:
         if tail and isinstance(tail[-1], dict) and tail[-1].get("type") == "function_call_output" \
                 and str(tail[-1].get("call_id", "")).startswith("cursor-call-"):
             raise CursorRuntimeError("This Cursor tool run expired or restarted. Start a new turn.")
-        tools, aliases = flatten_tools(request.get("tools") or [])
-        if request.get("tool_choice") == "none":
-            tools, aliases = [], {}
-        if tools and not metadata.get("thread_id"):
-            raise CursorRuntimeError("Cursor tool execution requires Codex thread identity. Start a new task.")
-        if not str(request.get("model", "")).startswith("cursor/"):
-            raise CursorRuntimeError("Invalid Cursor model id.")
-        if any(isinstance(item, dict) and item.get("type") == "compaction_trigger"
-               for item in request.get("input") or []):
-            raise CursorRuntimeError("Cursor remote compaction is unavailable. Start a new task.")
+        payload, aliases = build_cursor_payload(request, metadata, api_key)
         # A new user turn supersedes a paused generation in the same Codex agent.
         with self._lock:
             superseded = [old for old in self._sessions if old.identity[0] == identity[0]
                           and old.identity[2:] == identity[2:]]
         for old in superseded:
             self._forget(old)
-        payload = {"model": request["model"][len("cursor/"):], "api_key": api_key,
-                   "tools": tools, "message": _prompt_message(request, metadata),
-                   "reasoning": request.get("reasoning"), "service_tier": request.get("service_tier")}
         process = self.process_factory(payload)
         session = _CursorSession(identity, aliases, process, metadata.get("turn_id"))
         session.lock.acquire()
