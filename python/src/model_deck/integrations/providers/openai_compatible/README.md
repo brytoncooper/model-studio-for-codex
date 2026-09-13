@@ -18,8 +18,11 @@ adapter's tested behavior, not a claim of complete browser EventSource parity.
 `decode_json_object` requires an object and rejects malformed/nonfinite JSON.
 
 `ProviderEventTerminalValidator(run_id)` consumes existing `ProviderRunEvent`
-objects through `submit`. It requires start before output, matching run identity,
-terminal exclusivity, and no events after termination. Only one tool call may
+objects through `submit`. It requires start before output or successful
+completion, while allowing `run.failed` and `run.interrupted` to terminate an
+attempt that could not start. It enforces matching run identity, terminal
+exclusivity, and no events after termination. Provider tool events carry the
+engine's flat `{call_id, tool_name, arguments}` payload. Only one tool call may
 be outstanding; `mark_tool_result` requires its matching ID. Completing while
 a tool call remains outstanding is rejected. `finish_segment` distinguishes
 terminal completion from an intentional wait for a tool result.

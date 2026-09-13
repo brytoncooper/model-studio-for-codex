@@ -413,15 +413,10 @@ def _coerce_call_id(payload: Any) -> str:
         raise ProviderValidatorProtocolError(
             "tool.requested payload must be a mapping"
         )
-    tool_call = payload.get("tool_call")
-    if not isinstance(tool_call, Mapping):
-        raise ProviderValidatorProtocolError(
-            "tool.requested missing tool_call mapping"
-        )
-    call_id = tool_call.get("call_id")
+    call_id = payload.get("call_id")
     if not isinstance(call_id, str) or not call_id:
         raise ProviderValidatorProtocolError(
-            "tool.requested tool_call.call_id must be a non-empty string"
+            "tool.requested call_id must be a non-empty string"
         )
     return call_id
 
@@ -433,7 +428,8 @@ class ProviderEventTerminalValidator:
     and enforces the lifecycle invariants a future wire translation must
     preserve:
 
-    - exactly one ``run.started`` before any output;
+    - exactly one ``run.started`` before output or successful completion;
+    - ``run.failed`` and ``run.interrupted`` may terminate before start;
     - matching ``run_id`` on every event;
     - at most one terminal event;
     - no event after a terminal event;
@@ -489,6 +485,9 @@ class ProviderEventTerminalValidator:
             return
 
         if not self._started:
+            if event.kind in {"run.failed", "run.interrupted"}:
+                self._terminal_kind = event.kind
+                return
             raise ProviderValidatorProtocolError(
                 "event received before run.started"
             )

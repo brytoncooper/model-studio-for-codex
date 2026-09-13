@@ -476,6 +476,16 @@ class ValidatorLifecycleTests(unittest.TestCase):
         v.submit(_event("run.interrupted"))
         self.assertEqual(v.finish_segment(), SegmentTermination.TERMINAL)
 
+    def test_failed_terminal_before_started_is_terminal(self) -> None:
+        v = ProviderEventTerminalValidator(RUN_ID)
+        v.submit(_event("run.failed", payload={"code": "provider_unavailable"}))
+        self.assertEqual(v.finish_segment(), SegmentTermination.TERMINAL)
+
+    def test_interrupted_terminal_before_started_is_terminal(self) -> None:
+        v = ProviderEventTerminalValidator(RUN_ID)
+        v.submit(_event("run.interrupted"))
+        self.assertEqual(v.finish_segment(), SegmentTermination.TERMINAL)
+
     def test_run_cancelling_is_non_terminal(self) -> None:
         v = ProviderEventTerminalValidator(RUN_ID)
         v.submit(_event("run.started"))
@@ -497,7 +507,11 @@ class ValidatorLifecycleTests(unittest.TestCase):
         v.submit(
             _event(
                 "tool.requested",
-                payload={"tool_call": {"call_id": "call-1", "tool_name": "search"}},
+                payload={
+                    "call_id": "call-1",
+                    "tool_name": "search",
+                    "arguments": {"q": "fixture"},
+                },
             )
         )
         self.assertEqual(v.finish_segment(), SegmentTermination.TOOL_SUSPENDED)
@@ -508,7 +522,7 @@ class ValidatorLifecycleTests(unittest.TestCase):
         v.submit(
             _event(
                 "tool.requested",
-                payload={"tool_call": {"call_id": "call-1", "tool_name": "search"}},
+                payload={"call_id": "call-1", "tool_name": "search", "arguments": {}},
             )
         )
         v.mark_tool_result("call-1")
@@ -522,14 +536,14 @@ class ValidatorLifecycleTests(unittest.TestCase):
         v.submit(
             _event(
                 "tool.requested",
-                payload={"tool_call": {"call_id": "call-1", "tool_name": "search"}},
+                payload={"call_id": "call-1", "tool_name": "search", "arguments": {}},
             )
         )
         with self.assertRaises(ProviderValidatorProtocolError):
             v.submit(
                 _event(
                     "tool.requested",
-                    payload={"tool_call": {"call_id": "call-2", "tool_name": "x"}},
+                    payload={"call_id": "call-2", "tool_name": "x", "arguments": {}},
                 )
             )
 
@@ -545,6 +559,11 @@ class ValidatorRejectionTests(unittest.TestCase):
         v = ProviderEventTerminalValidator(RUN_ID)
         with self.assertRaises(ProviderValidatorProtocolError):
             v.submit(_event("content.delta", payload={"delta": "hi"}))
+
+    def test_completed_before_started_rejected(self) -> None:
+        v = ProviderEventTerminalValidator(RUN_ID)
+        with self.assertRaises(ProviderValidatorProtocolError):
+            v.submit(_event("run.completed"))
 
     def test_unknown_kind_rejected(self) -> None:
         v = ProviderEventTerminalValidator(RUN_ID)
@@ -577,7 +596,7 @@ class ValidatorRejectionTests(unittest.TestCase):
         v.submit(
             _event(
                 "tool.requested",
-                payload={"tool_call": {"call_id": "call-1", "tool_name": "search"}},
+                payload={"call_id": "call-1", "tool_name": "search", "arguments": {}},
             )
         )
         with self.assertRaises(ProviderValidatorProtocolError):
@@ -589,7 +608,7 @@ class ValidatorRejectionTests(unittest.TestCase):
         v.submit(
             _event(
                 "tool.requested",
-                payload={"tool_call": {"call_id": "call-1", "tool_name": "search"}},
+                payload={"call_id": "call-1", "tool_name": "search", "arguments": {}},
             )
         )
         v.submit(_event("run.failed", payload={"code": "x"}))
@@ -605,7 +624,7 @@ class ValidatorRejectionTests(unittest.TestCase):
         v = ProviderEventTerminalValidator(RUN_ID)
         v.submit(_event("run.started"))
         with self.assertRaises(ProviderValidatorProtocolError):
-            v.submit(_event("tool.requested", payload={"tool_call": {}}))
+            v.submit(_event("tool.requested", payload={"tool_name": "search", "arguments": {}}))
 
     def test_mark_tool_result_without_outstanding_rejected(self) -> None:
         v = ProviderEventTerminalValidator(RUN_ID)
@@ -619,7 +638,7 @@ class ValidatorRejectionTests(unittest.TestCase):
         v.submit(
             _event(
                 "tool.requested",
-                payload={"tool_call": {"call_id": "call-1", "tool_name": "search"}},
+                payload={"call_id": "call-1", "tool_name": "search", "arguments": {}},
             )
         )
         with self.assertRaises(ProviderValidatorProtocolError):
@@ -640,7 +659,7 @@ class ValidatorRejectionTests(unittest.TestCase):
         v.submit(
             _event(
                 "tool.requested",
-                payload={"tool_call": {"call_id": "call-1", "tool_name": "search"}},
+                payload={"call_id": "call-1", "tool_name": "search", "arguments": {}},
             )
         )
         with self.assertRaises(ProviderValidatorError):
