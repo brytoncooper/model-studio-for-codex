@@ -36,7 +36,7 @@ commit counts or the number of task headings.
 | B13 HTTP providers | Streaming, request helpers and owned HTTP transport reviewed | Provider execution composition, fallback and parity |
 | B14 Cursor provider | Coordinator and injected legacy-process adapter independently reviewed | Root SDK composition and parity |
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
-| B16 Usage/evidence | Durable committed-event reconciliation and exact ledger queries reviewed | Public query composition, pricing and refresh jobs |
+| B16 Usage/evidence | Durable reconciliation and authenticated public usage query integrated with fixture runs | Real-provider wiring, pricing and refresh jobs |
 | B17 Kernel | Generic composed operations integrated with authenticated dispatch and discovery | Migrate static built-ins; external schema/principal lifecycle integration |
 | B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
@@ -158,6 +158,12 @@ operations are discoverable and invocable through trusted composition. Seven
 invalid/oversized result probes return fixed errors and preserve connection
 usability. Static built-ins and external schema/principal lifecycle remain outside
 this integration.
+
+Public usage query follow-up: 47 independently run tests and a real socket
+timestamp probe passed. Configured fixture runs feed genuine committed events
+through reconciliation; authentication, restart/retry, exact optional fields and
+fixed error responses are verified. Pricing, refresh jobs and live billing parity
+remain separate work.
 
 Staging packager `456a465`: independent review passed 28 tests on macOS Python
 3.12, including benign child cleanup and timeout fixtures. Explicit offline
