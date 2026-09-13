@@ -36,8 +36,7 @@ class SQLitePluginDataRepository:
     def __init__(self, db_path: Path, quota: PluginDataQuota | None = None) -> None:
         self._db_path = db_path
         self._quota = quota or PluginDataQuota()
-        if self._quota.max_bytes <= 0 or self._quota.max_keys <= 0 or self._quota.max_value_bytes <= 0:
-            raise ValueError("quota limits must be positive")
+        validate_plugin_data_quota(self._quota)
 
     def get(self, namespace: str, key: str) -> PluginDataEntry:
         _validate_namespace(namespace)
@@ -101,7 +100,7 @@ class SQLitePluginDataRepository:
                 if row is None:
                     if expected_revision not in (None, 0):
                         raise PluginDataRevisionConflictError("stale revision")
-                    _check_quota_for_put(conn, namespace, key, canonical, None, self._quota)
+                    _check_quota_for_put(conn, namespace, key, canonical, self._quota)
                     conn.execute(
                         "INSERT INTO plugin_data (namespace, key, value_json, revision, deleted) VALUES (?, ?, ?, 1, 0)",
                         (namespace, key, canonical),
@@ -111,8 +110,7 @@ class SQLitePluginDataRepository:
                 current_rev = row[1]
                 if expected_revision is not None and expected_revision != current_rev:
                     raise PluginDataRevisionConflictError("stale revision")
-                old_usage = None if row[2] else _entry_usage(namespace, key, row[0])
-                _check_quota_for_put(conn, namespace, key, canonical, old_usage, self._quota)
+                _check_quota_for_put(conn, namespace, key, canonical, self._quota)
                 new_rev = current_rev + 1
                 conn.execute(
                     "UPDATE plugin_data SET value_json = ?, revision = ?, deleted = 0 WHERE namespace = ? AND key = ?",
@@ -176,28 +174,9 @@ class SQLitePluginDataRepository:
         conn.executescript(_SCHEMA_SQL)
 
 
-def _entry_usage(namespace: str, key: str, canonical_json: str) -> int:
-    return len(namespace.encode("utf-8")) + len(key.encode("utf-8")) + len(canonical_json.encode("utf-8"))
-
-
-def _check_quota_for_put(conn: sqlite3.Connection, namespace: str, key: str, canonical: str, old_usage: int | None, quota: PluginDataQuota) -> None:
-    new_usage = _entry_usage(namespace, key, canonical)
+def _check_quota_for_put(conn: sqlite3.Connection, namespace: str, key: str, canonical: str, quota: PluginDataQuota) -> None:
     rows = conn.execute("SELECT key, value_json FROM plugin_data WHERE namespace = ? AND deleted = 0", (namespace,)).fetchall()
-    total = 0
-    count = 0
-    for k, v in rows:
-        if k == key:
-            continue
-        total += _entry_usage(namespace, k, v)
-        count += 1
-    total += new_usage
-    count += 1
-    if new_usage - (len(namespace.encode("utf-8")) + len(key.encode("utf-8"))) > quota.max_value_bytes:
-        raise PluginDataQuotaExceededError("value exceeds maximum size")
-    if total > quota.max_bytes:
-        raise PluginDataQuotaExceededError("quota bytes exceeded")
-    if count > quota.max_keys:
-        raise PluginDataQuotaExceededError("quota keys exceeded")
+    enforce_plugin_data_quota(namespace, key, canonical, rows, quota)
 
 
 def _canonical_value(value: Any) -> str:
@@ -285,3 +264,85 @@ def _prefix_upper(prefix: str) -> str | None:
 
 def _range_upper(prefix: str) -> str | None:
     return _prefix_upper(prefix)
+
+
+def validate_plugin_data_quota(quota: PluginDataQuota) -> None:
+    if (
+        quota.max_bytes <= 0
+        or quota.max_keys <= 0
+        or quota.max_value_bytes <= 0
+    ):
+        raise ValueError("quota limits must be positive")
+
+
+def validate_plugin_data_namespace(namespace: Any) -> None:
+    _validate_namespace(namespace)
+
+
+def validate_plugin_data_key(key: Any) -> None:
+    _validate_key(key)
+
+
+def validate_plugin_data_prefix(prefix: Any) -> None:
+    _validate_prefix(prefix)
+
+
+def validate_plugin_data_limit(limit: Any) -> None:
+    _validate_limit(limit)
+
+
+def validate_plugin_data_expected_revision(expected_revision: Any) -> None:
+    _validate_expected_revision(expected_revision)
+
+
+def canonicalize_plugin_data_value(value: Any) -> str:
+    return _canonical_value(value)
+
+
+def validate_plugin_data_value_size(
+    canonical_value: str,
+    quota: PluginDataQuota,
+) -> None:
+    _validate_value_size(canonical_value, quota)
+
+
+def plugin_data_prefix_upper(prefix: str) -> str | None:
+    return _prefix_upper(prefix)
+
+
+def plugin_data_entry_usage(
+    namespace: str,
+    key: str,
+    canonical_value: str,
+) -> int:
+    return (
+        len(namespace.encode("utf-8"))
+        + len(key.encode("utf-8"))
+        + len(canonical_value.encode("utf-8"))
+    )
+
+
+def enforce_plugin_data_quota(
+    namespace: str,
+    key: str,
+    canonical_value: str,
+    existing_live_entries: list[tuple[str, str]],
+    quota: PluginDataQuota,
+) -> None:
+    new_usage = plugin_data_entry_usage(namespace, key, canonical_value)
+    total = 0
+    count = 0
+    for existing_key, existing_value in existing_live_entries:
+        if existing_key == key:
+            continue
+        total += plugin_data_entry_usage(namespace, existing_key, existing_value)
+        count += 1
+    total += new_usage
+    count += 1
+    value_size = len(canonical_value.encode("utf-8"))
+    if value_size > quota.max_value_bytes:
+        raise PluginDataQuotaExceededError("value exceeds maximum size")
+    if total > quota.max_bytes:
+        raise PluginDataQuotaExceededError("quota bytes exceeded")
+    if count > quota.max_keys:
+        raise PluginDataQuotaExceededError("quota keys exceeded")
