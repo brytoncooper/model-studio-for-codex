@@ -10,6 +10,9 @@ from model_deck.engine.plugin_data.versioning import (
 
 
 class CompleteVersionedStore:
+    def selected_revision(self, selected):
+        raise NotImplementedError
+
     def repository_for(self, binding):
         raise NotImplementedError
 
@@ -37,6 +40,9 @@ class CompleteVersionedStore:
 
 
 class StoreWithoutActivation:
+    def selected_revision(self, selected):
+        raise NotImplementedError
+
     def repository_for(self, binding):
         raise NotImplementedError
 

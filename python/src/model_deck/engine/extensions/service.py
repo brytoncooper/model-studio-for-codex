@@ -413,11 +413,10 @@ class ExtensionLifecycleService:
                     operation.request.operation_id,
                     record.selected,
                 )
-            self._leased_call(
-                self._activation_lifecycle.admit,
+            self._admit_record(
                 operation.request.operation_id,
                 record,
-                runtime_activation if record.status is ExtensionStatus.ENABLED else None,
+                runtime_activation,
             )
         except Exception:
             return self._rollback_then_restore(operation, runtime_activation, resolution_ref=None)
@@ -499,8 +498,7 @@ class ExtensionLifecycleService:
                     operation.request.operation_id,
                     restored.selected,
                 )
-            self._leased_call(
-                self._activation_lifecycle.admit,
+            self._admit_record(
                 operation.request.operation_id,
                 restored,
                 runtime_activation,
@@ -509,6 +507,31 @@ class ExtensionLifecycleService:
             self._repository.settle,
             operation.request.operation_id,
             expected_phase_revision=operation.phase_revision,
+        )
+
+    def _admit_record(
+        self,
+        operation_id: str,
+        record: ExtensionRecord,
+        activation: ValidatedActivation | None,
+    ) -> None:
+        if record.status is ExtensionStatus.ENABLED:
+            if activation is None or activation.selection != record.selected:
+                raise LifecycleExecutionConflictError()
+            expected_data_revision = activation.validated_data_revision
+        else:
+            if activation is not None:
+                raise LifecycleExecutionConflictError()
+            expected_data_revision = self._leased_call(
+                self._data_lifecycle.selected_revision,
+                record.selected,
+            )
+        self._leased_call(
+            self._activation_lifecycle.admit,
+            operation_id,
+            record,
+            activation,
+            expected_data_revision=expected_data_revision,
         )
 
     def _leased_call(self, callback: Callable[..., _T], *args: object, **kwargs: object) -> _T:

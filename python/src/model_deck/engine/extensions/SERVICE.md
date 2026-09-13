@@ -75,6 +75,18 @@ recovery from `ACTIVATION_VALIDATED` revalidates before switch. Recovery from a
 switched enabled selection or restoration of an enabled prior selection also
 creates a fresh non-serving validation before admission.
 
+Every admission is revision-bound. For an `ENABLED` record, the fresh
+`ValidatedActivation` must name the exact selected installation and supplies
+its frozen `validated_data_revision`; the coordinator never performs a second
+data lookup on that path. For installed, disabled, failed, or removed records,
+the coordinator calls `ExtensionDataLifecycle.selected_revision` immediately
+before the non-serving admission synchronization and passes that revision as
+`expected_data_revision`. The lookup verifies the namespace, data reference,
+and artifact without changing selection, freeze, retention, or staging state.
+Composition must check the supplied revision inside the same barrier that
+synchronizes activation and data selection. An absent restored record has
+nothing to synchronize and proceeds directly to settlement.
+
 ## Failure and recovery
 
 A failure before `SWITCHED` triggers candidate revocation, durable `RESTORING`
@@ -93,6 +105,13 @@ reference. A successful rollback remains `RESTORING` while prior data is thawed
 and prior admission is synchronized, then settles to `ROLLED_BACK`. A failed
 first-install rollback keeps the repository's removed tombstone and does not
 reopen its data.
+
+Failure to read or match the selected dataset revision follows the same durable
+rules as other synchronization failures. A switched forward operation rolls
+back, while a failure during restoration leaves the claim in `RESTORING` for
+explicit recovery. No dataset revision is added to the durable lifecycle
+operation: enabled validation evidence or a fresh non-serving lookup supplies
+it at the admission boundary.
 
 Settlement failure after successful admission does not roll back the selected
 record. The durable `SWITCHED` claim remains pending, and an explicit recovery

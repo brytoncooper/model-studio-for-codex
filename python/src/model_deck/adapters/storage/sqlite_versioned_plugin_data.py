@@ -128,6 +128,37 @@ class SQLiteVersionedPluginDataStore:
             raise PluginDataVersioningContractError()
         return _BoundPluginDataRepository(self, binding=binding)
 
+    def selected_revision(self, selected: SelectedInstallation) -> int:
+        if type(selected) is not SelectedInstallation:
+            raise PluginDataVersioningContractError()
+        namespace = selected.executable.extension_id
+        with self._mutation_lock:
+            connection = self._connect()
+            try:
+                self._ensure_schema(connection)
+                connection.execute("BEGIN")
+                row = self._load_generation(connection, selected.data_ref)
+                if row is None or row["namespace"] != namespace:
+                    raise LifecycleConflictError(
+                        "selected data generation was not found"
+                    )
+                if row["artifact_id"] != selected.executable.artifact_id:
+                    raise LifecycleConflictError(
+                        "selected artifact does not own data generation"
+                    )
+                revision = row["dataset_revision"]
+                if type(revision) is not int or revision < 0:
+                    raise LifecycleConflictError(
+                        "selected dataset revision is invalid"
+                    )
+                connection.commit()
+                return revision
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
     def freeze(
         self,
         operation_id: str,

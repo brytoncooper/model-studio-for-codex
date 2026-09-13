@@ -448,6 +448,15 @@ class ExtensionLifecycleRepository(Protocol):
 
 @runtime_checkable
 class ExtensionDataLifecycle(Protocol):
+    def selected_revision(self, selected: SelectedInstallation) -> int:
+        """Read the exact dataset revision for this namespace/data/artifact binding.
+
+        This lookup does not select, thaw or otherwise mutate the generation. It
+        may inspect staged, retained or frozen data and a future target activation
+        generation so admission can bind its synchronization barrier to fresh data.
+        """
+        ...
+
     def freeze(self, operation_id: str, selected: SelectedInstallation) -> FrozenData:
         """Stop old writes under SAME broker mutation barrier, then final revision."""
         ...
@@ -484,9 +493,11 @@ class ExtensionActivationLifecycle(Protocol):
         ...
 
     def admit(self, operation_id: str, record: ExtensionRecord,
-              activation: ValidatedActivation | None) -> None:
+              activation: ValidatedActivation | None, *,
+              expected_data_revision: int) -> None:
         """Synchronize selected generations, revoke old authority, then admit only
         ENABLED record. For disabled/removed records keep all admission closed.
-        Restart never trusts a persisted session as a live activation.
+        Atomically require the selected dataset revision supplied by the lifecycle
+        coordinator. Restart never trusts a persisted session as a live activation.
         """
         ...

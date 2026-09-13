@@ -401,6 +401,10 @@ class StatefulDataLifecycle:
         self.next_data = 0
         self.fail_thaw = False
 
+    def selected_revision(self, selected: SelectedInstallation) -> int:
+        self.log.append("selected_revision")
+        return 7
+
     def freeze(self, operation_id: str, selected: SelectedInstallation) -> FrozenData:
         self.log.append("freeze")
         return FrozenData(f"ref:freeze.{operation_id}", selected.data_ref, 7)
@@ -430,6 +434,7 @@ class StatefulActivationLifecycle:
         self.log: list[str] = []
         self.validate_entered: threading.Event | None = None
         self.validate_release: threading.Event | None = None
+        self.expected_data_revisions: list[int] = []
 
     def quiesce(
         self,
@@ -465,13 +470,23 @@ class StatefulActivationLifecycle:
         operation_id: str,
         record: ExtensionRecord,
         activation: ValidatedActivation | None,
+        *,
+        expected_data_revision: int,
     ) -> None:
         self.log.append("admit")
+        self.expected_data_revisions.append(expected_data_revision)
 
 
 class FakeDataLifecycle:
     def __init__(self, controller: BoundaryController) -> None:
         self.controller = controller
+        self.fail_selected_revision = False
+
+    def selected_revision(self, selected: SelectedInstallation) -> int:
+        self.controller.enter("data.selected_revision")
+        if self.fail_selected_revision:
+            raise BoundaryFailure("data.selected_revision")
+        return 7
 
     def freeze(self, operation_id: str, selected: SelectedInstallation) -> FrozenData:
         self.controller.enter("data.freeze")
@@ -495,6 +510,11 @@ class FakeActivationLifecycle:
         self.controller = controller
         self.validate_entered: threading.Event | None = None
         self.validate_release: threading.Event | None = None
+        self.validated_data_revision = 7
+        self.validation_selection_override_once: SelectedInstallation | None = None
+        self.admissions: list[
+            tuple[ExtensionRecord, ValidatedActivation | None, int]
+        ] = []
 
     def quiesce(
         self,
@@ -517,7 +537,13 @@ class FakeActivationLifecycle:
             self.validate_entered.set()
         if self.validate_release is not None:
             self.validate_release.wait(timeout=2)
-        return ValidatedActivation("ref:activation", candidate, 7)
+        selection = self.validation_selection_override_once or candidate
+        self.validation_selection_override_once = None
+        return ValidatedActivation(
+            "ref:activation",
+            selection,
+            self.validated_data_revision,
+        )
 
     def revoke(
         self,
@@ -532,8 +558,11 @@ class FakeActivationLifecycle:
         operation_id: str,
         record: ExtensionRecord,
         activation: ValidatedActivation | None,
+        *,
+        expected_data_revision: int,
     ) -> None:
         self.controller.enter("activation.admit")
+        self.admissions.append((record, activation, expected_data_revision))
         if record.status is ExtensionStatus.ENABLED and activation is None:
             raise AssertionError("enabled admission requires fresh activation")
         if record.status is not ExtensionStatus.ENABLED and activation is not None:
@@ -652,6 +681,7 @@ class ExtensionLifecycleServiceTests(unittest.TestCase):
                 "data.stage",
                 "repo.advance.data_staged",
                 "repo.switch",
+                "data.selected_revision",
                 "activation.admit",
                 "repo.settle.switched",
             ],
@@ -720,6 +750,88 @@ class ExtensionLifecycleServiceTests(unittest.TestCase):
                 "activation.admit",
                 "repo.settle.switched",
             ],
+        )
+
+    def test_enabled_admission_uses_matching_validation_revision_without_lookup(self) -> None:
+        previous = record(ExtensionStatus.DISABLED)
+        service, _, _, activation, _, log = self.make_service(previous=previous)
+        activation.validated_data_revision = 19
+
+        result = service.execute(request(LifecycleAction.ENABLE, previous=previous))
+
+        self.assertEqual(result.outcome, ReceiptOutcome.APPLIED)
+        self.assertNotIn("data.selected_revision", log)
+        self.assertEqual(len(activation.admissions), 1)
+        admitted_record, admitted_activation, admitted_revision = activation.admissions[0]
+        assert admitted_activation is not None
+        self.assertEqual(admitted_record, result.record)
+        self.assertEqual(admitted_activation.selection, result.record.selected)
+        self.assertEqual(admitted_revision, 19)
+
+    def test_non_serving_admission_reads_revision_immediately_before_admit(self) -> None:
+        service, _, _, activation, _, log = self.make_service()
+
+        result = service.execute(
+            request(LifecycleAction.INSTALL, candidate=artifact("1.0.0"))
+        )
+
+        self.assertEqual(result.record.status, ExtensionStatus.INSTALLED)
+        self.assertEqual(
+            log[-3:],
+            ["data.selected_revision", "activation.admit", "repo.settle.switched"],
+        )
+        self.assertEqual(activation.admissions[0][1], None)
+        self.assertEqual(activation.admissions[0][2], 7)
+
+    def test_mismatched_enabled_activation_is_never_admitted(self) -> None:
+        previous = record()
+        service, repository, _, activation, _, _ = self.make_service(previous=previous)
+        lifecycle_request = request(
+            LifecycleAction.UPDATE,
+            previous=previous,
+            candidate=artifact("2.0.0"),
+        )
+        candidate = SelectedInstallation(
+            lifecycle_request.candidate,
+            "ref:data.2",
+            previous.selected.approved_scopes,
+            previous.selected.grant_generation + 1,
+            previous.selected.activation_generation + 1,
+        )
+        switched_record = ExtensionRecord(
+            EXTENSION_ID,
+            previous.revision + 1,
+            ExtensionStatus.ENABLED,
+            candidate,
+        )
+        intended = LifecycleReceipt(
+            lifecycle_request,
+            switched_record,
+            ReceiptOutcome.APPLIED,
+        )
+        switched = LifecycleOperation(
+            lifecycle_request,
+            LifecyclePhase.SWITCHED,
+            4,
+            previous,
+            candidate=candidate,
+            frozen_data=FrozenData("ref:freeze.old", previous.selected.data_ref, 7),
+            intended_receipt=intended,
+        )
+        repository.record = switched_record
+        repository.operation = switched
+        activation.validation_selection_override_once = replace(
+            candidate,
+            data_ref="ref:data.mismatched",
+        )
+
+        result = service.recover_operation(switched)
+
+        self.assertEqual(result.outcome, ReceiptOutcome.ROLLED_BACK)
+        self.assertEqual(len(activation.admissions), 1)
+        self.assertEqual(
+            activation.admissions[0][0].selected.executable,
+            previous.selected.executable,
         )
 
     def test_enable_disable_and_remove_apply_their_serving_states(self) -> None:
@@ -842,6 +954,35 @@ class ExtensionLifecycleServiceTests(unittest.TestCase):
                     )
                 self.assertEqual(repository.operation.phase, LifecyclePhase.RESTORING)
                 self.assertIsNone(repository.receipt)
+
+    def test_failed_non_serving_revision_lookup_retains_restoring_claim(self) -> None:
+        service, repository, data, _, _, log = self.make_service()
+        data.fail_selected_revision = True
+
+        with self.assertRaisesRegex(BoundaryFailure, "data.selected_revision"):
+            service.execute(
+                request(LifecycleAction.INSTALL, candidate=artifact("1.0.0"))
+            )
+
+        restoring = repository.operation
+        assert restoring is not None
+        self.assertEqual(restoring.phase, LifecyclePhase.RESTORING)
+        self.assertIsNone(repository.receipt)
+        self.assertNotIn("repo.settle.restoring", log)
+
+        data.fail_selected_revision = False
+        result = service.recover_operation(restoring)
+
+        self.assertEqual(result.outcome, ReceiptOutcome.ROLLED_BACK)
+        self.assertEqual(result.record.status, ExtensionStatus.REMOVED)
+        self.assertEqual(
+            log[-3:],
+            [
+                "data.selected_revision",
+                "activation.admit",
+                "repo.settle.restoring",
+            ],
+        )
 
     def test_abort_persists_local_freeze_before_a_crash_and_recovery_thaws_it(self) -> None:
         previous = record()
