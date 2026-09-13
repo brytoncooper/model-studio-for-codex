@@ -18,6 +18,41 @@ live in `python/src/model_deck/adapters/events/live_replay.py` and use the
   `SubmitToolResultUseCase`, the in-process `RunApplicationCoordinator`, and
   parameter validation helpers.
 
+## Fresh runtime composition
+
+Each call to `build_engine_server(...)` in
+`python/src/model_deck/bootstrap.py` composes a brand-new in-memory runtime:
+fresh `EngineServer`, fresh `RunApplicationCoordinator`, fresh live replay
+buffer, and a fresh snapshot of any caller-supplied provider routes. The
+runtime is independent of every other runtime that has been or will be
+composed, even when multiple calls share a `state_root`, an `artifact_root`,
+a `socket_root`, or a `ProviderExecutionPort` reference.
+
+The fresh runtime is laid over the durable state that already lives at the
+supplied `state_root`. `EngineServer.start()` invokes the run repository's
+durable recovery exactly once per start, after acquiring the exclusive
+engine instance lock and before publishing rendezvous: claimed non-terminal
+runs terminalize as `INTERRUPTED`, unclaimed `ACCEPTED` runs come back as
+`dispatchable_requests`, and terminal runs stay terminal. Two engines
+sharing `state_root` cannot coexist — the lock prevents a second runtime
+from recovering another instance's work and aborts startup if recovery
+fails. Calling `start()` again on an already running instance does not
+repeat recovery and does not reset in-memory handles.
+
+The fresh snapshot of the caller-supplied `provider_route_definitions`
+applies for the lifetime of the runtime. Subsequent mutations of the
+caller's mapping, lists, or `CapabilityFeature` instances do not reach the
+running engine; bootstrap reconstructs each entry from scratch inside
+`_snapshot_provider_routes` and validates every `capability_snapshot_ref`
+against the same UUID / `ref:` opaque reference rules used by
+`engine.connections.use_cases` before any state is created. A reference is
+accepted only when it is a non-empty string of at most 128 characters that
+is either a canonical UUID (`uuid.UUID(value)` valid and
+`str(parsed).casefold() == value.casefold()`) or a `ref:` opaque reference
+matching `^ref:[a-z][a-z0-9._-]{0,120}$`. Empty, malformed, or overlong
+references, and non-string types, are rejected with `ValueError` and no
+state is created on disk.
+
 ## Public contracts
 
 ### States and outcomes
@@ -66,6 +101,19 @@ live in `python/src/model_deck/adapters/events/live_replay.py` and use the
 - `ProviderRunEventSink.publish_provider_event(event)`.
 
 ### Provider boundary
+
+The bootstrap caller owns the lifecycle of any injected `ProviderExecutionPort`.
+Bootstrap holds only a reference and dispatches `start` / `submit_tool_result`
+/ `request_cancel`; teardown of provider resources (network connections,
+worker pools, cached state) belongs to the caller. The matching test
+`tests.engine.test_provider_bootstrap.ProviderBootstrapTests.test_cancel_and_restart_keep_application_recovery_and_caller_ownership`
+asserts `provider.closes == 0` across the lifetime of an injected engine
+instance, confirming bootstrap never invokes `ProviderExecutionPort.close`
+implicitly. Calling `build_engine_server(...)` again with the same
+`state_root` composes a fresh in-memory runtime over the existing durable
+state (see "Fresh runtime composition" above) and issues a new dispatch
+handle for the same provider reference; the caller decides when to swap,
+reload, or close that reference.
 
 - `ProviderExecutionPort.start(request, sink) -> ProviderRunHandle`.
 - `ProviderRunHandle.submit_tool_result(call_id, result)` returns
@@ -186,7 +234,18 @@ PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_run_us
 PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_session_run_ports
 PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_engine_run_dispatch
 PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_run_startup_recovery
+PYTHONPATH=src /opt/homebrew/bin/python3.12 -m unittest tests.engine.test_provider_bootstrap
 ```
+
+`tests.engine.test_provider_bootstrap` lives at
+`python/tests/engine/test_provider_bootstrap.py`. It is the focused test
+module for the optional `provider_execution` /
+`provider_route_definitions` injection pair accepted by
+`build_engine_server`, the `_snapshot_provider_routes` defense against
+caller mutation, and the `ProviderExecutionPort` lifecycle ownership
+contract. Run it from the Architecture `python` directory with the same
+`PYTHONPATH=src` prefix as the rest of the suite; it builds a real engine
+over a Unix socket using the shared deterministic provider fixture.
 
 `test_run_use_cases` exercises validation, admission replay, dispatch and
 recovery paths, cancellation flow, tool submission idempotency, and provider

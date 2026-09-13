@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
+import uuid
 from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,6 +53,7 @@ from model_deck.engine.runs.use_cases import (
     StartRunUseCase,
     SubmitToolResultUseCase,
 )
+from model_deck.engine.runs.ports import ProviderExecutionPort
 from model_deck.engine.sessions.use_cases import (
     CreateSessionUseCase,
     GetSessionUseCase,
@@ -60,12 +64,71 @@ from model_deck_contracts.negotiation import ApiVersion
 from model_deck_contracts.paths import repo_root as contracts_repo_root
 
 
+_OPAQUE_REF_PATTERN = re.compile(r"^ref:[a-z][a-z0-9._-]{0,120}$")
+_MAX_OPAQUE_REF = 128
+
+
+def _canonical_uuid_spelling(value: str) -> bool:
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError:
+        return False
+    return str(parsed).casefold() == value.casefold()
+
+
+def _validate_capability_snapshot_ref(value: object) -> str | None:
+    """Validate a capability snapshot reference against the existing application rules.
+
+    The reference must be a non-empty string of at most 128 characters that is
+    either a canonical UUID (no braces, no urn: prefix) or a ``ref:`` opaque
+    reference matching the lowercase reverse-domain shape used by
+    ``engine.connections.use_cases``. ``None`` is accepted when the route
+    declares no snapshot reference.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("provider capability snapshot reference must be a string or None")
+    if not value:
+        raise ValueError("provider capability snapshot reference must be a non-empty string")
+    if len(value) > _MAX_OPAQUE_REF:
+        raise ValueError(f"provider capability snapshot reference must be at most {_MAX_OPAQUE_REF} characters")
+    if _OPAQUE_REF_PATTERN.fullmatch(value):
+        return value
+    if _canonical_uuid_spelling(value):
+        return value
+    raise ValueError("provider capability snapshot reference must be a UUID or ref: opaque reference")
+
+
 @dataclass(frozen=True, slots=True)
 class EngineRuntime:
     server: EngineServer
     rendezvous_path: Path
     enrollment: FileEnrollmentCredentialStore
     application_database_path: Path | None = None
+
+
+def _snapshot_provider_routes(routes: Mapping[str, ProviderRouteDefinition]) -> dict[str, ProviderRouteDefinition]:
+    if not isinstance(routes, Mapping):
+        raise ValueError("provider route definitions must be a mapping")
+    captured = {}
+    for provider_id, definition in dict(routes).items():
+        if not isinstance(provider_id, str) or not provider_id or not isinstance(definition, ProviderRouteDefinition):
+            raise ValueError("provider route definitions require provider IDs and ProviderRouteDefinition values")
+        if not isinstance(definition.execution_mode, ExecutionMode):
+            raise ValueError("provider route execution mode must be an ExecutionMode")
+        if not isinstance(definition.capability_features, (tuple, list)):
+            raise ValueError("provider route capabilities must be an explicit sequence")
+        features = []
+        for feature in definition.capability_features:
+            if (not isinstance(feature, CapabilityFeature) or not isinstance(feature.name, str)
+                    or not feature.name or not isinstance(feature.state, CapabilityTriState)):
+                raise ValueError("provider route capabilities require named tri-state features")
+            features.append(CapabilityFeature(feature.name, feature.state))
+        snapshot_ref = _validate_capability_snapshot_ref(definition.capability_snapshot_ref)
+        captured[provider_id] = ProviderRouteDefinition(
+            definition.execution_mode, tuple(features), snapshot_ref)
+    return captured
 
 
 def build_engine_server(
@@ -82,9 +145,22 @@ def build_engine_server(
     host_settings_document: SettingsDocumentPort | None = None,
     host_settings_caller: CallerContext | None = None,
     kernel_composition: KernelComposition | None = None,
+    provider_execution: ProviderExecutionPort | None = None,
+    provider_route_definitions: Mapping[str, ProviderRouteDefinition] | None = None,
 ) -> EngineRuntime:
     if enable_fixture_runs and not enable_application_state:
         raise ValueError("enable_fixture_runs requires enable_application_state")
+    if (provider_execution is None) != (provider_route_definitions is None):
+        raise ValueError("provider execution and route definitions must be supplied together")
+    injected_routes = None
+    if provider_execution is not None:
+        if not enable_application_state:
+            raise ValueError("injected provider requires enable_application_state")
+        if enable_fixture_runs:
+            raise ValueError("injected provider cannot be combined with enable_fixture_runs")
+        if not isinstance(provider_execution, ProviderExecutionPort) or not callable(provider_execution.start):
+            raise ValueError("injected provider must implement ProviderExecutionPort")
+        injected_routes = _snapshot_provider_routes(provider_route_definitions)
     if (host_settings_document is None) != (host_settings_caller is None):
         raise ValueError("host settings document and caller must be supplied together")
     if host_settings_document is not None:
@@ -144,7 +220,21 @@ def build_engine_server(
         list_connections = ListConnectionsUseCase(sqlite_connections)
         save_connection = SaveConnectionUseCase(sqlite_connections)
 
-        if enable_fixture_runs:
+        if enable_fixture_runs or provider_execution is not None:
+            run_provider = provider_execution
+            run_routes = injected_routes
+            if enable_fixture_runs:
+                run_provider = DeterministicProviderExecutionPort(
+                    auto_advance=True,
+                    script=(EmitStarted(), EmitContent("fixture text"), EmitTerminalCompleted()),
+                )
+                run_routes = {
+                    DETERMINISTIC_PROVIDER_ID: ProviderRouteDefinition(
+                        execution_mode=ExecutionMode.CUSTOM,
+                        capability_features=(CapabilityFeature("tools", CapabilityTriState.UNSUPPORTED),),
+                        capability_snapshot_ref="ref:capability.fixture",
+                    ),
+                }
             session_run_repository = SQLiteSessionRunRepository(application_database_path)
             run_repository = session_run_repository
             usage_repository = SqliteUsageRepository(application_database_path)
@@ -156,28 +246,12 @@ def build_engine_server(
             route_resolver = RegisteredRouteResolver(
                 model_repository=sqlite_models,
                 connection_repository=sqlite_connections,
-                provider_route_definitions={
-                    DETERMINISTIC_PROVIDER_ID: ProviderRouteDefinition(
-                        execution_mode=ExecutionMode.CUSTOM,
-                        capability_features=(
-                            CapabilityFeature("tools", CapabilityTriState.UNSUPPORTED),
-                        ),
-                        capability_snapshot_ref="ref:capability.fixture",
-                    ),
-                },
+                provider_route_definitions=run_routes,
             )
             event_replay = LiveRunEventReplay()
             run_coordinator = RunApplicationCoordinator(
                 session_run_repository,
                 event_publisher=event_replay,
-            )
-            deterministic_provider = DeterministicProviderExecutionPort(
-                auto_advance=True,
-                script=(
-                    EmitStarted(),
-                    EmitContent("fixture text"),
-                    EmitTerminalCompleted(),
-                ),
             )
             create_session = CreateSessionUseCase(session_run_repository, route_resolver)
             get_session = GetSessionUseCase(session_run_repository)
@@ -189,7 +263,7 @@ def build_engine_server(
                 session_run_repository,
                 session_run_repository,
                 route_resolver,
-                deterministic_provider,
+                run_provider,
                 run_coordinator,
             )
             get_run = GetRunUseCase(session_run_repository)
