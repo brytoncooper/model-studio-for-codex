@@ -29,14 +29,14 @@ commit counts or the number of task headings.
 | B06 MCP | Real entrypoint read composition reviewed; existing registry/formatting/search reused | Converge available mutations; qualify packaged entrypoint |
 | B07 Application state | Revisioned SQLite model/connection operations integrated | Shared repository conformance and active-run removal proof |
 | B08 Import preview | Deterministic read-only preview written | Record current full preview acceptance |
-| B09 Projections | Outbox, conditional files, renderer and consumer written | Compose committed resolvers; handle connection changes |
+| B09 Projections | Committed snapshot adapters and transactional model invalidation reviewed alongside renderer/consumer | Dependency acknowledgments and complete fixture composition |
 | B10 Host bridge | Legacy bridge retained; new host helpers written | Extract and compose actual host bridge/launch policy |
 | B11 Migration | Preview supports preparation | Offline apply, recovery and rollback rehearsal |
 | B12 Sessions/runs | Durable fixture run path and exclusive-lock startup recovery integrated | Complete run/provider gate |
-| B13 HTTP providers | Streaming and request helpers written | Actual HTTP execution, fallback and parity |
+| B13 HTTP providers | Streaming, request helpers and owned HTTP transport reviewed | Provider execution composition, fallback and parity |
 | B14 Cursor provider | Coordinator and injected legacy-process adapter independently reviewed | Root SDK composition and parity |
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
-| B16 Usage/evidence | Genuine engine usage recording/query storage reviewed; legacy implementations retained | Public query/event composition, pricing and refresh jobs |
+| B16 Usage/evidence | Durable committed-event reconciliation and exact ledger queries reviewed | Public query composition, pricing and refresh jobs |
 | B17 Kernel | Generic registry written | Built-in composition and generic engine dispatch |
 | B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
@@ -44,7 +44,7 @@ commit counts or the number of task headings.
 | B21 Extension UI | Contracts exist | Declarative renderer and extension management |
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
 | B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
-| B24 Restricted execution | No implementation found | Feasibility investigation and qualified OS enforcement |
+| B24 Restricted execution | Reviewed feasibility document; no restricted runtime implemented | Isolated OS enforcement investigation and qualification |
 | B25 Native parity | Catalog path, authenticated settings persistence and native settings screen reviewed | App attachment and remaining native features |
 | B26 Distribution/docs | Isolated staging packager and subsystem catalog reviewed | Real staged packaging, compatibility wrappers and aggregate gate |
 | B27 Live qualification | Not started | Complete staged readiness, then schedule protected-runtime cutover |
@@ -130,6 +130,22 @@ and composed probes. Existing payload and usage logic remain injected; synchrono
 tool-result callbacks, early failures, exactly-once cleanup and explicit false,
 zero, empty and null arguments are preserved. Missing arguments fail closed.
 Root SDK composition and live provider qualification remain pending.
+
+Projection snapshots `340c8d6` and invalidation `5bca96a`: seven adapter tests plus
+independent error-boundary probes passed; 49 transactional and outbox tests passed.
+Connection changes advance only their active dependent model revisions in the
+same transaction. Replay and tombstones remain protected. Dependency expansion
+acknowledgments and the complete file projection loop remain pending.
+
+Usage reconciliation `64a283d`: 16 reader/reconciliation tests and independent
+SQLite integration passed, alongside the previously reviewed ledger tests.
+Bounded snapshot reads preserve timestamps and optional fields; partial writes
+recover through idempotent reconciliation before queries return. Public socket
+composition remains pending.
+
+HTTP transport `e93e2ac`: nine independently run tests verify exact POST inputs,
+failure cleanup and once-only concurrent close. The primitive remains unwired;
+local close does not claim confirmed remote cancellation.
 
 Staging packager `456a465`: independent review passed 28 tests on macOS Python
 3.12, including benign child cleanup and timeout fixtures. Explicit offline

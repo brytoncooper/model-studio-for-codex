@@ -18,6 +18,8 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | Model library: registered-model read port, catalog-cache port, `models.list` use case | [model library README](../../python/src/model_deck/engine/model_library/README.md) |
 | Runs: application port and use cases for model runs bound to a session and route (`runs.start/get/cancel/submit_tool_result`) | [runs README](../../python/src/model_deck/engine/runs/README.md) |
 | Usage records: exact engine event recording, duplicate handling and bounded chronological queries | [usage README](../../python/src/model_deck/engine/usage/README.md) |
+| Run event dispatch: application run events to authenticated `engine.v1.event` notifications, tool calls nested at the wire boundary | [event dispatch guide](../engine/event-dispatch.md) |
+| Committed usage-event reader: bounded paged `usage.observed` port for usage reconciliation, cursor/opaque rules | [usage events guide](../../python/src/model_deck/engine/runs/USAGE_EVENTS.md) |
 | Host settings engine: generic settings engine owning authorization, schema validation, preview-token binding, save idempotency receipts; never touches filesystem/network/Git | [host settings README](../../python/src/model_deck/engine/host_settings/README.md) |
 
 ### Plugin jobs and authority
@@ -68,6 +70,7 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | Codex settings file: filesystem persistence implementing `SettingsDocumentPort`; engine keeps authz, tokens, receipts | [settings file README](../../python/src/model_deck/integrations/hosts/codex/settings_file/README.md) |
 | Legacy import preview: deterministic, redacted, read-only fixture-only preview of legacy routing state | [migration preview README](../../python/src/model_deck/integrations/hosts/codex/migration_preview/README.md) |
 | Cursor provider guide | [Cursor provider](../providers/cursor.md) |
+| Cursor process adapter: `CursorProcessRuntime` over injected process port, event/tool-alias/usage normalization wiring | [process runtime guide](../../python/src/model_deck/integrations/providers/cursor/PROCESS_RUNTIME.md) |
 | OpenAI-compatible streaming boundary: decodes stream bytes, checks run-event ordering; no HTTP/credentials/history | [streaming README](../../python/src/model_deck/integrations/providers/openai_compatible/README.md) |
 | OpenAI-compatible request translation: pure Responses-to-chat-completions translation | [translation guide](../../python/src/model_deck/integrations/providers/openai_compatible/TRANSLATION.md) |
 | Provider continuation helpers: verbatim-behavior extracts for compaction and continuation translation | [continuation README](../../python/src/model_deck/integrations/providers/continuation/README.md) |
@@ -107,3 +110,5 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | Architecture overview | [architecture README](../../development/architecture/README.md) |
 | Plugin-architecture plan | [PLAN](../../docs/plans/plugin-architecture/PLAN.md) |
 | Deterministic port guidance | [deterministic ports](../../python/src/model_deck/adapters/providers/DETERMINISTIC.md) |
+| Deterministic provider example: standalone stdio subprocess fixture speaking `provider.execution/v1`, text/tool/wait/failure modes | [deterministic provider README](../../examples/deterministic-provider/README.md) |
+| Isolated app staging: `stage.py` packaging primitive assembling fresh legacy-compatible macOS app, inputs/guards | [staging guide](../../scripts/package/README.md) |
