@@ -43,6 +43,9 @@
       },
       "maxItems": 128
     },
+    "options": {
+      "$ref": "../vocabulary.schema.json#/definitions/run_options"
+    },
     "capability_snapshot_ref": {
       "$ref": "../../common/types.schema.json#/definitions/opaque_ref"
     }

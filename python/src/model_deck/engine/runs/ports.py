@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from model_deck.engine.routing.ports import RouteSnapshot
 
@@ -61,6 +61,78 @@ class NormalizedRunInput:
     messages: tuple[Any, ...] = ()
 
 
+class RunServiceTier(str, Enum):
+    STANDARD = "standard"
+    PRIORITY = "priority"
+    ECONOMY = "economy"
+
+
+@dataclass(frozen=True, slots=True)
+class RunTextOutputFormat:
+    type: Literal["text"] = field(default="text", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RunJsonObjectOutputFormat:
+    type: Literal["json_object"] = field(default="json_object", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RunJsonSchemaOutputFormat:
+    name: str
+    schema: dict[str, Any]
+    description: str | None = None
+    strict: bool | None = None
+    type: Literal["json_schema"] = field(default="json_schema", init=False)
+
+
+RunOutputFormat: TypeAlias = (
+    RunTextOutputFormat | RunJsonObjectOutputFormat | RunJsonSchemaOutputFormat
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RunAutomaticToolChoice:
+    type: Literal["auto"] = field(default="auto", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RunNoToolChoice:
+    type: Literal["none"] = field(default="none", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RunRequiredToolChoice:
+    type: Literal["required"] = field(default="required", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RunNamedToolChoice:
+    tool_name: str
+    type: Literal["named"] = field(default="named", init=False)
+
+
+RunToolChoice: TypeAlias = (
+    RunAutomaticToolChoice
+    | RunNoToolChoice
+    | RunRequiredToolChoice
+    | RunNamedToolChoice
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RunOptions:
+    """Normalized transport preferences; adapter support is checked before dispatch."""
+
+    instructions: str | None = None
+    reasoning_effort: str | None = None
+    service_tier: RunServiceTier | None = None
+    max_output_tokens: int | None = None
+    parallel_tool_calls: bool | None = None
+    output_format: RunOutputFormat | None = None
+    tool_choice: RunToolChoice | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
     """Host-authorized function advertisement, distinct from an emitted call."""
@@ -90,6 +162,7 @@ class RunRequest:
     route_snapshot: RouteSnapshot
     input: NormalizedRunInput
     tools: tuple[ToolDefinition, ...] = ()
+    options: RunOptions = RunOptions()
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +216,7 @@ class StartRunCommand:
     input: NormalizedRunInput
     tools: tuple[ToolDefinition, ...] = ()
     authorized_host_context_ref: str | None = None
+    options: RunOptions = RunOptions()
 
 
 @dataclass(frozen=True, slots=True)

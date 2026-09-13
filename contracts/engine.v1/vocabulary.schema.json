@@ -269,6 +269,160 @@
         }
       }
     },
+    "run_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Transport preferences for a run. Adapters must reject strict or otherwise enforced controls they cannot support before provider dispatch.",
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Advisory effort token interpreted against the selected model's supported values."
+        },
+        "service_tier": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "priority",
+            "economy"
+          ]
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "parallel_tool_calls": {
+          "type": "boolean"
+        },
+        "output_format": {
+          "description": "Requested output representation. Strict structured output must be supported before provider dispatch.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "const": "text"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "const": "json_object"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "name",
+                "schema"
+              ],
+              "properties": {
+                "type": {
+                  "const": "json_schema"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 1024
+                },
+                "schema": {
+                  "type": "object",
+                  "maxProperties": 1024,
+                  "additionalProperties": {
+                    "$ref": "../common/types.schema.json#/definitions/json_value"
+                  }
+                },
+                "strict": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ]
+        },
+        "tool_choice": {
+          "description": "Requested tool-selection behavior over the run's authorized tool definitions.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "const": "auto"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "const": "none"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "const": "required"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "tool_name"
+              ],
+              "properties": {
+                "type": {
+                  "const": "named"
+                },
+                "tool_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
     "run_request": {
       "type": "object",
       "additionalProperties": false,
@@ -316,6 +470,9 @@
           },
           "maxItems": 128,
           "description": "Authorized tool descriptors for this run"
+        },
+        "options": {
+          "$ref": "#/definitions/run_options"
         }
       }
     },
