@@ -82,7 +82,10 @@ def chat_request_from_responses(request, load_record=None, provider_id=None, new
                 if part.get("type") == "input_text":
                     content.append({"type": "text", "text": part.get("text", "")})
                 elif part.get("type") == "input_image" and part.get("image_url"):
-                    content.append({"type": "image_url", "image_url": {"url": part["image_url"]}})
+                    image_url = {"url": part["image_url"]}
+                    if "detail" in part:
+                        image_url["detail"] = part["detail"]
+                    content.append({"type": "image_url", "image_url": image_url})
             if all(part["type"] == "text" for part in content):
                 content = "".join(part["text"] for part in content)
             messages.append({"role": role, "content": content})

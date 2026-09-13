@@ -131,6 +131,30 @@ def test_json_schema_and_function_choice():
     assert out["tool_choice"] == {"type": "function", "function": {"name": "get_weather"}}
 
 
+def test_image_detail_is_preserved_only_when_present():
+    content = [
+        {"type": "input_image", "image_url": "https://x/auto.png", "detail": "auto"},
+        {"type": "input_image", "image_url": "https://x/low.png", "detail": "low"},
+        {"type": "input_image", "image_url": "https://x/high.png", "detail": "high"},
+        {"type": "input_image", "image_url": "https://x/default.png"},
+    ]
+    req = _request(
+        input=[{"type": "message", "role": "user", "content": content}],
+        instructions=None,
+    )
+    req.pop("instructions", None)
+
+    translated = tr.chat_request_from_responses(req)
+    images = [part["image_url"] for part in translated["messages"][0]["content"]]
+
+    assert images == [
+        {"url": "https://x/auto.png", "detail": "auto"},
+        {"url": "https://x/low.png", "detail": "low"},
+        {"url": "https://x/high.png", "detail": "high"},
+        {"url": "https://x/default.png"},
+    ]
+
+
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite([
         unittest.FunctionTestCase(test_shapes_and_no_mutation),
@@ -139,4 +163,5 @@ def load_tests(loader, tests, pattern):
         unittest.FunctionTestCase(test_deepseek_reasoning_stripping),
         unittest.FunctionTestCase(test_gemini_guard_and_passthrough),
         unittest.FunctionTestCase(test_json_schema_and_function_choice),
+        unittest.FunctionTestCase(test_image_detail_is_preserved_only_when_present),
     ])
