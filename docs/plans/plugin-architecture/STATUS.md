@@ -365,3 +365,20 @@ without replacing the broker dispatcher with a mock.
 
 Next / upcoming task: complete lifecycle revision synchronization and archive
 packing repairs; reuse the existing chat-stream translator in the HTTP package.
+
+## Accepted lifecycle/data composition and chat translation
+
+`a3e9a2d` closes the revision handoff gap: activation admission receives an exact
+expected data revision. Enabled targets use fresh matching validation; non-serving
+targets use the public read-only data lookup. Independent review passed 58 tests,
+including real SQLite rollback, first-install/reinstall tombstone recovery and
+revision-conflict behavior. Parent checks covered the same 58 tests across the
+focused modules. Production lease and activation supervision remain separate.
+
+`acf1a97` extracts the existing chat-stream translator without importing the
+legacy host. Independent AST comparison and complete-output probes confirmed
+parity; parent and reviewer passed 10 focused translation tests. The translator
+still needs HTTP execution composition and normalized host input.
+
+Next / upcoming task: review normalized message contracts and authoring repairs;
+implement the real lease adapter, Codex input conversion and JavaScript fixture.
