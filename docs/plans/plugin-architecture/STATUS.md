@@ -41,7 +41,7 @@ commit counts or the number of task headings.
 | B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
 | B20 Package lifecycle | Artifact staging, lifecycle service, SQLite lifecycle transactions and versioned-data contract reviewed | Integrate real activation, versioned data and public lifecycle dispatch |
-| B21 Extension UI | Declarative panel schema reviewed; native values/validation underway | Renderer, public panel delivery and extension management |
+| B21 Extension UI | Declarative panel schema and immutable native decoder reviewed; renderer under review | Renderer acceptance, public panel delivery and extension management |
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
 | B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
 | B24 Restricted execution | Reviewed feasibility document; no restricted runtime implemented | Isolated OS enforcement investigation and qualification |
@@ -194,7 +194,7 @@ lookup without source, and staged application behavior remain unverified.
 - Versioned SQLite plugin data implementation against the accepted contract.
 - Cross-process lifecycle storage test cleanup repair.
 - Archived external provider integration through the public engine socket.
-- Native panel validation repair after independent Swift tests found failures.
+- Native renderer review against the accepted panel decoder.
 - Notebook protocol and HTTP provider composition boundary checks.
 - Normalized run-options contracts for provider parity; persistence and consumers
   will follow the shared contract review.
@@ -230,6 +230,18 @@ Versioned-data contract `74bf69a`: independent review passed three contract test
 Bindings capture namespace, data reference and activation generation; storage
 must share the broker mutation barrier and explicitly control writable state.
 Real generation storage, freeze races and staged migration tests are underway.
+
+Native panel decoding `9031b85`: isolated library compilation and 42 owned tests
+passed after independent review and additional boundary probes. Values are
+immutable; decoding enforces fields, Unicode scalar lengths, strict Booleans,
+node/binding limits and ready-state requirements. Native revision values are
+bounded by signed `Int`; the shared revision schema remains unbounded. B01 must
+resolve that cross-system numeric limit before claiming exact numeric parity.
+
+Contracts `f053c88` and `35ffb6c`: external invocation now requires supervisor
+broker context, panel fetch returns a tree, and run options have shared schema
+and Python types. Parent ran all 57 contract tests; all 200 canonical schemas
+match both generated bundles. Runtime consumers remain in progress.
 
 The source audit exposed real missing integration and verification work. Earlier
 conversation percentages were estimates, not a measured delivery baseline; this

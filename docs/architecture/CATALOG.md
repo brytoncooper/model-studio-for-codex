@@ -10,6 +10,9 @@ Concise index of actually existing systems. Every link resolves to an existing g
 
 ## Engine features
 
+Request settings are defined in the [run-options contract](../../python/src/model_deck/engine/runs/OPTIONS.md).
+Its guide distinguishes value transport from provider enforcement.
+
 | Subsystem | Guide |
 |---|---|
 | Connections: connection records port, list/save use cases, revision and idempotency conflicts | [connections README](../../python/src/model_deck/engine/connections/README.md) |
@@ -31,6 +34,10 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | Plugin job broker: supervisor-side dispatch over settled authority plus committed job repository; wire shapes mirror frozen `plugin.v1/broker/jobs.*` | [job broker guide](../../python/src/model_deck/engine/jobs/BROKER.md) |
 
 ### Plugin authority, data, events
+
+The [invocation wire guide](PLUGIN-INVOCATION.md) explains supervisor-issued broker
+context and panel delivery. The [versioned-data contract](../../python/src/model_deck/engine/plugin_data/VERSIONING.md)
+defines generation binding and the shared write barrier required for updates.
 
 | Subsystem | Guide |
 |---|---|
@@ -99,7 +106,9 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | Stdio codec: bounded newline-delimited UTF-8 JSON framing for private stdio pipes | [stdio codec README](../../python/src/model_deck/plugins/stdio_codec/README.md) |
 | Archive inspection: in-memory ZIP entry summary primitive; no extraction/execution | [archive inspection README](../../python/src/model_deck/plugins/archive_inspection/README.md) |
 | Artifact store: stages inspected ZIP bytes into a SHA-256-named directory; no trust/activation/install | [artifact store README](../../python/src/model_deck/plugins/artifact_store/README.md) |
-| Plugin distribution/install flow beyond inspection plus staging | Guide not yet written |
+| Extension lifecycle contracts: claims, revisions and recovery intent | [lifecycle contracts](../../python/src/model_deck/engine/extensions/README.md) |
+| Lifecycle service: ordered effects, exclusive execution and restoration | [lifecycle service](../../python/src/model_deck/engine/extensions/SERVICE.md) |
+| Native panel documents: immutable values and bounded decoding | [panel document guide](../../macos/Sources/ModelDeckPresentation/ExtensionUI/README.md) |
 
 ## Contracts, development, planning
 
