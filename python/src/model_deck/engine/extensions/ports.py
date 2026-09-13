@@ -399,12 +399,22 @@ class ExtensionLifecycleRepository(Protocol):
         """
         ...
 
-    def abort(self, operation_id: str, *, expected_phase_revision: int, revocation_ref: str) -> LifecycleOperation:
+    def abort(
+        self,
+        operation_id: str,
+        *,
+        expected_phase_revision: int,
+        revocation_ref: str,
+        frozen_data: FrozenData | None = None,
+    ) -> LifecycleOperation:
         """Pre-switch only: proof candidate authority revoked, retain old selection.
         Atomically persist RESTORING plus intended ABORTED receipt (previous
-        record or None for failed first install). HOLD claim through thaw/admit
-        synchronization; settle alone publishes receipt/releases. Never reopen
-        candidate authority. Crash after this return remains recoverable.
+        record or None for failed first install). ``frozen_data`` carries a
+        completed freeze whose QUIESCED advance failed; it must match the prior
+        selected data and any already-persisted freeze evidence. HOLD claim
+        through thaw/admit synchronization; settle alone publishes
+        receipt/releases. Never reopen candidate authority. Crash after this
+        return remains recoverable.
         """
         ...
 

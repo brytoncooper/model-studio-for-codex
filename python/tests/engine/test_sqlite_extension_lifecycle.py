@@ -286,6 +286,73 @@ class SQLiteExtensionLifecycleTests(unittest.TestCase):
         self.assertIsNone(receipt.record)
         self.assertEqual(self.repo.recover(), ())
 
+    def test_abort_atomically_persists_completed_unadvanced_freeze(self) -> None:
+        installed = self._install()
+        enabled = self._enable(installed)
+        request = _request(
+            OP_UPDATE,
+            LifecycleAction.UPDATE,
+            enabled.revision,
+            "update-abort-freeze",
+            digest_character="8",
+            candidate=self.v2,
+        )
+        claimed = self.repo.claim(request).operation
+        assert claimed is not None
+        frozen = FrozenData("ref:freeze.completed", enabled.selected.data_ref, 11)
+
+        restoring = self.repo.abort(
+            OP_UPDATE,
+            expected_phase_revision=claimed.phase_revision,
+            revocation_ref="ref:revoked.update",
+            frozen_data=frozen,
+        )
+
+        self.assertEqual(restoring.phase, LifecyclePhase.RESTORING)
+        self.assertEqual(restoring.frozen_data, frozen)
+        reopened = SQLiteExtensionLifecycleRepository(self.db_path)
+        self.assertEqual(reopened.recover(), (restoring,))
+
+    def test_abort_rejects_mismatched_or_changed_freeze_evidence(self) -> None:
+        installed = self._install()
+        request = _request(
+            OP_UPDATE,
+            LifecycleAction.UPDATE,
+            installed.revision,
+            "update-abort-invalid-freeze",
+            digest_character="9",
+            candidate=self.v2,
+        )
+        claimed = self.repo.claim(request).operation
+        assert claimed is not None
+        with self.assertRaises(LifecycleConflictError):
+            self.repo.abort(
+                OP_UPDATE,
+                expected_phase_revision=claimed.phase_revision,
+                revocation_ref="ref:revoked.update",
+                frozen_data=FrozenData("ref:freeze.wrong", "ref:other.data", 0),
+            )
+        self.assertEqual(self.repo.recover(), (claimed,))
+
+        frozen = FrozenData("ref:freeze.original", installed.selected.data_ref, 0)
+        quiesced = self.repo.advance(
+            replace(
+                claimed,
+                phase=LifecyclePhase.QUIESCED,
+                phase_revision=1,
+                frozen_data=frozen,
+            ),
+            expected_phase_revision=0,
+        )
+        with self.assertRaises(LifecycleConflictError):
+            self.repo.abort(
+                OP_UPDATE,
+                expected_phase_revision=quiesced.phase_revision,
+                revocation_ref="ref:revoked.update",
+                frozen_data=replace(frozen, freeze_ref="ref:freeze.changed"),
+            )
+        self.assertEqual(self.repo.recover(), (quiesced,))
+
     def test_enabled_update_switch_and_rollback_use_monotonic_generations(self) -> None:
         installed = self._install()
         enabled = self._enable(installed)

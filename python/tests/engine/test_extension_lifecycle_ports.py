@@ -1,3 +1,4 @@
+import inspect
 import unittest
 from typing import get_type_hints
 from dataclasses import FrozenInstanceError, replace
@@ -151,6 +152,13 @@ class ExtensionLifecyclePortTests(unittest.TestCase):
                          allowed_next_phases(LifecycleAction.INSTALL, LifecyclePhase.CLAIMED))
         self.assertNotIn(LifecyclePhase.ROLLED_BACK,
                          allowed_next_phases(LifecycleAction.INSTALL, LifecyclePhase.SWITCHED))
+
+    def test_abort_can_atomically_bind_a_completed_unpersisted_freeze(self):
+        parameter = inspect.signature(ExtensionLifecycleRepository.abort).parameters[
+            'frozen_data'
+        ]
+        self.assertIsNone(parameter.default)
+        self.assertIn('FrozenData', str(parameter.annotation))
 
     def test_external_evidence_is_bounded_and_has_no_token_field(self):
         self.assertEqual(FrozenData('ref:freeze', 'ref:data', 2).final_revision, 2)

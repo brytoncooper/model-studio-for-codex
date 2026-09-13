@@ -101,8 +101,11 @@ Phase CAS does not fence external effects and no distributed lease is implied.
 
 Before SWITCHED, revoke staged authority and obtain trusted revocation evidence,
 then atomically enter RESTORING with original previous selection and intended
-ABORTED receipt. The claim remains held. Reopen old data/admission only after
-revocation, then settle to ABORTED and publish the exact receipt/release the claim.
+ABORTED receipt. If freezing succeeded but persisting QUIESCED failed, `abort`
+atomically binds that completed freeze evidence to RESTORING; it rejects evidence
+for any data other than the captured previous selection or any change to already
+persisted freeze evidence. The claim remains held. Reopen old data/admission only
+after revocation, then settle to ABORTED and publish the exact receipt/release the claim.
 Failed install may have no selected record.
 A failure without proven revocation retains the claim; do not manufacture proof.
 

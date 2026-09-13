@@ -40,8 +40,11 @@ credential, filesystem path, arbitrary workflow payload, or extension-owned SQL.
   approved scopes, or retained removal authority changes. Rollback advances both
   generations beyond the switched record; it never restores old authority.
 - `abort` and `rollback` persist `RESTORING` and an exact intended receipt while
-  retaining the claim. `settle` publishes that receipt and releases the claim only
-  after the coordinator has restored data and admission state.
+  retaining the claim. When a freeze completed but the `QUIESCED` write failed,
+  `abort` persists that matching prior-data freeze in the same transaction as
+  `RESTORING`; it cannot replace different persisted evidence. `settle` publishes
+  the receipt and releases the claim only after the coordinator has restored data
+  and admission state.
 - A post-switch data revision different from the switch baseline commits
   `RESOLUTION_REQUIRED` before raising `LifecycleResolutionRequiredError`. Once
   recorded, explicit resolution remains mandatory. Rollback freeze and resolution

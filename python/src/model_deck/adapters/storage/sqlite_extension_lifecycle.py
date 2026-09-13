@@ -321,10 +321,13 @@ class SQLiteExtensionLifecycleRepository:
         *,
         expected_phase_revision: int,
         revocation_ref: str,
+        frozen_data: FrozenData | None = None,
     ) -> LifecycleOperation:
         _validate_wire("uuid", operation_id)
         _validate_revision(expected_phase_revision)
         _validate_ref(revocation_ref)
+        if frozen_data is not None and type(frozen_data) is not FrozenData:
+            raise LifecycleContractError()
         connection = self._connect()
         try:
             self._ensure_schema(connection)
@@ -338,11 +341,28 @@ class SQLiteExtensionLifecycleRepository:
                 LifecyclePhase.ACTIVATION_VALIDATED,
             ):
                 raise LifecycleConflictError("only a pre-switch operation can abort")
+            persisted_frozen = current.frozen_data
+            if frozen_data is not None:
+                previous = current.previous
+                if (
+                    current.request.action is LifecycleAction.INSTALL
+                    or previous is None
+                    or frozen_data.data_ref != previous.selected.data_ref
+                ):
+                    raise LifecycleConflictError(
+                        "abort freeze does not match the prior selection"
+                    )
+                if persisted_frozen is not None and frozen_data != persisted_frozen:
+                    raise LifecycleConflictError(
+                        "abort cannot change persisted freeze evidence"
+                    )
+                persisted_frozen = frozen_data
             receipt = LifecycleReceipt(current.request, current.previous, ReceiptOutcome.ABORTED)
             restoring = replace(
                 current,
                 phase=LifecyclePhase.RESTORING,
                 phase_revision=current.phase_revision + 1,
+                frozen_data=persisted_frozen,
                 intended_receipt=receipt,
             )
             self._store_operation(connection, restoring, revocation_ref=revocation_ref)
