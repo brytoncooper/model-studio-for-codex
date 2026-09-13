@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from typing import Any
+from model_deck.adapters.storage.sqlite_projection_dependency_expansions import ensure_dependency_expansions_schema
 
 AGGREGATE_TYPE_REGISTERED_MODEL = "registered_model"
 AGGREGATE_TYPE_CONNECTION = "connection"
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS projection_outbox (
 
 def ensure_projection_outbox_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_PROJECTION_OUTBOX_SCHEMA)
+    ensure_dependency_expansions_schema(conn)
 
 
 def canonical_payload_json(payload: dict[str, Any]) -> str:
@@ -94,7 +96,7 @@ def enqueue_connection_saved(
     provider_id: str,
     endpoint_config_ref: str | None,
     credential_ref: str | None,
-) -> None:
+) -> int:
     payload_json = canonical_payload_json(
         {
             "connection_id": connection_id,
@@ -104,7 +106,7 @@ def enqueue_connection_saved(
             "revision": revision,
         }
     )
-    _insert_outbox_event(
+    return _insert_outbox_event(
         conn,
         aggregate_type=AGGREGATE_TYPE_CONNECTION,
         aggregate_id=connection_id,
@@ -122,8 +124,8 @@ def _insert_outbox_event(
     aggregate_revision: int,
     event_kind: str,
     payload_json: str,
-) -> None:
-    conn.execute(
+) -> int:
+    cursor = conn.execute(
         "INSERT INTO projection_outbox "
         "(aggregate_type, aggregate_id, aggregate_revision, event_kind, payload_json, state) "
         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -136,3 +138,4 @@ def _insert_outbox_event(
             OUTBOX_STATE_PENDING,
         ),
     )
+    return cursor.lastrowid

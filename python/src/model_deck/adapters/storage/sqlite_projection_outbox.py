@@ -15,6 +15,15 @@ _PENDING_QUERY = (
     "WHERE state = 'pending' ORDER BY outbox_id ASC LIMIT ?"
 )
 
+_UNEXPANDED_PENDING_QUERY = (
+    "SELECT o.outbox_id, o.aggregate_type, o.aggregate_id, o.aggregate_revision, o.event_kind, o.payload_json "
+    "FROM projection_outbox o WHERE o.state = 'pending' AND NOT ("
+    "o.aggregate_type = 'connection' AND o.event_kind = 'connection.saved' AND EXISTS ("
+    "SELECT 1 FROM projection_dependency_expansions e WHERE e.outbox_id = o.outbox_id "
+    "AND e.connection_id = o.aggregate_id AND e.connection_revision = o.aggregate_revision "
+    "AND e.payload_json = o.payload_json)) ORDER BY o.outbox_id ASC LIMIT ?"
+)
+
 
 class SQLiteProjectionOutboxReader:
     """SQLite read-only implementation of ProjectionOutboxReader."""
@@ -38,7 +47,11 @@ class SQLiteProjectionOutboxReader:
         uri = db_path.resolve().as_uri() + "?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
         try:
-            rows = conn.execute(_PENDING_QUERY, (limit,)).fetchall()
+            has_expansions = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projection_dependency_expansions'"
+            ).fetchone() is not None
+            query = _UNEXPANDED_PENDING_QUERY if has_expansions else _PENDING_QUERY
+            rows = conn.execute(query, (limit,)).fetchall()
         finally:
             conn.close()
         return tuple(

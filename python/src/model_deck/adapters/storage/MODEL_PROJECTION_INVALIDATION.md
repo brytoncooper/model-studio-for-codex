@@ -3,7 +3,8 @@
 This storage collaborator keeps connection saves and dependent model projection
 intent in one SQLite transaction. `SQLiteConnectionRepository.save` acquires
 `BEGIN IMMEDIATE`, applies the connection change, queues `connection.saved`,
-calls `invalidate_connection_models`, stores its idempotency receipt and commits.
+calls `invalidate_connection_models`, records a dependency-expansion receipt,
+stores its idempotency receipt and commits.
 Any failure rolls back that complete mutation unit.
 
 `invalidate_connection_models(connection, *, connection_id)` requires the
@@ -35,14 +36,35 @@ Public command/dataclass signatures, SQL table shapes and outbox payload shapes
 are unchanged. The generic storage layer coordinates its own transaction;
 host consumers do not inspect model or connection private storage.
 
-The connection metadata event still needs a separate explicit acknowledgment
-contract. This module neither fabricates a file receipt nor solves pending-row
-starvation, materialization, consumer scheduling or filesystem/SQLite atomicity.
+`projection_dependency_expansions` stores one receipt per connection outbox ID,
+binding the canonical source payload, connection identity/revision and the exact
+list of expanded model IDs/revisions. `record_connection_expansion` requires an
+active transaction and checks every supplied model against its newly queued
+normal upsert. The connection repository supplies the complete return value of
+its invalidation step. Empty expansion is valid when no active models depend on
+the connection. The helper opens no second connection and commits nothing.
+
+The outbox reader excludes only `connection.saved` rows whose expansion receipt
+matches the source row. Their stored state remains `pending`; no file-applied
+receipt or artifact is invented. New connection metadata therefore cannot fill
+every consumer batch and starve its generated model events. Unknown event kinds
+and connection rows without matching proof remain visible. A historical database
+without the receipt table uses the original read-only pending query; reading
+never creates tables or acknowledges old events.
+
+Historical unexpanded rows need a separate recovery policy. Do not silently
+acknowledge them or create an empty receipt based on a later observation. A
+future transactional handler must recheck committed current connection/model
+state, generate fresh monotonic model invalidations and record expansion once;
+the policy for superseded connection revisions must be explicit. This handler
+is not implemented. Materialization, consumer scheduling and filesystem/SQLite
+atomicity remain outside this storage slice.
 
 Focused checks from `python/`:
 
 ```sh
 PYTHONPATH=src python -B -m unittest tests.engine.test_model_projection_invalidation
+PYTHONPATH=src python -B -m unittest tests.engine.test_projection_dependency_expansions
 ```
 
 Tests use temporary real SQLite databases and separate connections. They cover

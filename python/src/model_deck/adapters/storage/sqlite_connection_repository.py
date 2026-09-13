@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from model_deck.adapters.storage.sqlite_model_schema import ensure_model_schema
 from model_deck.adapters.storage.sqlite_model_projection_invalidation import invalidate_connection_models
+from model_deck.adapters.storage.sqlite_projection_dependency_expansions import record_connection_expansion
 
 from model_deck.adapters.storage.sqlite_outbox import (
     ensure_projection_outbox_schema,
@@ -75,7 +76,7 @@ class SQLiteConnectionRepository:
                     conn.commit()
                     return _deserialize_result(stored_result)
                 record = self._save_mutation(conn, command)
-                enqueue_connection_saved(
+                connection_event_id = enqueue_connection_saved(
                     conn,
                     connection_id=record.connection_id,
                     revision=record.revision,
@@ -83,7 +84,8 @@ class SQLiteConnectionRepository:
                     endpoint_config_ref=record.endpoint_config_ref,
                     credential_ref=record.credential_ref,
                 )
-                invalidate_connection_models(conn, connection_id=record.connection_id)
+                expanded_models = invalidate_connection_models(conn, connection_id=record.connection_id)
+                record_connection_expansion(conn, outbox_id=connection_event_id, expanded_models=expanded_models)
                 result_payload = _serialize_result(record)
                 conn.execute(
                     "INSERT INTO connection_idempotency "
