@@ -42,6 +42,7 @@ from model_deck.engine.runs.ports import (
     RunNotFoundError,
     RunRecord,
     RunRequest,
+    RunOptions,
     RunState,
     RunStateConflictError,
     RunTerminalConflictError,
@@ -56,6 +57,7 @@ from model_deck.engine.runs.ports import (
     ToolCallNotOutstandingError,
     ToolResultIdempotencyConflictError,
 )
+from model_deck.engine.runs.options import parse_run_options, run_options_to_wire
 from model_deck.engine.runs.usage_events import (
     CommittedUsageCursor, CommittedUsageCursorError, CommittedUsageEvent,
     CommittedUsagePage, CommittedUsageReadError,
@@ -78,6 +80,7 @@ def _reject_nonfinite_usage_constant(value: str) -> None:
 
 
 _EVENT_SCHEMA_VERSION = 1
+_RUN_OPTIONS_SCHEMA_VERSION = 1
 _ACTIVE_RUN_STATES: frozenset[str] = frozenset(
     {
         RunState.ACCEPTED.value,
@@ -116,6 +119,7 @@ CREATE TABLE IF NOT EXISTS runs (
     route_snapshot_json TEXT NOT NULL,
     input_json TEXT NOT NULL,
     tools_json TEXT NOT NULL,
+    options_json TEXT,
     idempotency_key TEXT NOT NULL,
     last_sequence INTEGER NOT NULL DEFAULT 0,
     terminal_outcome TEXT,
@@ -170,6 +174,15 @@ CREATE TABLE IF NOT EXISTS run_cancel_idempotency (
     FOREIGN KEY (run_id) REFERENCES runs(run_id)
 );
 """
+
+
+class StoredRunOptionsCompatibilityError(ValueError):
+    """Stored run options cannot be interpreted by this engine version."""
+
+
+_STORED_RUN_OPTIONS_ERROR = (
+    "stored run options require explicit compatibility handling"
+)
 
 
 class SQLiteSessionRunRepository:
@@ -417,11 +430,12 @@ class SQLiteSessionRunRepository:
                 route_json = _serialize_route_snapshot(command.route_snapshot)
                 input_json = _serialize_input(command.input)
                 tools_json = _serialize_tools(command.tools)
+                options_json = _serialize_run_options(command.options)
                 conn.execute(
                     "INSERT INTO runs (run_id, session_id, state, client_request_id, registration_id, "
-                    "principal_id, authorized_host_context_ref, route_snapshot_json, input_json, tools_json, "
+                    "principal_id, authorized_host_context_ref, route_snapshot_json, input_json, tools_json, options_json, "
                     "idempotency_key, last_sequence, terminal_outcome, terminal_error_json, dispatch_claimed, dispatch_token) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, NULL)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, NULL)",
                     (
                         run_id,
                         command.session_id,
@@ -433,6 +447,7 @@ class SQLiteSessionRunRepository:
                         route_json,
                         input_json,
                         tools_json,
+                        options_json,
                         command.admission_key.idempotency_key,
                     ),
                 )
@@ -829,7 +844,8 @@ class SQLiteSessionRunRepository:
             try:
                 dispatchable: list[RunRequest] = []
                 rows = conn.execute(
-                    "SELECT run_id, session_id, client_request_id, idempotency_key, route_snapshot_json, input_json, tools_json "
+                    "SELECT run_id, session_id, client_request_id, idempotency_key, "
+                    "route_snapshot_json, input_json, tools_json, options_json "
                     "FROM runs WHERE state = ? AND dispatch_claimed = 0",
                     (RunState.ACCEPTED.value,),
                 ).fetchall()
@@ -843,6 +859,7 @@ class SQLiteSessionRunRepository:
                             route_snapshot=_deserialize_route_snapshot(row[4]),
                             input=_deserialize_input(row[5]),
                             tools=_deserialize_tools(row[6]),
+                            options=_deserialize_run_options(row[7]),
                         )
                     )
                 interrupted: list[str] = []
@@ -919,6 +936,7 @@ class SQLiteSessionRunRepository:
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript(_SCHEMA_SQL)
+        _ensure_run_options_column(conn)
         ensure_projection_outbox_schema(conn)
 
     def _load_run(self, conn: sqlite3.Connection, run_id: str) -> RunRecord:
@@ -1057,6 +1075,47 @@ def _deserialize_input(payload: str) -> NormalizedRunInput:
     if not isinstance(messages, list):
         raise ValueError("invalid stored input")
     return NormalizedRunInput(messages=tuple(messages))
+
+
+def _ensure_run_options_column(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+    if "options_json" in columns:
+        return
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN options_json TEXT")
+    except sqlite3.OperationalError:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+        if "options_json" not in columns:
+            raise
+
+
+def _serialize_run_options(options: RunOptions) -> str:
+    return _canonical_json(
+        {
+            "schema_version": _RUN_OPTIONS_SCHEMA_VERSION,
+            "options": run_options_to_wire(options),
+        }
+    )
+
+
+def _deserialize_run_options(payload: str | None) -> RunOptions:
+    if payload is None:
+        return RunOptions()
+    try:
+        if type(payload) is not str:
+            raise TypeError("stored options are not JSON text")
+        data = json.loads(payload, parse_constant=_reject_nonfinite_usage_constant)
+        if (
+            type(data) is not dict
+            or set(data) != {"schema_version", "options"}
+            or type(data["schema_version"]) is not int
+            or data["schema_version"] != _RUN_OPTIONS_SCHEMA_VERSION
+            or type(data["options"]) is not dict
+        ):
+            raise ValueError("unsupported stored run options shape")
+        return parse_run_options(data["options"])
+    except (ValueError, TypeError, RecursionError, UnicodeError):
+        raise StoredRunOptionsCompatibilityError(_STORED_RUN_OPTIONS_ERROR) from None
 
 
 def _serialize_tools(tools: tuple[ToolDefinition, ...]) -> str:
