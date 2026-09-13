@@ -58,7 +58,7 @@ Concise index of actually existing systems. Every link resolves to an existing g
 | Registered route resolution: joins model repository, connection repository, and route-definition table; no I/O | [routing adapter README](../../python/src/model_deck/adapters/routing/README.md) |
 | Adapters overview | [adapters README](../../python/src/model_deck/adapters/README.md) |
 | Host-settings storage adapter | [storage HOST_SETTINGS](../../python/src/model_deck/adapters/storage/HOST_SETTINGS.md) |
-| SQLite storage adapters (outbox, plugin jobs, plugin data implementations) | Guide not yet written |
+| SQLite storage adapters: ownership, transactions, recovery and extension points | [storage guide](../../python/src/model_deck/adapters/storage/README.md) |
 
 ## Hosts and providers
 
