@@ -34,7 +34,7 @@ commit counts or the number of task headings.
 | B11 Migration | Preview supports preparation | Offline apply, recovery and rollback rehearsal |
 | B12 Sessions/runs | Durable fixture run path and exclusive-lock startup recovery integrated | Complete run/provider gate |
 | B13 HTTP providers | Streaming and request helpers written | Actual HTTP execution, fallback and parity |
-| B14 Cursor provider | Execution coordinator written and tested | Actual SDK channel binding and parity |
+| B14 Cursor provider | Coordinator and injected legacy-process adapter independently reviewed | Root SDK composition and parity |
 | B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
 | B16 Usage/evidence | Genuine engine usage recording/query storage reviewed; legacy implementations retained | Public query/event composition, pricing and refresh jobs |
 | B17 Kernel | Generic registry written | Built-in composition and generic engine dispatch |
@@ -124,6 +124,12 @@ and 10 tool-result runs with zero failures. The real ZIP/staging/process pipelin
 uses isolated imports and actual engine repositories. The terminal-race repair
 preserves the committed winner without duplicate publication; unrelated failures
 propagate. Credential brokering and live provider parity remain pending.
+
+Cursor process adapter follow-up: independent acceptance passed 70 focused tests
+and composed probes. Existing payload and usage logic remain injected; synchronous
+tool-result callbacks, early failures, exactly-once cleanup and explicit false,
+zero, empty and null arguments are preserved. Missing arguments fail closed.
+Root SDK composition and live provider qualification remain pending.
 
 Staging packager `456a465`: independent review passed 28 tests on macOS Python
 3.12, including benign child cleanup and timeout fixtures. Explicit offline
