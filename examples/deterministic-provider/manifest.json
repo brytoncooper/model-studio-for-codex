@@ -1,0 +1,16 @@
+{
+  "manifest_version": 1,
+  "id": "org.example.deterministic-provider",
+  "version": "1.0.0",
+  "plugin_api": {"major": 1, "minimum_minor": 0},
+  "entrypoint": {"runtime": "python", "path": "plugin.py"},
+  "permissions": [],
+  "contributes": {
+    "providers": [{
+      "id": "org.example.deterministic-provider",
+      "port": "provider.execution/v1",
+      "execution_mode": "custom",
+      "features": ["tools"]
+    }]
+  }
+}
