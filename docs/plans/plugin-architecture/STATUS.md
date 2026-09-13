@@ -40,7 +40,7 @@ commit counts or the number of task headings.
 | B17 Kernel | Generic composed operations integrated with authenticated dispatch and discovery | Migrate static built-ins; external schema/principal lifecycle integration |
 | B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
-| B20 Package lifecycle | Artifact staging and recoverable lifecycle contracts reviewed; service/storage underway | Implement and integrate lifecycle transactions, activation and versioned data |
+| B20 Package lifecycle | Artifact staging, recoverable lifecycle contracts and SQLite lifecycle transactions reviewed; service in review | Integrate lifecycle service, activation and versioned data |
 | B21 Extension UI | Declarative panel schema reviewed; native values/validation underway | Renderer, public panel delivery and extension management |
 | B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
 | B23 Author tooling | Protocol contracts exist | SDK, author workflow and JavaScript fixture |
@@ -191,10 +191,22 @@ lookup without source, and staged application behavior remain unverified.
 
 ## Current independent work
 
-- Real archived-provider integration and cancellation-race repair.
-- Cursor process adapter and tool-event wire integration acceptance.
-- Durable usage composition and committed projection composition scoping.
-- Generic kernel composition and restricted-execution feasibility.
+- Extension lifecycle service review and cross-process storage tests.
+- Provider bootstrap validation repair and independent review.
+- Native panel validation repair after independent Swift tests found failures.
+- Notebook protocol and HTTP provider composition boundary checks.
+
+SQLite lifecycle repository `755ef2a`: 19 focused repository/port tests passed
+in implementation and independent Sol review. Claims, phase revisions, selected
+state, restoration intent and exact retry receipts persist atomically. Service
+composition, real activation/data effects and cross-process qualification remain
+separate requirements; this commit does not close B20.
+
+Extension wire contracts now consistently require revision and retry identity
+for all six mutations, and expose revision on get. Independent Sol review passed
+38 validation cases and verified canonical/Python/Swift copies match. The panel
+schema is also bundled in both languages. These contracts do not establish that
+extension commands are wired into public dispatch.
 
 The source audit exposed real missing integration and verification work. Earlier
 conversation percentages were estimates, not a measured delivery baseline; this

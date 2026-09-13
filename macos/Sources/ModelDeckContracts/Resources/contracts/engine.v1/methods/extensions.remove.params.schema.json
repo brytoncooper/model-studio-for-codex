@@ -16,6 +16,7 @@
   },
   "required": [
     "extension_id",
-    "idempotency_key"
+    "idempotency_key",
+    "expected_revision"
   ]
 }

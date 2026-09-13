@@ -19,10 +19,14 @@
     "version": {
       "type": "string",
       "maxLength": 64
+    },
+    "revision": {
+      "$ref": "../../common/types.schema.json#/definitions/revision"
     }
   },
   "required": [
     "extension_id",
-    "status"
+    "status",
+    "revision"
   ]
 }

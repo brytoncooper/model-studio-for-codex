@@ -10,10 +10,14 @@
     },
     "idempotency_key": {
       "$ref": "../../common/types.schema.json#/definitions/idempotency_key"
+    },
+    "expected_revision": {
+      "$ref": "../../common/types.schema.json#/definitions/revision"
     }
   },
   "required": [
     "archive_path",
-    "idempotency_key"
+    "idempotency_key",
+    "expected_revision"
   ]
 }

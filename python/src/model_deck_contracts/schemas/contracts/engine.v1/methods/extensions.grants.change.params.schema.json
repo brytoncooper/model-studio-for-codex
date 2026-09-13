@@ -17,11 +17,15 @@
     },
     "expected_revision": {
       "$ref": "../../common/types.schema.json#/definitions/revision"
+    },
+    "idempotency_key": {
+      "$ref": "../../common/types.schema.json#/definitions/idempotency_key"
     }
   },
   "required": [
     "extension_id",
     "approved_scopes",
-    "expected_revision"
+    "expected_revision",
+    "idempotency_key"
   ]
 }

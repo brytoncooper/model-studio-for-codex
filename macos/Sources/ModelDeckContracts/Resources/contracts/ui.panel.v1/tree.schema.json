@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/ui.panel.v1/tree.schema.json",
+  "title": "Declarative panel tree",
+  "description": "DRAFT generic panel tree. Structural validation only. A later semantic validator enforces max depth 16, max 256 nodes, unique node ids, field_bindings targets that resolve to text_input nodes in the same tree, and button operation_id values that resolve through trusted discovery or authority. A button never dictates permission or confirmation behavior; actual host policy governs. Button params are static JSON plus explicit input bindings; there is no expression DSL. A param key appearing in both params and field_bindings MUST be rejected by the semantic validator; the two maps are never merged and neither overrides the other. Ready trees require root; non-ready states (loading, empty, error, unavailable) may omit root or retain a stale root, and the renderer MUST disable all button actions and text_input edits unless state is ready. Vertical stack layout only. Session Notebook panels are one example use, not the purpose.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "panel_id": {
+      "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+    },
+    "revision": {
+      "$ref": "../common/types.schema.json#/definitions/revision"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "loading",
+        "ready",
+        "empty",
+        "error",
+        "unavailable"
+      ]
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "root": {
+      "$ref": "#/definitions/node"
+    }
+  },
+  "required": [
+    "panel_id",
+    "revision",
+    "title",
+    "state"
+  ],
+  "definitions": {
+    "node_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "node": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/stack_node"
+        },
+        {
+          "$ref": "#/definitions/text_node"
+        },
+        {
+          "$ref": "#/definitions/text_input_node"
+        },
+        {
+          "$ref": "#/definitions/button_node"
+        }
+      ]
+    },
+    "stack_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/node_id"
+        },
+        "kind": {
+          "const": "stack"
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/node"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "children"
+      ]
+    },
+    "text_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/node_id"
+        },
+        "kind": {
+          "const": "text"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "value"
+      ]
+    },
+    "text_input_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/node_id"
+        },
+        "kind": {
+          "const": "text_input"
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "multiline": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "value",
+        "multiline",
+        "label"
+      ]
+    },
+    "button_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/node_id"
+        },
+        "kind": {
+          "const": "button"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operation_id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id"
+        },
+        "params": {
+          "type": "object",
+          "maxProperties": 64,
+          "additionalProperties": {
+            "$ref": "../common/types.schema.json#/definitions/json_value"
+          }
+        },
+        "field_bindings": {
+          "type": "object",
+          "maxProperties": 64,
+          "additionalProperties": {
+            "$ref": "#/definitions/node_id"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "label",
+        "operation_id"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "state": {
+              "const": "ready"
+            }
+          },
+          "required": [
+            "root"
+          ]
+        },
+        {
+          "properties": {
+            "state": {
+              "enum": [
+                "loading",
+                "empty",
+                "error",
+                "unavailable"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
