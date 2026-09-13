@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/notes.delete.output.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "deleted"
+  ],
+  "properties": {
+    "deleted": {
+      "type": "boolean"
+    }
+  }
+}

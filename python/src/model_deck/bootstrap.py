@@ -22,6 +22,7 @@ from model_deck.adapters.transport.unix_server import UnixSocketEngineServer
 from model_deck.adapters.transport.framing import encode_frame
 from model_deck.engine.dispatch import EngineDispatch
 from model_deck.engine.kernel_composition import KernelComposition
+from model_deck.plugins.external_host import ExternalExtensionHost
 from model_deck.engine.connections.use_cases import ListConnectionsUseCase, SaveConnectionUseCase
 from model_deck.engine.model_library.use_cases import (
     ListModelsUseCase,
@@ -74,6 +75,12 @@ def _canonical_uuid_spelling(value: str) -> bool:
     except ValueError:
         return False
     return str(parsed).casefold() == value.casefold()
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    left = left.resolve()
+    right = right.resolve()
+    return left == right or left in right.parents or right in left.parents
 
 
 def _validate_capability_snapshot_ref(value: object) -> str | None:
@@ -147,9 +154,32 @@ def build_engine_server(
     kernel_composition: KernelComposition | None = None,
     provider_execution: ProviderExecutionPort | None = None,
     provider_route_definitions: Mapping[str, ProviderRouteDefinition] | None = None,
+    enable_external_extensions: bool = False,
+    extension_state_root: Path | None = None,
+    extension_artifact_root: Path | None = None,
 ) -> EngineRuntime:
     if enable_fixture_runs and not enable_application_state:
         raise ValueError("enable_fixture_runs requires enable_application_state")
+    if enable_external_extensions and not enable_application_state:
+        raise ValueError("external extensions require application state")
+    extension_roots_supplied = extension_state_root is not None or extension_artifact_root is not None
+    if enable_external_extensions != extension_roots_supplied:
+        raise ValueError("external extension state and artifact roots are required together")
+    if enable_external_extensions:
+        if extension_state_root is None or extension_artifact_root is None:
+            raise ValueError("external extension state and artifact roots are required together")
+        validate_isolated_roots(
+            extension_state_root,
+            extension_artifact_root,
+            socket_root,
+            source_root=source_root or contracts_repo_root(),
+        )
+        if any(
+            _paths_overlap(extension_root, application_root)
+            for extension_root in (extension_state_root, extension_artifact_root)
+            for application_root in (state_root, artifact_root)
+        ):
+            raise ValueError("external extension roots must be distinct from application roots")
     if (provider_execution is None) != (provider_route_definitions is None):
         raise ValueError("provider execution and route definitions must be supplied together")
     injected_routes = None
@@ -198,6 +228,7 @@ def build_engine_server(
     event_replay = None
     usage_query = None
     host_settings = None
+    external_extension_host = None
     if host_settings_document is not None and host_settings_caller is not None:
         settings_database = paths.state_root() / "engine" / "host-settings.sqlite3"
         host_settings = HostSettingsService(
@@ -283,6 +314,13 @@ def build_engine_server(
         )
         list_models = ListModelsUseCase(repository, catalog_reader=catalog_reader)
 
+    if enable_external_extensions:
+        assert extension_state_root is not None and extension_artifact_root is not None
+        external_extension_host = ExternalExtensionHost(
+            extension_state_root,
+            artifact_root=extension_artifact_root,
+        )
+
     dispatch = EngineDispatch(
         list_models,
         enrollment,
@@ -306,6 +344,7 @@ def build_engine_server(
         kernel_composition=kernel_composition,
         response_preflight=encode_frame,
         usage_query=usage_query,
+        external_extension_host=external_extension_host,
     )
 
     socket_path = socket_root / "engine.sock"
@@ -347,6 +386,7 @@ def build_engine_server(
         rendezvous_payload_builder=rendezvous_payload_builder,
         rendezvous_publish=rendezvous_publish,
         startup_callback=startup_callback,
+        shutdown_callback=(external_extension_host.close if external_extension_host is not None else None),
     )
     return EngineRuntime(
         server=server,

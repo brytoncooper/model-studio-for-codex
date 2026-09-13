@@ -82,6 +82,13 @@ from model_deck.engine.host_settings.ports import (
 from model_deck.engine.host_settings.service import HostSettingsService
 from model_deck.engine.kernel_composition import KernelComposition, KernelInputError, KernelInvocationError
 from model_deck.kernel import CompositionError, GrantDeniedError
+from model_deck.engine.extensions.ports import (
+    ExtensionRecord,
+    ExtensionStatus,
+    LifecycleReceipt,
+    ReceiptOutcome,
+)
+from model_deck.plugins.external_host import ExternalExtensionHost, HostConflictError, HostNotServingError
 from model_deck.engine.usage.ports import (
     UsageConflictError, UsageEventMismatchError, UsageQueryValidationError, UsageResourceExhaustedError,
 )
@@ -138,6 +145,19 @@ _HOST_SETTINGS_METHODS = frozenset(
         "engine.v1.hosts.settings.validate",
         "engine.v1.hosts.settings.preview",
         "engine.v1.hosts.settings.save",
+    }
+)
+
+_EXTERNAL_EXTENSION_METHODS = frozenset(
+    {
+        "engine.v1.extensions.install",
+        "engine.v1.extensions.enable",
+        "engine.v1.extensions.disable",
+        "engine.v1.extensions.get",
+        "engine.v1.extensions.list",
+        "engine.v1.operations.invoke",
+        "engine.v1.ui.contributions.list",
+        "engine.v1.ui.panel.get",
     }
 )
 
@@ -296,6 +316,24 @@ _OPERATION_CATALOG: tuple[dict[str, str], ...] = (
         "output_schema_id": "contracts/engine.v1/methods/hosts.settings.save.result.schema.json",
         "effect": "write",
     },
+    *(
+        {
+            "operation_id": f"engine.v1.{name}",
+            "input_schema_id": f"contracts/engine.v1/methods/{name}.params.schema.json",
+            "output_schema_id": f"contracts/engine.v1/methods/{name}.result.schema.json",
+            "effect": effect,
+        }
+        for name, effect in (
+            ("extensions.install", "write"),
+            ("extensions.enable", "write"),
+            ("extensions.disable", "write"),
+            ("extensions.get", "read"),
+            ("extensions.list", "read"),
+            ("operations.invoke", "write"),
+            ("ui.contributions.list", "read"),
+            ("ui.panel.get", "read"),
+        )
+    ),
 )
 
 
@@ -382,6 +420,7 @@ class EngineDispatch:
         kernel_composition: KernelComposition | None = None,
         response_preflight: Callable[[dict[str, Any]], Any] | None = None,
         usage_query: ReconciledUsageQueryUseCase | None = None,
+        external_extension_host: ExternalExtensionHost | None = None,
     ) -> None:
         self._list_models = list_models
         self._identity = identity
@@ -405,6 +444,7 @@ class EngineDispatch:
         self._kernel_composition = kernel_composition
         self._response_preflight = response_preflight
         self._usage_query = usage_query
+        self._external_extension_host = external_extension_host
         self._implemented_methods = self._build_implemented_methods()
         self._kernel_methods: frozenset[str] = frozenset()
         if kernel_composition is not None:
@@ -458,6 +498,8 @@ class EngineDispatch:
             methods.update(_EVENT_METHODS)
         if self._host_settings is not None:
             methods.update(_HOST_SETTINGS_METHODS)
+        if self._external_extension_host is not None:
+            methods.update(_EXTERNAL_EXTENSION_METHODS)
         return frozenset(methods)
 
     def drain_notifications(self, connection_id: int) -> tuple[dict[str, Any], ...]:
@@ -569,7 +611,7 @@ class EngineDispatch:
         if method == "engine.v1.health":
             return self._success(frame.get("id"), {"status": "ok"})
         if method == "engine.v1.operations.list":
-            return self._operations_list(frame.get("id"))
+            return self._operations_list(frame.get("id"), params)
         if method == "engine.v1.capabilities.get":
             return self._success(frame.get("id"), {"features": SERVER_FEATURES})
         if method == "engine.v1.models.list":
@@ -614,6 +656,8 @@ class EngineDispatch:
             return self._hosts_settings(frame.get("id"), params, connection_id, "preview")
         if method == "engine.v1.hosts.settings.save":
             return self._hosts_settings(frame.get("id"), params, connection_id, "save")
+        if method in _EXTERNAL_EXTENSION_METHODS:
+            return self._external_extension(frame.get("id"), method, params, connection_id)
         return self._domain_error(frame.get("id"), "internal", "unhandled method")
 
     def _hello(self, request_id: Any, params: Mapping[str, Any], connection_id: int) -> dict[str, Any]:
@@ -702,10 +746,45 @@ class EngineDispatch:
         ]
         if self._kernel_composition is not None:
             operations.extend(self._kernel_composition.catalog())
+        if self._external_extension_host is not None:
+            operations.extend(
+                {
+                    "operation_id": descriptor["id"],
+                    "input_schema_id": descriptor["input_schema"],
+                    "output_schema_id": descriptor["output_schema"],
+                    "effect": descriptor["effect"],
+                }
+                for descriptor in self._external_extension_host.operation_catalog()
+            )
         return operations
 
-    def _operations_list(self, request_id: Any) -> dict[str, Any]:
-        operations = self._operation_catalog()
+    def _operations_list(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/operations.list.params.schema.json",
+                dict(params),
+            )
+        except SchemaValidationError:
+            return self._error(request_id, -32602, "invalid params")
+        try:
+            plugin_id = params.get("plugin_id")
+            if plugin_id is None:
+                operations = self._operation_catalog()
+            elif self._external_extension_host is None:
+                operations = []
+            else:
+                operations = [
+                    {
+                        "operation_id": descriptor["id"],
+                        "input_schema_id": descriptor["input_schema"],
+                        "output_schema_id": descriptor["output_schema"],
+                        "effect": descriptor["effect"],
+                    }
+                    for descriptor in self._external_extension_host.operation_catalog()
+                    if descriptor["extension_id"] == plugin_id
+                ]
+        except Exception:
+            return self._domain_error(request_id, "internal", "operation catalog unavailable")
         result = {"operations": operations}
         try:
             validate_schema_ref(
@@ -1102,6 +1181,128 @@ class EngineDispatch:
         if not isinstance(result, dict):
             return self._domain_error(request_id, "internal", "settings result unavailable")
         return self._success(request_id, result)
+
+    @staticmethod
+    def _public_extension_record(record: ExtensionRecord) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "extension_id": record.extension_id,
+            "status": record.status.value,
+            "revision": record.revision,
+        }
+        version = record.selected.executable.version
+        if version:
+            result["version"] = version
+        return result
+
+    def _external_extension(
+        self,
+        request_id: Any,
+        method: str,
+        params: Mapping[str, Any],
+        connection_id: int,
+    ) -> dict[str, Any]:
+        host = self._external_extension_host
+        if host is None:
+            return self._domain_error(request_id, "unsupported_capability", "method not configured")
+        principal = self._principal_for_connection(request_id, connection_id)
+        if isinstance(principal, dict):
+            return principal
+        method_name = method.removeprefix("engine.v1.")
+        params_schema = f"contracts/engine.v1/methods/{method_name}.params.schema.json"
+        result_schema = f"contracts/engine.v1/methods/{method_name}.result.schema.json"
+        try:
+            validate_schema_ref(params_schema, dict(params))
+        except SchemaValidationError:
+            return self._error(request_id, -32602, "invalid params")
+        try:
+            if method_name == "extensions.install":
+                receipt = host.install(
+                    params["archive_path"],
+                    principal=principal,
+                    idempotency_key=params["idempotency_key"],
+                    expected_revision=params["expected_revision"],
+                )
+                if (
+                    not isinstance(receipt, LifecycleReceipt)
+                    or receipt.record is None
+                    or receipt.outcome is not ReceiptOutcome.APPLIED
+                ):
+                    raise HostConflictError("lifecycle operation did not settle")
+                result = {
+                    "extension_id": receipt.record.extension_id,
+                    "version": receipt.record.selected.executable.version,
+                }
+            elif method_name in ("extensions.enable", "extensions.disable"):
+                lifecycle_method = host.enable if method_name.endswith("enable") else host.disable
+                receipt = lifecycle_method(
+                    params["extension_id"],
+                    principal=principal,
+                    idempotency_key=params["idempotency_key"],
+                    expected_revision=params["expected_revision"],
+                )
+                if (
+                    not isinstance(receipt, LifecycleReceipt)
+                    or receipt.record is None
+                    or receipt.outcome is not ReceiptOutcome.APPLIED
+                ):
+                    raise HostConflictError("lifecycle operation did not settle")
+                result = {"enabled": receipt.record.status is ExtensionStatus.ENABLED}
+            elif method_name == "extensions.get":
+                record = host.get_extension(params["extension_id"])
+                if record.status is ExtensionStatus.REMOVED:
+                    raise KeyError(params["extension_id"])
+                result = self._public_extension_record(record)
+            elif method_name == "extensions.list":
+                result = {
+                    "extensions": [
+                        {"extension_id": record.extension_id, "status": record.status.value}
+                        for record in host.list_extensions()
+                        if record.status is not ExtensionStatus.REMOVED
+                    ]
+                }
+            elif method_name == "operations.invoke":
+                output = host.invoke(
+                    params["operation"],
+                    params["input"],
+                    principal=principal,
+                    idempotency_key=params["idempotency_key"],
+                )
+                result = {"output": output}
+            elif method_name == "ui.contributions.list":
+                extension_id = params.get("extension_id")
+                panels = host.ui_contributions()
+                result = {
+                    "panels": [
+                        {"panel_id": panel["id"], **({"title": panel["title"]} if "title" in panel else {})}
+                        for panel in panels
+                        if extension_id is None or panel["extension_id"] == extension_id
+                    ]
+                }
+            elif method_name == "ui.panel.get":
+                result = {"panel": host.panel_get(params["panel_id"])}
+            else:
+                return self._domain_error(request_id, "unsupported_capability", "method not configured")
+        except HostNotServingError:
+            return self._domain_error(request_id, "plugin_unavailable", "extension operation unavailable")
+        except KeyError:
+            return self._domain_error(request_id, "not_found", "extension resource not found")
+        except HostConflictError:
+            return self._domain_error(request_id, "conflict", "extension operation conflict")
+        except (OSError, ValueError):
+            return self._domain_error(request_id, "invalid_argument", "extension request invalid")
+        except Exception:
+            return self._domain_error(request_id, "internal", "extension operation failed")
+        try:
+            validate_schema_ref(result_schema, result)
+        except SchemaValidationError:
+            return self._domain_error(request_id, "internal", "extension result unavailable")
+        response = self._success(request_id, result)
+        if self._response_preflight is not None:
+            try:
+                self._response_preflight(response)
+            except Exception:
+                return self._domain_error(request_id, "internal", "extension result unavailable")
+        return response
 
     def _events_subscribe(
         self, request_id: Any, params: Mapping[str, Any], connection_id: int

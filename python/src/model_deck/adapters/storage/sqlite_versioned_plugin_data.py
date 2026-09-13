@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS versioned_plugin_data_freezes (
     selection_digest TEXT NOT NULL,
     activation_generation INTEGER NOT NULL,
     freeze_purpose TEXT NOT NULL CHECK (freeze_purpose IN ('selected', 'staged_candidate')),
+    freeze_incarnation INTEGER NOT NULL DEFAULT 0 CHECK (freeze_incarnation >= 0),
     freeze_ref TEXT NOT NULL UNIQUE,
     final_revision INTEGER NOT NULL,
     PRIMARY KEY (operation_id, data_ref)
@@ -194,34 +195,90 @@ class SQLiteVersionedPluginDataStore:
                     raise LifecycleConflictError("selected activation generation is stale")
                 replay = connection.execute(
                     "SELECT namespace, artifact_id, selection_digest, activation_generation, "
-                    "freeze_purpose, freeze_ref, final_revision "
+                    "freeze_purpose, freeze_incarnation, freeze_ref, final_revision "
                     "FROM versioned_plugin_data_freezes "
                     "WHERE operation_id = ? AND data_ref = ?",
                     (operation_id, selected.data_ref),
                 ).fetchone()
                 if replay is not None:
                     if (
-                        replay[0] != namespace
-                        or replay[1] != selected.executable.artifact_id
-                        or replay[2] != selection_digest
-                        or replay[3] != selected.activation_generation
-                        or replay[4] != _freeze_purpose(row)
+                        replay["namespace"] != namespace
+                        or replay["artifact_id"] != selected.executable.artifact_id
+                        or replay["selection_digest"] != selection_digest
+                        or replay["activation_generation"]
+                        != selected.activation_generation
                     ):
                         raise LifecycleConflictError("freeze binding changed")
+                    current_purpose = _freeze_purpose(row)
+                    if replay["freeze_purpose"] != current_purpose:
+                        if not self._can_refresh_consumed_candidate_freeze(
+                            connection,
+                            operation_id,
+                            selected,
+                            row,
+                            replay,
+                        ):
+                            raise LifecycleConflictError(
+                                "freeze receipt is no longer current"
+                            )
+                        previous_incarnation = replay["freeze_incarnation"]
+                        if (
+                            type(previous_incarnation) is not int
+                            or previous_incarnation < 0
+                        ):
+                            raise LifecycleConflictError(
+                                "freeze receipt incarnation is invalid"
+                            )
+                        freeze_incarnation = previous_incarnation + 1
+                        freeze_ref = _freeze_ref(
+                            operation_id,
+                            selected.data_ref,
+                            freeze_incarnation,
+                        )
+                        connection.execute(
+                            "UPDATE versioned_plugin_data_generations SET "
+                            "writable = 0, frozen = 1, active_freeze_ref = ?, "
+                            "thaw_operation_id = NULL WHERE data_ref = ?",
+                            (freeze_ref, selected.data_ref),
+                        )
+                        connection.execute(
+                            "UPDATE versioned_plugin_data_freezes SET "
+                            "freeze_purpose = ?, freeze_incarnation = ?, "
+                            "freeze_ref = ?, final_revision = ? "
+                            "WHERE operation_id = ? AND data_ref = ?",
+                            (
+                                current_purpose,
+                                freeze_incarnation,
+                                freeze_ref,
+                                row["dataset_revision"],
+                                operation_id,
+                                selected.data_ref,
+                            ),
+                        )
+                        connection.commit()
+                        return FrozenData(
+                            freeze_ref,
+                            selected.data_ref,
+                            row["dataset_revision"],
+                        )
                     if (
                         row["frozen"] != 1
                         or row["writable"] != 0
-                        or row["dataset_revision"] != replay[6]
-                        or row["active_freeze_ref"] != replay[5]
+                        or row["dataset_revision"] != replay["final_revision"]
+                        or row["active_freeze_ref"] != replay["freeze_ref"]
                     ):
                         raise LifecycleConflictError(
                             "freeze receipt is no longer current"
                         )
                     connection.commit()
-                    return FrozenData(replay[5], selected.data_ref, replay[6])
+                    return FrozenData(
+                        replay["freeze_ref"],
+                        selected.data_ref,
+                        replay["final_revision"],
+                    )
                 if row["frozen"] == 1:
                     raise LifecycleConflictError("data generation is frozen by another operation")
-                freeze_ref = _freeze_ref(operation_id, selected.data_ref)
+                freeze_ref = _freeze_ref(operation_id, selected.data_ref, 0)
                 connection.execute(
                     "UPDATE versioned_plugin_data_generations SET writable = 0, frozen = 1, "
                     "activation_generation = COALESCE(activation_generation, ?), "
@@ -232,8 +289,8 @@ class SQLiteVersionedPluginDataStore:
                 connection.execute(
                     "INSERT INTO versioned_plugin_data_freezes "
                     "(operation_id, namespace, data_ref, artifact_id, selection_digest, "
-                    "activation_generation, freeze_purpose, freeze_ref, final_revision) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "activation_generation, freeze_purpose, freeze_incarnation, freeze_ref, "
+                    "final_revision) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
                     (
                         operation_id,
                         namespace,
@@ -590,6 +647,32 @@ class SQLiteVersionedPluginDataStore:
     @staticmethod
     def _ensure_schema(connection: sqlite3.Connection) -> None:
         connection.executescript(_SCHEMA_SQL)
+        freeze_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(versioned_plugin_data_freezes)"
+            )
+        }
+        if "freeze_incarnation" in freeze_columns:
+            return
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            freeze_columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(versioned_plugin_data_freezes)"
+                )
+            }
+            if "freeze_incarnation" not in freeze_columns:
+                connection.execute(
+                    "ALTER TABLE versioned_plugin_data_freezes ADD COLUMN "
+                    "freeze_incarnation INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK (freeze_incarnation >= 0)"
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
     @staticmethod
     def _load_generation(
@@ -651,6 +734,36 @@ class SQLiteVersionedPluginDataStore:
         ).fetchone()
         if receipt is None:
             raise LifecycleConflictError("frozen source evidence was not found")
+
+    @staticmethod
+    def _can_refresh_consumed_candidate_freeze(
+        connection: sqlite3.Connection,
+        operation_id: str,
+        selected: SelectedInstallation,
+        generation: sqlite3.Row,
+        receipt: sqlite3.Row,
+    ) -> bool:
+        if (
+            receipt["freeze_purpose"] != "staged_candidate"
+            or generation["state"] != "selected"
+            or generation["binding_valid"] != 1
+            or generation["frozen"] != 0
+            or generation["active_freeze_ref"] is not None
+            or generation["thaw_operation_id"] is not None
+            or generation["stage_operation_id"] != operation_id
+        ):
+            return False
+        activation = connection.execute(
+            "SELECT artifact_id, selection_digest, expected_data_revision "
+            "FROM versioned_plugin_data_activations "
+            "WHERE operation_id = ? AND data_ref = ? AND activation_generation = ?",
+            (operation_id, selected.data_ref, selected.activation_generation),
+        ).fetchone()
+        return activation is not None and tuple(activation) == (
+            selected.executable.artifact_id,
+            _selection_digest(selected),
+            receipt["final_revision"],
+        )
 
     @staticmethod
     def _is_same_operation_thawed_restore(
@@ -943,9 +1056,10 @@ def _staged_data_ref(operation_id: str) -> str:
     return f"ref:plugin-data.{operation_id}"
 
 
-def _freeze_ref(operation_id: str, data_ref: str) -> str:
+def _freeze_ref(operation_id: str, data_ref: str, incarnation: int) -> str:
     suffix = hashlib.sha256(data_ref.encode("utf-8")).hexdigest()[:16]
-    return f"ref:plugin-data-freeze.{operation_id}.{suffix}"
+    base_ref = f"ref:plugin-data-freeze.{operation_id}.{suffix}"
+    return base_ref if incarnation == 0 else f"{base_ref}.{incarnation}"
 
 
 def _migration_receipt_ref(operation_id: str) -> str:

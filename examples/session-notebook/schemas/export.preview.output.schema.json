@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/export.preview.output.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "markdown",
+    "note_count"
+  ],
+  "properties": {
+    "markdown": {
+      "type": "string",
+      "maxLength": 1048576
+    },
+    "note_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 200
+    }
+  }
+}

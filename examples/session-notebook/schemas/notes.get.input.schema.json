@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/notes.get.input.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "note_id"
+  ],
+  "properties": {
+    "note_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

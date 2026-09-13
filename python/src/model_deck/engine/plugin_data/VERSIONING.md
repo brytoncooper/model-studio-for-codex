@@ -30,6 +30,15 @@ was already non-writable because the extension was disabled. Repeating it return
 the original freeze evidence and final dataset revision. A different operation or
 stale activation generation conflicts rather than borrowing that evidence.
 
+There is one narrow second-freeze case for rollback. An operation may first freeze
+its sealed staged candidate for validation, thaw that proof, and select the exact
+candidate through its own activation receipt. If the same operation later freezes
+that now-selected generation for rollback, the store issues a new durable freeze
+incarnation. Replay returns the new proof while it remains current. The consumed
+validation proof can no longer thaw the generation or serve as a stage source,
+even when no intervening data write changed the dataset revision. A selected freeze
+that was merely thawed and reactivated does not qualify for this transition.
+
 ## Revisions and staging
 
 Wire-visible entry revisions remain per key and retain their current compare-and-

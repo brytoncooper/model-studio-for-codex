@@ -352,6 +352,30 @@ class ExtensionLifecycleVersionedDataIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(restored.revision, 3)
 
+    def test_disable_then_enable_preserves_the_selected_generation(self) -> None:
+        enabled, repository = self._install_and_enable(suffix=60)
+        repository.put(EXTENSION_ID, "retained", {"value": 1})
+
+        disabled = self._execute_receipt(
+            _request(LifecycleAction.DISABLE, suffix=62, previous=enabled)
+        )
+        assert disabled.record is not None
+        reenabled = self._execute_receipt(
+            _request(
+                LifecycleAction.ENABLE,
+                suffix=63,
+                previous=disabled.record,
+            )
+        )
+
+        assert reenabled.record is not None
+        current = self.data_store.repository_for(_binding(reenabled.record.selected))
+        self.assertEqual(
+            current.get(EXTENSION_ID, "retained").value,
+            {"value": 1},
+        )
+        self.assertEqual(current.put(EXTENSION_ID, "after-enable", True).revision, 1)
+
     def test_failed_migration_aborts_and_restores_old_writable_generation(self) -> None:
         def fail_migration(repository: PluginDataRepository) -> None:
             repository.put(EXTENSION_ID, "partial", True)

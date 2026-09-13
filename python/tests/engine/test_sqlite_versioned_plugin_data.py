@@ -1,5 +1,6 @@
-import unittest
+import sqlite3
 import threading
+import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -278,6 +279,110 @@ class SQLiteVersionedPluginDataBehaviorTests(unittest.TestCase):
         )
         with self.assertRaises(LifecycleConflictError):
             store.freeze(FREEZE_OPERATION, selected)
+
+    def test_consumed_candidate_freeze_is_replaced_for_same_operation_rollback(self) -> None:
+        store = SQLiteVersionedPluginDataStore(self.db_path)
+        selected, source = self._enabled_install(store)
+        source.put(NAMESPACE, "before-update", {"value": 1})
+        frozen_source = store.freeze(UPDATE_OPERATION, selected)
+        staged = store.stage(UPDATE_OPERATION, self.v2, frozen_source)
+        candidate = SelectedInstallation(
+            self.v2,
+            staged.data_ref,
+            (),
+            grant_generation=1,
+            activation_generation=1,
+        )
+
+        validation_freeze = store.freeze(UPDATE_OPERATION, candidate)
+        store.thaw(UPDATE_OPERATION, validation_freeze)
+        store.activate_selected(
+            UPDATE_OPERATION,
+            candidate,
+            expected_data_revision=validation_freeze.final_revision,
+            enabled=True,
+        )
+        candidate_repository = store.repository_for(
+            PluginDataBinding(NAMESPACE, candidate.data_ref, 1)
+        )
+        candidate_repository.put(NAMESPACE, "after-switch", False)
+
+        rollback_freeze = store.freeze(UPDATE_OPERATION, candidate)
+        self.assertNotEqual(rollback_freeze.freeze_ref, validation_freeze.freeze_ref)
+        self.assertEqual(
+            rollback_freeze.final_revision,
+            validation_freeze.final_revision + 1,
+        )
+        self.assertEqual(store.freeze(UPDATE_OPERATION, candidate), rollback_freeze)
+
+        reopened = SQLiteVersionedPluginDataStore(self.db_path)
+        self.assertEqual(reopened.freeze(UPDATE_OPERATION, candidate), rollback_freeze)
+        with self.assertRaises(LifecycleConflictError):
+            reopened.thaw(UPDATE_OPERATION, validation_freeze)
+        with self.assertRaises(LifecycleConflictError):
+            reopened.stage(OTHER_OPERATION, self.v1, validation_freeze)
+        self.assertEqual(reopened.freeze(UPDATE_OPERATION, candidate), rollback_freeze)
+        reopened.thaw(UPDATE_OPERATION, rollback_freeze)
+        reopened.thaw(UPDATE_OPERATION, rollback_freeze)
+
+    def test_existing_freeze_table_gains_incarnation_without_losing_replay(self) -> None:
+        store = SQLiteVersionedPluginDataStore(self.db_path)
+        selected, _ = self._enabled_install(store)
+        frozen = store.freeze(FREEZE_OPERATION, selected)
+        with sqlite3.connect(self.db_path) as connection:
+            connection.executescript(
+                """
+                ALTER TABLE versioned_plugin_data_freezes
+                    RENAME TO versioned_plugin_data_freezes_with_incarnation;
+                CREATE TABLE versioned_plugin_data_freezes (
+                    operation_id TEXT NOT NULL,
+                    namespace TEXT NOT NULL,
+                    data_ref TEXT NOT NULL,
+                    artifact_id TEXT NOT NULL,
+                    selection_digest TEXT NOT NULL,
+                    activation_generation INTEGER NOT NULL,
+                    freeze_purpose TEXT NOT NULL
+                        CHECK (freeze_purpose IN ('selected', 'staged_candidate')),
+                    freeze_ref TEXT NOT NULL UNIQUE,
+                    final_revision INTEGER NOT NULL,
+                    PRIMARY KEY (operation_id, data_ref)
+                );
+                INSERT INTO versioned_plugin_data_freezes (
+                    operation_id,
+                    namespace,
+                    data_ref,
+                    artifact_id,
+                    selection_digest,
+                    activation_generation,
+                    freeze_purpose,
+                    freeze_ref,
+                    final_revision
+                )
+                SELECT
+                    operation_id,
+                    namespace,
+                    data_ref,
+                    artifact_id,
+                    selection_digest,
+                    activation_generation,
+                    freeze_purpose,
+                    freeze_ref,
+                    final_revision
+                FROM versioned_plugin_data_freezes_with_incarnation;
+                DROP TABLE versioned_plugin_data_freezes_with_incarnation;
+                """
+            )
+
+        reopened = SQLiteVersionedPluginDataStore(self.db_path)
+        self.assertEqual(reopened.freeze(FREEZE_OPERATION, selected), frozen)
+        with sqlite3.connect(self.db_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(versioned_plugin_data_freezes)"
+                )
+            }
+        self.assertIn("freeze_incarnation", columns)
 
     def test_quota_and_namespace_data_reference_scoping_use_bound_crud(self) -> None:
         quota = PluginDataQuota(max_bytes=1_000_000, max_keys=1, max_value_bytes=100)

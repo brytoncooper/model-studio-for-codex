@@ -23,6 +23,19 @@ class AuthoringErrorCode:
     MISSING_MANIFEST = "missing_manifest"
     MANIFEST_READ_FAILED = "manifest_read_failed"
     ENTRYPOINT_FILE_MISSING = "entrypoint_file_missing"
+    OPERATION_SCHEMA_REFERENCE_INVALID = "operation_schema_reference_invalid"
+    OPERATION_SCHEMA_RESOURCE_INVALID = "operation_schema_resource_invalid"
+    PANEL_RESOURCE_MISSING = "panel_resource_missing"
+    PANEL_RESOURCE_NOT_READABLE = "panel_resource_not_readable"
+    PANEL_SCHEMA_INVALID = "panel_schema_invalid"
+    PANEL_STATE_READY_MISSING_ROOT = "panel_state_ready_missing_root"
+    PANEL_DEPTH_EXCEEDED = "panel_depth_exceeded"
+    PANEL_NODES_EXCEEDED = "panel_nodes_exceeded"
+    PANEL_DUPLICATE_NODE_ID = "panel_duplicate_node_id"
+    PANEL_BINDING_NOT_TEXT_INPUT = "panel_binding_not_text_input"
+    PANEL_PARAMS_BINDINGS_COLLISION = "panel_params_bindings_collision"
+    PANEL_ID_MISMATCH = "panel_id_mismatch"
+    PANEL_OPERATION_UNKNOWN = "panel_operation_unknown"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,41 @@
+{
+  "panel_id": "org.example.notebook.list",
+  "revision": 0,
+  "title": "Session Notebook",
+  "state": "ready",
+  "root": {
+    "id": "notes",
+    "kind": "stack",
+    "children": [
+      {
+        "id": "empty_message",
+        "kind": "text",
+        "value": "No notes yet."
+      },
+      {
+        "id": "refresh_notes",
+        "kind": "button",
+        "label": "Refresh notes",
+        "operation_id": "org.example.notebook.notes.list",
+        "params": {}
+      },
+      {
+        "id": "note_id",
+        "kind": "text_input",
+        "value": "",
+        "multiline": false,
+        "label": "Note id"
+      },
+      {
+        "id": "open_note",
+        "kind": "button",
+        "label": "Open note",
+        "operation_id": "org.example.notebook.notes.get",
+        "params": {},
+        "field_bindings": {
+          "note_id": "note_id"
+        }
+      }
+    ]
+  }
+}

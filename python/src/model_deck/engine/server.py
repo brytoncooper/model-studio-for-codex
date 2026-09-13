@@ -22,12 +22,15 @@ class EngineServer:
         rendezvous_payload_builder: Callable[[], dict[str, Any]],
         rendezvous_publish: Callable[[dict[str, Any]], None],
         startup_callback: Callable[[], None] | None = None,
+        shutdown_callback: Callable[[], None] | None = None,
     ) -> None:
         self._lock = instance_lock
         self._server = socket_server
         self._rendezvous_payload_builder = rendezvous_payload_builder
         self._rendezvous_publish = rendezvous_publish
         self._startup_callback = startup_callback
+        self._shutdown_callback = shutdown_callback
+        self._shutdown_complete = False
         self._lock_held = False
         self._listener_started = False
         self._stop_lock = threading.Lock()
@@ -59,13 +62,19 @@ class EngineServer:
                         except Exception:
                             pass
                     self._listener_started = False
+                    self._run_shutdown_callback(suppress_errors=True)
                     if self._lock_held:
                         self._lock.release()
                         self._lock_held = False
 
     def stop(self) -> None:
         with self._stop_lock:
-            if self._stopped and not self._listener_started and not self._lock_held:
+            if (
+                self._stopped
+                and not self._listener_started
+                and not self._lock_held
+                and (self._shutdown_callback is None or self._shutdown_complete)
+            ):
                 return
             try:
                 if self._listener_started:
@@ -73,10 +82,24 @@ class EngineServer:
             finally:
                 if self._listener_started:
                     self._listener_started = False
-                if self._lock_held:
-                    self._lock.release()
-                    self._lock_held = False
-                self._stopped = True
+                try:
+                    self._run_shutdown_callback(suppress_errors=False)
+                finally:
+                    if self._lock_held:
+                        self._lock.release()
+                        self._lock_held = False
+                    self._stopped = True
+
+    def _run_shutdown_callback(self, *, suppress_errors: bool) -> None:
+        if self._shutdown_callback is None or self._shutdown_complete:
+            return
+        try:
+            self._shutdown_callback()
+        except Exception:
+            if not suppress_errors:
+                raise
+        finally:
+            self._shutdown_complete = True
 
     def serve_forever(self) -> None:
         self.start()

@@ -45,6 +45,7 @@ defines generation binding and the shared write barrier required for updates.
 | Plugin data repository: revisioned per-plugin key/value store behind `plugin.v1/broker/storage.*`; not an authorization gate | [data README](../../python/src/model_deck/engine/plugin_data/README.md) |
 | Plugin data broker: supervisor-side dispatch over settled authority plus committed data repository | [data broker guide](../../python/src/model_deck/engine/plugin_data/BROKER.md) |
 | Plugin storage wire adapter: authenticated runtime calls into the data broker | [wire adapter guide](../../python/src/model_deck/engine/plugin_data/WIRE.md) |
+| External extension host: generic packaged-artifact lifecycle, active contribution discovery, schema-validated invocation and retained owned data | [external host README](../../python/src/model_deck/plugins/external_host/README.md) |
 | Plugin event broker: in-memory publish/subscribe for plugin activations over exact registered descriptor event IDs | [events README](../../python/src/model_deck/engine/plugin_events/README.md) |
 
 ### Projections: host file synchronization
@@ -97,6 +98,7 @@ defines generation binding and the shared write barrier required for updates.
 | Native settings window and form/TOML controls | [settings window guide](../../macos/Sources/ModelDeckPresentation/HostSettingsWindow/README.md) |
 | MCP client adapter: model-read orchestration converged onto `model_library` use cases | [MCP client README](../../python/src/model_deck/integrations/clients/mcp/README.md) |
 | macOS host-settings service and wire notes | [HOST_SETTINGS_SERVICE](../../macos/Sources/ModelDeckClient/HOST_SETTINGS_SERVICE.md), [HOST_SETTINGS](../../macos/Sources/ModelDeckClient/HOST_SETTINGS.md) |
+| Isolated generic extension-panel client and executable demonstration | [panel demo README](../../macos/Sources/ModelDeckPanelDemo/README.md) |
 
 ## Plugin system
 
@@ -111,6 +113,9 @@ defines generation binding and the shared write barrier required for updates.
 | Stdio codec: bounded newline-delimited UTF-8 JSON framing for private stdio pipes | [stdio codec README](../../python/src/model_deck/plugins/stdio_codec/README.md) |
 | Archive inspection: in-memory ZIP entry summary primitive; no extraction/execution | [archive inspection README](../../python/src/model_deck/plugins/archive_inspection/README.md) |
 | Artifact store: stages inspected ZIP bytes into a SHA-256-named directory; no trust/activation/install | [artifact store README](../../python/src/model_deck/plugins/artifact_store/README.md) |
+| Plugin-local schema bundle: contained local reference resolution and detached input/output validation | [schema bundle README](../../python/src/model_deck/plugins/schema_bundle/README.md) |
+| Packaged panel validation: generic structural and semantic validation for contributed panel resources | [panel validation README](../../python/src/model_deck/plugins/panel_validation/README.md) |
+| Process activation lifecycle and authority composition | [activation lifecycle README](../../python/src/model_deck/plugins/activation_lifecycle/README.md), [activation authority README](../../python/src/model_deck/plugins/activation_authority/README.md) |
 | Extension lifecycle contracts: claims, revisions and recovery intent | [lifecycle contracts](../../python/src/model_deck/engine/extensions/README.md) |
 | Lifecycle service: ordered effects, exclusive execution and restoration | [lifecycle service](../../python/src/model_deck/engine/extensions/SERVICE.md) |
 | Native panel documents: immutable values and bounded decoding | [panel document guide](../../macos/Sources/ModelDeckPresentation/ExtensionUI/README.md) |

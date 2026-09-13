@@ -40,10 +40,10 @@ commit counts or the number of task headings.
 | B17 Kernel | Generic composed operations integrated with authenticated dispatch and discovery | Migrate static built-ins; external schema/principal lifecycle integration |
 | B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
 | B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
-| B20 Package lifecycle | Artifact staging, lifecycle service, SQLite lifecycle transactions and versioned-data contract reviewed | Integrate real activation, versioned data and public lifecycle dispatch |
-| B21 Extension UI | Declarative schema, immutable decoder and native renderer reviewed | Public panel delivery, app attachment and extension management |
-| B22 Session Notebook | No implementation found | Independently packaged feature and lifecycle proof |
-| B23 Author tooling | Generic CLI invocation and plugin validate/pack reviewed and pushed | SDK, init/dev/test workflow and JavaScript fixture |
+| B20 Package lifecycle | Isolated external host now composes staging, lifecycle authority, real subprocess activation, versioned owned data and frozen public lifecycle dispatch for the Notebook proof | Broader product lifecycle management remains outside the Notebook slice |
+| B21 Extension UI | Generic public panel discovery/delivery and a separate isolated native panel executable now exercise the immutable decoder and renderer | Shipping-app attachment and extension management remain separate |
+| B22 Session Notebook | Externally packaged CRUD plugin, contributed list/editor panels, restart persistence and disabled-invocation refusal demonstrated against isolated components | No session metadata, transcript access or background export jobs requested |
+| B23 Author tooling | Plugin validate/pack, lifecycle/panel CLI commands and frozen generic invocation support the Notebook walkthrough | Broader SDK and init/dev workflow remain outside this slice |
 | B24 Restricted execution | Reviewed feasibility document; no restricted runtime implemented | Isolated OS enforcement investigation and qualification |
 | B25 Native parity | Catalog path, authenticated settings persistence and native settings screen reviewed | App attachment and remaining native features |
 | B26 Distribution/docs | Isolated staging packager and subsystem catalog reviewed | Real staged packaging, compatibility wrappers and aggregate gate |

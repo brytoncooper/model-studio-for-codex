@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/note.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "note_id",
+    "title",
+    "body",
+    "metadata",
+    "revision"
+  ],
+  "properties": {
+    "note_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "body": {
+      "type": "string",
+      "maxLength": 65536
+    },
+    "metadata": {},
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

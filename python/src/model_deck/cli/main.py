@@ -47,17 +47,39 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
     from model_deck.bootstrap import build_engine_server
 
     catalog_cache_path = Path(args.catalog_cache) if args.catalog_cache else None
-    runtime = build_engine_server(
-        state_root=Path(args.state_root),
-        artifact_root=Path(args.artifact_root),
-        socket_root=Path(args.socket_root),
-        legacy_agents_dir=Path(args.legacy_agents_dir),
-        default_connection_id=args.default_connection_id,
-        source_root=repo_root(),
-        catalog_cache_path=catalog_cache_path,
-        enable_application_state=args.enable_application_state,
-        enable_fixture_runs=args.enable_fixture_runs,
-    )
+    forward_kwargs = {
+        "state_root": Path(args.state_root),
+        "artifact_root": Path(args.artifact_root),
+        "socket_root": Path(args.socket_root),
+        "legacy_agents_dir": Path(args.legacy_agents_dir),
+        "default_connection_id": args.default_connection_id,
+        "source_root": repo_root(),
+        "catalog_cache_path": catalog_cache_path,
+        "enable_application_state": args.enable_application_state,
+        "enable_fixture_runs": args.enable_fixture_runs,
+    }
+    if getattr(args, "enable_extensions", False):
+        if not args.enable_application_state:
+            _stderr(
+                "engine serve: --enable-extensions requires application state "
+                "(--enable-application-state)"
+            )
+            return 1
+        if args.extension_state_root is None or args.extension_artifact_root is None:
+            _stderr(
+                "engine serve: --enable-extensions requires "
+                "--extension-state-root and --extension-artifact-root"
+            )
+            return 1
+        extension_state_root = Path(args.extension_state_root)
+        extension_artifact_root = Path(args.extension_artifact_root)
+        if not extension_state_root.is_absolute() or not extension_artifact_root.is_absolute():
+            _stderr("engine serve: --extension-state-root and --extension-artifact-root must be absolute")
+            return 1
+        forward_kwargs["enable_external_extensions"] = True
+        forward_kwargs["extension_state_root"] = extension_state_root
+        forward_kwargs["extension_artifact_root"] = extension_artifact_root
+    runtime = build_engine_server(**forward_kwargs)
     runtime.server.serve_forever()
     return 0
 
@@ -620,6 +642,97 @@ def _is_envelope_response(response: object) -> bool:
     return ("error" in response) ^ ("result" in response)
 
 
+_OPERATION_INVOKE_PARAMS_SCHEMA = (
+    "contracts/engine.v1/methods/operations.invoke.params.schema.json"
+)
+_OPERATION_INVOKE_RESULT_SCHEMA = (
+    "contracts/engine.v1/methods/operations.invoke.result.schema.json"
+)
+_GENERIC_INVOKE_IDEMPOTENCY_KEY_LENGTH = 36  # UUID4 hex form length is fixed.
+
+
+def _build_wrapper_invoke_frame(
+    *,
+    operation_id: str,
+    input_params: dict[str, object],
+    idempotency_key: str,
+    request_id: str = "invoke-call",
+) -> dict[str, object]:
+    """Construct the frozen ``engine.v1.operations.invoke`` frame.
+
+    The wrapper accepts exactly ``{operation, input, idempotency_key}``;
+    additional fields would be rejected by the engine's bundled schema.
+    """
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "engine.v1.operations.invoke",
+        "params": {
+            "operation": operation_id,
+            "input": input_params,
+            "idempotency_key": idempotency_key,
+        },
+    }
+
+
+def _preflight_wrapper_invoke_frame(frame: dict[str, object]) -> str | None:
+    """Encode the wrapper frame and validate its params against the bundled schema.
+
+    Reuses the engine's ``encode_frame`` for the byte-budget guard and
+    ``validate_schema_ref`` for the params contract. Returns ``None`` on
+    success or a content-free error string on failure.
+    """
+    try:
+        encode_frame(frame)
+    except FrameError as exc:
+        return f"invoke frame exceeds budget: {exc}"
+    params = frame.get("params")
+    if not isinstance(params, dict):
+        return "invoke frame params must be an object"
+    try:
+        validate_schema_ref(_OPERATION_INVOKE_PARAMS_SCHEMA, params)
+    except SchemaValidationError:
+        return "invoke frame failed bundled contract validation"
+    return None
+
+
+def _unwrap_invoke_response(response: object) -> tuple[int, object | None]:
+    """Validate a wrapper response and return ``(exit_code, output_or_none)``.
+
+    The wrapper envelope carries ``{output, job_id?}``; the CLI prints only
+    ``output``. ``output`` is required by the bundled result schema.
+    Writes a content-free stderr message on every failure mode so the CLI
+    caller can simply propagate the exit code.
+    """
+    if not _is_envelope_response(response):
+        _stderr("invalid engine response")
+        return 1, None
+    if "error" in response:
+        _stderr(_rpc_error_message(response))
+        return 1, None
+    result = response.get("result")
+    if not isinstance(result, dict):
+        _stderr("engine returned an invalid invoke result")
+        return 1, None
+    try:
+        _validate_bounded_json_value(result)
+    except _BoundedJsonError as exc:
+        _stderr(f"engine returned an invalid invoke result: {exc}")
+        return 1, None
+    if "output" not in result:
+        # Surfaced before bundled-schema validation so the CLI caller sees a
+        # field-specific message; the bundled contract requires ``output``
+        # but its generic error text does not name the missing field.
+        _stderr("engine invoke result missing required output field")
+        return 1, None
+    try:
+        validate_schema_ref(_OPERATION_INVOKE_RESULT_SCHEMA, result)
+    except SchemaValidationError:
+        _stderr("engine invoke result failed bundled contract validation")
+        return 1, None
+    return 0, result["output"]
+
+
 def _cmd_invoke(args: argparse.Namespace) -> int:
     operation_id = str(args.operation)
 
@@ -640,21 +753,21 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
     else:
         params = {}
 
-    # Preflight the full invoke frame BEFORE any client construction so the
-    # envelope overhead (jsonrpc / id / method wrapper) is included in the
-    # frame budget check. ``encode_frame`` itself enforces the byte budget
-    # and emits the wire format used by the engine; ``FrameError`` is
-    # converted to a fixed CLI error rather than reaching the socket.
-    invoke_payload = {
-        "jsonrpc": "2.0",
-        "id": "invoke-call",
-        "method": operation_id,
-        "params": params,
-    }
-    try:
-        encode_frame(invoke_payload)
-    except FrameError as exc:
-        _stderr(f"invoke frame exceeds budget: {exc}")
+    idempotency_key = str(uuid.uuid4()) if args.idempotency_key is None else str(args.idempotency_key)
+    if not idempotency_key or len(idempotency_key) > _GENERIC_INVOKE_IDEMPOTENCY_KEY_LENGTH + 64:
+        # The bundled contract caps the key at 128 chars; reject early without
+        # sending anything to the engine. UUID4 is exactly 36 chars.
+        _stderr("invoke: idempotency key must be 1-128 characters")
+        return 1
+
+    wrapper_frame = _build_wrapper_invoke_frame(
+        operation_id=operation_id,
+        input_params=params,
+        idempotency_key=idempotency_key,
+    )
+    preflight_error = _preflight_wrapper_invoke_frame(wrapper_frame)
+    if preflight_error is not None:
+        _stderr(preflight_error)
         return 1
 
     client = UnixSocketEngineClient(descriptor.socket_path)
@@ -701,7 +814,7 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
                 _stderr(f"operation not advertised: {operation_id}")
                 return 1
 
-            invoke_response = session.call(invoke_payload)
+            invoke_response = session.call(wrapper_frame)
     except FileNotFoundError:
         _stderr("engine is not running")
         return 1
@@ -709,23 +822,313 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
         _stderr("cannot connect to engine")
         return 1
 
-    if not _is_envelope_response(invoke_response):
-        _stderr("invalid engine response")
-        return 1
-    if "error" in invoke_response:
-        _stderr(_rpc_error_message(invoke_response))
-        return 1
-    result = invoke_response["result"]
+    exit_code, output = _unwrap_invoke_response(invoke_response)
+    if exit_code != 0:
+        return exit_code
     try:
-        _validate_bounded_json_value(result)
+        _validate_bounded_json_value(output)
     except _BoundedJsonError as exc:
         _stderr(f"engine returned an invalid result: {exc}")
         return 1
-    print(json.dumps(result, indent=2, allow_nan=False, ensure_ascii=False))
+    print(json.dumps(output, indent=2, allow_nan=False, ensure_ascii=False))
     return 0
 
 
 
+
+
+def _authenticated_engine_call(
+    *,
+    rendezvous_path: Path,
+    credential_path: Path,
+    method: str,
+    params: dict[str, object],
+    request_id: str,
+) -> tuple[int, object | None]:
+    """Open an authenticated session and dispatch a single RPC.
+
+    Used by every extension/panel lifecycle command so they share the
+    same load-rendezvous / hello-1 / hello-2 / dispatch / unwrap pipeline.
+    Returns ``(0, result)`` on success and ``(1, None)`` on any failure
+    mode. Errors are content-free strings written to stderr.
+
+    The caller owns ``params`` serialization; pass a dict that already
+    conforms to the bundled ``method.params`` schema. ``method`` must be a
+    fully-qualified JSON-RPC method name (for example
+    ``"engine.v1.extensions.install"``).
+    """
+    try:
+        descriptor = load_rendezvous_file(Path(rendezvous_path))
+    except (RendezvousError, OSError, json.JSONDecodeError) as exc:
+        _stderr(f"invalid rendezvous: {exc}")
+        return 1, None
+    client = UnixSocketEngineClient(descriptor.socket_path)
+    try:
+        with client.session() as session:
+            auth_error = _negotiate_and_authenticate(
+                session, descriptor, Path(credential_path),
+            )
+            if auth_error is not None:
+                _stderr(auth_error)
+                return 1, None
+            response = session.call(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                }
+            )
+    except FileNotFoundError:
+        _stderr("engine is not running")
+        return 1, None
+    except (ConnectionError, OSError):
+        _stderr("cannot connect to engine")
+        return 1, None
+    if not _is_envelope_response(response):
+        _stderr("invalid engine response")
+        return 1, None
+    if "error" in response:
+        _stderr(_rpc_error_message(response))
+        return 1, None
+    result = response.get("result")
+    if not isinstance(result, dict):
+        _stderr("engine returned an invalid result")
+        return 1, None
+    try:
+        _validate_bounded_json_value(result)
+    except _BoundedJsonError as exc:
+        _stderr(f"engine returned an invalid result: {exc}")
+        return 1, None
+    return 0, result
+
+
+def _validate_params_against_schema(params: dict[str, object], schema_id: str) -> str | None:
+    """Bundle-contract check for outgoing params; returns an error string on failure.
+
+    Mirrors the engine's bundled-contract validation step so the CLI surfaces
+    structural mistakes (for example a missing required field) before the
+    RPC ever leaves the local process.
+    """
+    try:
+        validate_schema_ref(schema_id, params)
+    except SchemaValidationError:
+        return "request failed bundled contract validation"
+    return None
+
+
+def _validate_result_against_schema(result: dict[str, object], schema_id: str) -> str | None:
+    """Bundle-contract check for incoming results; returns an error string on failure."""
+    try:
+        validate_schema_ref(schema_id, result)
+    except SchemaValidationError:
+        return "engine result failed bundled contract validation"
+    return None
+
+
+def _print_result(result: dict[str, object]) -> None:
+    print(json.dumps(result, indent=2, allow_nan=False, ensure_ascii=False))
+
+
+def _cmd_plugin_install(args: argparse.Namespace) -> int:
+    archive_path = Path(args.archive)
+    if not archive_path.is_absolute():
+        _stderr("plugin install requires an absolute archive path")
+        return 1
+    idempotency_key = str(uuid.uuid4()) if args.idempotency_key is None else str(args.idempotency_key)
+    params = {
+        "archive_path": str(archive_path),
+        "idempotency_key": idempotency_key,
+        "expected_revision": int(args.expected_revision),
+    }
+    schema_error = _validate_params_against_schema(
+        params, "contracts/engine.v1/methods/extensions.install.params.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    exit_code, result = _authenticated_engine_call(
+        rendezvous_path=Path(args.rendezvous),
+        credential_path=Path(args.credential),
+        method="engine.v1.extensions.install",
+        params=params,
+        request_id="plugin-install",
+    )
+    if exit_code != 0:
+        return exit_code
+    schema_error = _validate_result_against_schema(
+        result, "contracts/engine.v1/methods/extensions.install.result.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    _print_result(result)
+    return 0
+
+
+def _cmd_plugin_enable(args: argparse.Namespace) -> int:
+    return _lifecycle_command(
+        args,
+        method_name="extensions.enable",
+        request_id="plugin-enable",
+    )
+
+
+def _cmd_plugin_disable(args: argparse.Namespace) -> int:
+    return _lifecycle_command(
+        args,
+        method_name="extensions.disable",
+        request_id="plugin-disable",
+    )
+
+
+def _lifecycle_command(
+    args: argparse.Namespace, *, method_name: str, request_id: str,
+) -> int:
+    """Shared body for ``plugin enable`` and ``plugin disable``.
+
+    Both call sites accept the same params ``{extension_id,
+    expected_revision, idempotency_key}`` and return ``{enabled}``.
+    """
+    idempotency_key = str(uuid.uuid4()) if args.idempotency_key is None else str(args.idempotency_key)
+    params = {
+        "extension_id": str(args.extension_id),
+        "expected_revision": int(args.expected_revision),
+        "idempotency_key": idempotency_key,
+    }
+    params_schema = (
+        f"contracts/engine.v1/methods/{method_name}.params.schema.json"
+    )
+    result_schema = (
+        f"contracts/engine.v1/methods/{method_name}.result.schema.json"
+    )
+    schema_error = _validate_params_against_schema(params, params_schema)
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    exit_code, result = _authenticated_engine_call(
+        rendezvous_path=Path(args.rendezvous),
+        credential_path=Path(args.credential),
+        method=f"engine.v1.{method_name}",
+        params=params,
+        request_id=request_id,
+    )
+    if exit_code != 0:
+        return exit_code
+    schema_error = _validate_result_against_schema(result, result_schema)
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    _print_result(result)
+    return 0
+
+
+def _cmd_plugin_get(args: argparse.Namespace) -> int:
+    params = {"extension_id": str(args.extension_id)}
+    schema_error = _validate_params_against_schema(
+        params, "contracts/engine.v1/methods/extensions.get.params.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    exit_code, result = _authenticated_engine_call(
+        rendezvous_path=Path(args.rendezvous),
+        credential_path=Path(args.credential),
+        method="engine.v1.extensions.get",
+        params=params,
+        request_id="plugin-get",
+    )
+    if exit_code != 0:
+        return exit_code
+    schema_error = _validate_result_against_schema(
+        result, "contracts/engine.v1/methods/extensions.get.result.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    _print_result(result)
+    return 0
+
+
+def _cmd_plugin_list(args: argparse.Namespace) -> int:
+    params: dict[str, object] = {}
+    schema_error = _validate_params_against_schema(
+        params, "contracts/engine.v1/methods/extensions.list.params.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    exit_code, result = _authenticated_engine_call(
+        rendezvous_path=Path(args.rendezvous),
+        credential_path=Path(args.credential),
+        method="engine.v1.extensions.list",
+        params=params,
+        request_id="plugin-list",
+    )
+    if exit_code != 0:
+        return exit_code
+    schema_error = _validate_result_against_schema(
+        result, "contracts/engine.v1/methods/extensions.list.result.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    _print_result(result)
+    return 0
+
+
+def _cmd_panels_list(args: argparse.Namespace) -> int:
+    params: dict[str, object] = {}
+    schema_error = _validate_params_against_schema(
+        params, "contracts/engine.v1/methods/ui.contributions.list.params.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    exit_code, result = _authenticated_engine_call(
+        rendezvous_path=Path(args.rendezvous),
+        credential_path=Path(args.credential),
+        method="engine.v1.ui.contributions.list",
+        params=params,
+        request_id="panels-list",
+    )
+    if exit_code != 0:
+        return exit_code
+    schema_error = _validate_result_against_schema(
+        result, "contracts/engine.v1/methods/ui.contributions.list.result.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    _print_result(result)
+    return 0
+
+
+def _cmd_panel_get(args: argparse.Namespace) -> int:
+    params = {"panel_id": str(args.panel_id)}
+    schema_error = _validate_params_against_schema(
+        params, "contracts/engine.v1/methods/ui.panel.get.params.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    exit_code, result = _authenticated_engine_call(
+        rendezvous_path=Path(args.rendezvous),
+        credential_path=Path(args.credential),
+        method="engine.v1.ui.panel.get",
+        params=params,
+        request_id="panel-get",
+    )
+    if exit_code != 0:
+        return exit_code
+    schema_error = _validate_result_against_schema(
+        result, "contracts/engine.v1/methods/ui.panel.get.result.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    _print_result(result)
+    return 0
 
 
 def _cmd_plugin_validate(args: argparse.Namespace) -> int:
@@ -845,6 +1248,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="enable deterministic fixture run execution (requires application state)",
     )
+    serve_cmd.add_argument(
+        "--enable-extensions",
+        action="store_true",
+        help="enable isolated external plugin lifecycle (requires --enable-application-state)",
+    )
+    serve_cmd.add_argument(
+        "--extension-state-root",
+        default=None,
+        help="absolute path holding isolated external-plugin state (used with --enable-extensions)",
+    )
+    serve_cmd.add_argument(
+        "--extension-artifact-root",
+        default=None,
+        help="absolute path holding isolated external-plugin artifacts (used with --enable-extensions)",
+    )
     serve_cmd.set_defaults(func=_cmd_engine_serve)
 
     models = sub.add_parser("models", help="model library")
@@ -884,6 +1302,112 @@ def main(argv: list[str] | None = None) -> int:
     )
     pack_cmd.set_defaults(func=_cmd_plugin_pack)
 
+    plugin_install_cmd = plugin_sub.add_parser(
+        "install",
+        help="install a packed plugin archive into the engine",
+    )
+    plugin_install_cmd.add_argument(
+        "archive",
+        help="absolute path to a packed plugin archive",
+    )
+    plugin_install_cmd.add_argument("--rendezvous", required=True)
+    plugin_install_cmd.add_argument("--credential", required=True)
+    plugin_install_cmd.add_argument(
+        "--idempotency-key",
+        default=None,
+        help="optional 1-128 character idempotency key (UUID4 generated when omitted)",
+    )
+    plugin_install_cmd.add_argument(
+        "--expected-revision",
+        type=int,
+        default=0,
+        help="expected revision (default 0)",
+    )
+    plugin_install_cmd.set_defaults(func=_cmd_plugin_install)
+
+    plugin_enable_cmd = plugin_sub.add_parser(
+        "enable", help="enable an installed plugin",
+    )
+    plugin_enable_cmd.add_argument(
+        "--extension-id", required=True,
+        help="reverse-domain extension id (e.g. org.example.plugin)",
+    )
+    plugin_enable_cmd.add_argument("--rendezvous", required=True)
+    plugin_enable_cmd.add_argument("--credential", required=True)
+    plugin_enable_cmd.add_argument(
+        "--idempotency-key",
+        default=None,
+        help="optional 1-128 character idempotency key (UUID4 generated when omitted)",
+    )
+    plugin_enable_cmd.add_argument(
+        "--expected-revision",
+        type=int,
+        default=0,
+        help="expected revision (default 0)",
+    )
+    plugin_enable_cmd.set_defaults(func=_cmd_plugin_enable)
+
+    plugin_disable_cmd = plugin_sub.add_parser(
+        "disable", help="disable an installed plugin",
+    )
+    plugin_disable_cmd.add_argument(
+        "--extension-id", required=True,
+        help="reverse-domain extension id (e.g. org.example.plugin)",
+    )
+    plugin_disable_cmd.add_argument("--rendezvous", required=True)
+    plugin_disable_cmd.add_argument("--credential", required=True)
+    plugin_disable_cmd.add_argument(
+        "--idempotency-key",
+        default=None,
+        help="optional 1-128 character idempotency key (UUID4 generated when omitted)",
+    )
+    plugin_disable_cmd.add_argument(
+        "--expected-revision",
+        type=int,
+        default=0,
+        help="expected revision (default 0)",
+    )
+    plugin_disable_cmd.set_defaults(func=_cmd_plugin_disable)
+
+    plugin_get_cmd = plugin_sub.add_parser(
+        "get", help="read a single installed plugin's record",
+    )
+    plugin_get_cmd.add_argument(
+        "--extension-id", required=True,
+        help="reverse-domain extension id (e.g. org.example.plugin)",
+    )
+    plugin_get_cmd.add_argument("--rendezvous", required=True)
+    plugin_get_cmd.add_argument("--credential", required=True)
+    plugin_get_cmd.set_defaults(func=_cmd_plugin_get)
+
+    plugin_list_cmd = plugin_sub.add_parser(
+        "list", help="list installed plugins",
+    )
+    plugin_list_cmd.add_argument("--rendezvous", required=True)
+    plugin_list_cmd.add_argument("--credential", required=True)
+    plugin_list_cmd.set_defaults(func=_cmd_plugin_list)
+
+    panels = sub.add_parser(
+        "panels", help="engine UI panel commands",
+    )
+    panels_sub = panels.add_subparsers(dest="panels_command", required=True)
+    panels_list_cmd = panels_sub.add_parser(
+        "list", help="list extension-provided UI panels",
+    )
+    panels_list_cmd.add_argument("--rendezvous", required=True)
+    panels_list_cmd.add_argument("--credential", required=True)
+    panels_list_cmd.set_defaults(func=_cmd_panels_list)
+    panel_get_cmd = panels_sub.add_parser(
+        "get", help="fetch a single UI panel tree",
+    )
+    panel_get_cmd.add_argument(
+        "--panel-id", required=True,
+        help="reverse-domain panel id (e.g. org.example.panels.overview)",
+    )
+    panel_get_cmd.add_argument("--rendezvous", required=True)
+    panel_get_cmd.add_argument("--credential", required=True)
+    panel_get_cmd.set_defaults(func=_cmd_panel_get)
+
     invoke_cmd = sub.add_parser(
         "invoke",
         help="invoke a generic kernel operation via engine discovery",
@@ -895,6 +1419,11 @@ def main(argv: list[str] | None = None) -> int:
         "--input-file",
         default=None,
         help="absolute path to a strict bounded JSON-object params file",
+    )
+    invoke_cmd.add_argument(
+        "--idempotency-key",
+        default=None,
+        help="optional 1-128 character idempotency key (UUID4 generated when omitted)",
     )
     invoke_cmd.set_defaults(func=_cmd_invoke)
 

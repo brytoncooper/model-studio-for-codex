@@ -1,0 +1,66 @@
+{
+  "manifest_version": 1,
+  "id": "org.example.notebook",
+  "version": "1.0.0",
+  "plugin_api": {
+    "major": 1,
+    "minimum_minor": 0
+  },
+  "entrypoint": {
+    "runtime": "python",
+    "path": "plugin.py"
+  },
+  "permissions": [
+    "storage.own"
+  ],
+  "contributes": {
+    "operations": [
+      {
+        "id": "org.example.notebook.notes.create",
+        "input_schema": "schemas/notes.create.input.schema.json",
+        "output_schema": "schemas/notes.create.output.schema.json",
+        "effect": "write"
+      },
+      {
+        "id": "org.example.notebook.notes.get",
+        "input_schema": "schemas/notes.get.input.schema.json",
+        "output_schema": "schemas/notes.get.output.schema.json",
+        "effect": "read"
+      },
+      {
+        "id": "org.example.notebook.notes.list",
+        "input_schema": "schemas/notes.list.input.schema.json",
+        "output_schema": "schemas/notes.list.output.schema.json",
+        "effect": "read"
+      },
+      {
+        "id": "org.example.notebook.notes.update",
+        "input_schema": "schemas/notes.update.input.schema.json",
+        "output_schema": "schemas/notes.update.output.schema.json",
+        "effect": "write"
+      },
+      {
+        "id": "org.example.notebook.notes.delete",
+        "input_schema": "schemas/notes.delete.input.schema.json",
+        "output_schema": "schemas/notes.delete.output.schema.json",
+        "effect": "write"
+      },
+      {
+        "id": "org.example.notebook.export.preview",
+        "input_schema": "schemas/export.preview.input.schema.json",
+        "output_schema": "schemas/export.preview.output.schema.json",
+        "effect": "read"
+      }
+    ],
+    "panels": [
+      {
+        "id": "org.example.notebook.list",
+        "schema": "panels/notebook-list.json"
+      },
+      {
+        "id": "org.example.notebook.editor",
+        "schema": "panels/notebook-editor.json"
+      }
+    ]
+  }
+}

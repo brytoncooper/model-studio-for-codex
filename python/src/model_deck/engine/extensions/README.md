@@ -1,5 +1,20 @@
 # Extension installation lifecycle contract
 
+## Authenticated engine transport composition
+
+Bootstrap may opt into the generic external process host only when application
+state is enabled and separate extension state and artifact roots are supplied.
+The authenticated engine boundary exposes install, enable, disable, get, list,
+generic operation invocation, and declarative panel discovery/get methods. The
+authenticated connection supplies the principal; request payloads cannot select
+one. Enabled extension operations are advertised by `operations.list`, but their
+operation IDs are never registered as direct JSON-RPC methods. Host failures are
+translated to fixed, content-free engine domain errors.
+
+Engine shutdown stops the socket listener, closes extension processes and their
+host lease, then releases the engine instance lock. Run recovery remains the
+startup callback and runs while that engine lock is held.
+
 This B20 engine boundary connects inspected immutable artifacts to durable
 installation selection and supervised activation. [ports.py](ports.py) owns
 internal immutable records and Protocols only. It implements no repository,

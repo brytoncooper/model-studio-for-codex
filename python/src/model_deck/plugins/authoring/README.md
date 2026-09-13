@@ -23,6 +23,42 @@ activate, execute, sign, or trust a plugin and does not import the engine.
   to `manifest_read_failed`; the stable inspector code remains in the safe
   authoring error detail.
 
+## Validation result fields
+
+In addition to the archive and manifest inspection results, `ValidationReport`
+exposes:
+
+- `schema_bundle_ok`: `True` only when every declared operation schema
+  resource is present, readable, valid JSON Schema, and every `$ref` it
+  carries resolves inside the bundle. `None` for empty contributions.
+- `panels`: a tuple of `PanelValidationFinding` records, one per declared
+  panel contribution. Each finding reports whether the resource exists,
+  parses, matches the `ui.panel.v1` tree schema, and satisfies the
+  semantic rules.
+
+`report.ok` requires all of: archive inspection, manifest inspection,
+entrypoint presence, a non-false `schema_bundle_ok`, and every panel
+finding. Empty-contributions archives remain valid (`schema_bundle_ok` is
+`True`, `panels` is empty).
+
+## Stable error codes
+
+Operation schema failures surface as `OPERATION_SCHEMA_RESOURCE_INVALID`
+(missing/unreadable/non-JSON-Schema resource) or
+`OPERATION_SCHEMA_REFERENCE_INVALID` (a `$ref` that does not resolve to a
+resource in the same bundle).
+
+Panel failures surface under stable codes: `PANEL_RESOURCE_MISSING`,
+`PANEL_RESOURCE_NOT_READABLE`, `PANEL_SCHEMA_INVALID`,
+`PANEL_STATE_READY_MISSING_ROOT`, `PANEL_DEPTH_EXCEEDED`,
+`PANEL_NODES_EXCEEDED`, `PANEL_DUPLICATE_NODE_ID`,
+`PANEL_BINDING_NOT_TEXT_INPUT`, `PANEL_PARAMS_BINDINGS_COLLISION`,
+`PANEL_ID_MISMATCH`, and `PANEL_OPERATION_UNKNOWN`.
+
+The semantic validator lives in the dedicated
+`model_deck.plugins.panel_validation` package so its rules can be reused
+without the archive inspector.
+
 ## Invariants
 
 Traversal is incremental. The walker retains at most the configured number of
@@ -61,7 +97,11 @@ Do not add installation or activation behavior here.
 From `python/`:
 
 ```sh
-PYTHONPATH=src .venv/bin/python -B -m unittest tests.plugins.test_cli_plugin_authoring
+PYTHONPATH=src .venv/bin/python -B -m unittest \
+  tests.plugins.test_cli_plugin_authoring \
+  tests.plugins.test_schema_bundle \
+  tests.plugins.authoring.test_panel_validation \
+  tests.plugins.authoring.test_archive_validation
 ```
 
 The tests use temporary directories and in-memory ZIP fixtures. They cover
