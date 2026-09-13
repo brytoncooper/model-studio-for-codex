@@ -1,67 +1,56 @@
 # Model Deck
 
-**Use different coding models in the same Codex task.**
+**Bring more models into your coding workflow.**
 
-Model Deck is a native Mac app that connects Codex to models through Cursor,
-OpenRouter and compatible endpoints. Your lead agent can delegate to another
-model while Codex keeps the conversation, tools, approvals and review workflow.
+Model Deck lets your coding agent delegate work to models from different providers
+without moving conversations between apps. Use one model to plan a change,
+another to implement it, and another to review it—all within the same task.
 
-## Why Model Deck?
+The current native Mac app connects Codex to Cursor, OpenRouter and compatible
+model endpoints. It manages connections, model selection and routing, with usage
+information to help you understand where requests are billed.
 
-Choose a model for the work in front of it: planning, implementation, investigation
-or review. Use the accounts and endpoints you already have, without moving prompts
-and results between separate coding apps.
+## Use it
 
-Model Deck manages model registrations, connections and routing. Its usage view
-helps explain which account pays for each route: OpenAI subscription access,
-Cursor access and API credits remain separate.
+In the app, open **Models → Add models**, choose a connection and select the
+models you want to make available to Codex. Manage connections in **Endpoints**
+and inspect usage in **Usage**.
 
-## Using the Mac app
+See the [Cursor setup guide](CURSOR-INTEGRATION.md) and
+[compatibility notes](VERIFICATION.md) for integration details.
 
-In **Models**, choose **Add models**, select a saved connection and pick models
-from its catalog. Added models become available to Codex for delegation. Use
-**Endpoints** to manage connections and **Usage** to inspect available usage data.
+## Build on it
 
-The current app integrates with Codex on macOS. See the
-[compatibility notes](VERIFICATION.md) and [Cursor guide](CURSOR-INTEGRATION.md)
-for supported behavior and setup details.
+Model Deck is being reorganized around a small, provider-independent engine.
+The aim is simple: adding a provider, changing the host integration or building
+an optional feature should not require rewriting the rest of the app.
 
-**This branch is an architecture refactor in progress.** Its new engine and plugin
-components have focused tests; a complete replacement app has not yet passed
-packaging and live qualification. The [delivery checklist](docs/plans/plugin-architecture/STATUS.md)
-records what is integrated and what remains.
+We follow the **Independent Evolution Principle**: each system owns its behavior
+and data, and communicates through explicit contracts. The native interface,
+host integrations and model providers belong outside the core.
 
-## Build on Model Deck
+Providers supply model execution. Feature plugins contribute operations and
+panels, with access to storage, jobs and events through engine APIs.
+The [system catalog](docs/architecture/CATALOG.md) explains these boundaries and
+links each system's contracts, invariants, extension guide and tests.
 
-The architecture follows the **Independent Evolution Principle**: a subsystem
-owns its implementation and data, and other systems use its public contracts.
-Provider logic, host integration and the native interface sit outside the core
-engine so they can change independently.
-
-There are two extension paths:
-
-- **Providers** supply model execution through a shared protocol. The
-  [standalone provider example](examples/deterministic-provider/README.md) runs in
-  a separate process without importing the engine.
-- **Features** contribute operations and declarative panels, using brokered
-  storage, jobs and events. The contracts and components exist; the complete
-  install-to-UI workflow and authoring tools are still being connected.
-
-Start with the [system catalog](docs/architecture/CATALOG.md). Each guide explains
-what its system owns, its contracts and invariants, how to extend it, and its tests.
-
-## Developer entry points
-
-| I want to… | Start here |
+| Start here | What you'll find |
 | --- | --- |
-| Understand the architecture | [Principles and plan](docs/plans/plugin-architecture/PLAN.md) |
-| Work with the headless engine | [Python engine and CLI](python/README.md) |
-| Implement a protocol client or plugin | [Shared contracts](contracts/README.md) |
-| Assemble an isolated Mac app | [Packaging guide](scripts/package/README.md) |
-| Find remaining work | [Delivery checklist](docs/plans/plugin-architecture/STATUS.md) |
+| [Engine and CLI](python/README.md) | Local development and engine composition |
+| [Provider example](examples/deterministic-provider/README.md) | A standalone provider running outside the engine |
+| [Shared contracts](contracts/README.md) | The protocols clients and plugins use |
+| [System catalog](docs/architecture/CATALOG.md) | How the pieces fit together and how to extend them |
+| [Mac packaging](scripts/package/README.md) | Assemble an isolated app from this branch |
 
-The engine requires Python 3.11 or newer. Native app development also requires
-macOS and the Swift toolchain. Follow the packaging guide for this branch; it
-uses explicit staging paths and keeps an existing installation separate.
+## Project status
+
+This branch contains an **unfinished architecture refactor**. Individual engine
+and plugin components have tests; the complete plugin installation workflow and
+replacement Mac app still need integration and qualification. Follow the
+[delivery checklist](docs/plans/plugin-architecture/STATUS.md) for completed work
+and remaining steps.
+
+Development requires Python 3.11 or newer; the native app also requires macOS
+and the Swift toolchain.
 
 Independent project; not affiliated with OpenAI, Cursor or OpenRouter.
