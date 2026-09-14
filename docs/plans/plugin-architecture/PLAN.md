@@ -1,5 +1,9 @@
 # Model Deck: kernel, engine, and external feature architecture
 
+> Current scope: [V2 starts fresh](V2-SCOPE.md). Prototype saved-state import
+> and legacy-setup compatibility are not delivery requirements. Keep the
+> prototype running solely to preserve development tool access.
+
 Status: proposed implementation design; independent review and corrections are tracked in REVIEW.md. No runtime implementation is claimed.
 Date: 2026-09-12. Source baseline: `6292193`; recovery branch: `backup/pre-atomic-hih5xei2`.
 
@@ -22,7 +26,7 @@ Required outcomes:
 3. Kernel has no imports of provider SDKs, Codex schemas, AppKit, pricing, or feature-specific logic.
 4. Providers, host integrations, usage/catalog/benchmark sources, storage adapters, and optional features have distinct narrow contracts.
 5. A separately packaged **Session Notebook** extension registers operations, a panel, scoped data and an export job without editing the app. A second non-Python fixture proves the protocol is language-neutral.
-6. Existing registered routes, billing distinctions, terminal event semantics, tool approval ownership, continuation isolation, compaction, usage display, and companion behavior survive migration.
+6. Freshly configured routes, billing distinctions, terminal event semantics, tool approval ownership, continuation isolation, compaction, usage display, and companion behavior remain supported in V2.
 7. Architecture violations fail a fast automated gate. Fakes and production adapter implementations run against shared conformance tests; real provider qualification remains separate evidence.
 8. Every designated system/subsystem has a human-readable guide describing purpose, ownership, invariants, contracts and extension steps; root README explains why Model Deck and links to a complete system/extension catalog. [DOCUMENTATION.md](DOCUMENTATION.md) defines this delivery requirement.
 9. Every implementation checkpoint is buildable in isolation and has a meaningful behavior or ownership result. No arbitrary target commit count.
@@ -63,7 +67,7 @@ Use a LocalTransport port with the current macOS Unix-domain socket adapter, plu
 
 One engine owns one state root using an exclusive instance-lock port and protocol-version handshake. Paths, file locking/replacement, child-process supervision, credential access and IPC are platform adapters; no POSIX/macOS API belongs in core. Bootstrap can start an absent engine from an immutable installed/staged runtime; clients discover it through a private rendezvous record. Closing a UI connection does not terminate runs or the engine. An incompatible engine is reported, not automatically replaced. Private plugin worker pipes are not client rendezvous endpoints.
 
-Engine shutdown drains or explicitly cancels owned work; the protected existing router is never managed by this mechanism. Tests use temporary state/socket directories and fixture hosts. The first cutover is opt-in after an offline migration; legacy and new runtimes never both write the same state.
+Engine shutdown drains or explicitly cancels owned work; the protected existing router is never managed by this mechanism. Tests use temporary state/socket directories and fixture hosts. The first cutover is opt-in with fresh V2 state; legacy and new runtimes never both write the same state.
 
 ### D5. App-owned data with explicit projections
 
@@ -165,13 +169,11 @@ Extensions UX: install archive/directory → inspect identity/version/provenance
 
 ## 7. Migration, compatibility and rollback
 
-The source backup branch protects code, not user state. Implement a read-only inventory with checksums, schema versions, routes and classification (managed match, managed drift, foreign, malformed, orphan). Never collect credential values in the inventory. Build a deterministic import preview and validate it into a temporary database. Missing, conflicting or duplicate route identity is an explicit unresolved item.
+V2 starts with fresh state and explicit configuration. Prototype import and saved-setup compatibility are removed; see [V2 scope](V2-SCOPE.md). Protect the prototype only as a development tool dependency until an authorized switch.
 
-After a separately authorized quiescent cutover: acquire the state writer lock; verify inventory fingerprints still match; take a consistent snapshot of databases including WAL state through supported SQLite backup; commit imported data and outbox; write host projections using expected hashes; record applied revisions. Unknown/unowned agent files remain untouched. No global Codex config rewrite. Old UI JSON preferences become presentation settings or read-only legacy inputs, never a second connection authority.
+Every engine schema upgrade records version, migration ID/checksum and outcome in the database. Acquire the writer lease, reject unsupported newer schemas, snapshot consistently, and apply each supported upgrade transactionally with its bookkeeping. Failed upgrades reopen only the previous compatible schema; multi-step upgrades have explicit recovery checkpoints. This covers V2 schema evolution; no prototype import is required.
 
-Every engine schema upgrade records version, migration ID/checksum and outcome in the database. Acquire the writer lease, reject unsupported newer schemas, snapshot consistently, and apply each supported upgrade transactionally with its bookkeeping. Failed upgrades reopen only the previous compatible schema; multi-step upgrades have explicit recovery checkpoints. This covers future schema changes as well as the one-time legacy import.
-
-Rollback before activation is discard-only for the isolated new state. After activation, preserve the new database and exports before restoring any old snapshot. Do not lose newly created models/notes/grants by blindly reverting the binary. Schema downgrade is a tested export/restore path with explicit conflict handling. Existing credential helper identity and token command compatibility remain unchanged until dedicated qualification.
+A failed V2 activation must preserve V2-created data and restore development access. Prototype-data rollback and legacy launcher/token compatibility are not release prerequisites.
 
 Side-by-side versions of a plugin use separate executable and data-version directories. Stage/validate executable and schemas first; stop admission, drain or explicitly interrupt owned jobs, freeze old-activation writes and record the final committed data revision. Only then snapshot/migrate a copy and validate a non-serving activation. Switch one transactional executable/data/grant activation record, revoke the old tokens, then admit new work. Failure revokes staged tokens before reopening the old activation. A write racing the freeze is included in the final revision or explicitly rejected, never lost. Post-activation rollback that would discard new data requires export/explicit resolution.
 
@@ -202,4 +204,4 @@ The kernel may still evolve when a truly new privileged primitive is needed. The
 
 Implement the dependency-ordered slices in [BACKLOG.md](BACKLOG.md), using Composer 2.5 for bounded implementation tasks as requested. Fast must be requested through a supported service-tier control and verified from runtime evidence; a model name or prompt is not proof of Fast mode. Lead owns contracts, ambiguous architecture, integration and final diff review. One independent finalizer owns aggregate checks. At most six concurrent writers, one writer per module; do not parallelize against draft shared interfaces.
 
-Plan completion means this design, API, backlog and verification strategy have been reviewed and reconciled. Implementation completion requires gates in VERIFICATION.md, not a green Markdown check. Next executable task is B00 (isolated development guard) after implementation begins; live app cutover remains outside ordinary local implementation completion.
+Plan completion means this design, API, backlog and verification strategy have been reviewed and reconciled. Implementation completion requires gates in VERIFICATION.md, not a green Markdown check. Current implementation state and the next bounded executable work are recorded in [STATUS.md](STATUS.md) and [NEXT-TASKS.md](NEXT-TASKS.md); live app cutover remains outside ordinary local implementation completion.

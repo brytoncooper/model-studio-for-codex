@@ -1,5 +1,9 @@
 # Model Deck extensible architecture plan
 
+> Current scope: [V2 starts fresh](V2-SCOPE.md). Prototype saved-state import
+> and legacy-setup compatibility are not delivery requirements. Keep the
+> prototype running solely to preserve development tool access.
+
 Planning only. No application rebuild, restart, installation, runtime configuration or implementation was performed.
 
 1. [Architecture plan](PLAN.md) — goals, kernel/engine ownership, source layout and migration decisions.

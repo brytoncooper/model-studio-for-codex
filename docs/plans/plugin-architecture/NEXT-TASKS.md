@@ -1,5 +1,9 @@
 # B00-B27 bounded follow-up assignments
 
+> Current scope: [V2 starts fresh](V2-SCOPE.md). Prototype saved-state import
+> and legacy-setup compatibility are not delivery requirements. Keep the
+> prototype running solely to preserve development tool access.
+
 These assignments follow the completion audit in [STATUS.md](STATUS.md). They
 are intentionally smaller than the original workstreams. One writer owns each
 listed file set; contract changes or ownership collisions return to the primary
@@ -189,7 +193,7 @@ compatibility belongs to B10.
 
 - **Outcome:** Committed model/connection mutations reconcile to managed fixture
   TOML with durable receipts and conflict-safe rollback.
-- **Original workstreams covered:** B09; unlocks B10 and B11.
+- **Original workstreams covered:** B09; unlocks B10.
 - **Ownership:** Codex projection consumer/composition, snapshot resolvers,
   bootstrap hook after A2, and projection tests.
 - **Reuse:** Outbox, dependency receipts/recovery, renderer, materializer, and
@@ -327,23 +331,11 @@ reaches the same projection; absent paths retain the legacy rollback route.
 - **Stop condition:** Any public host-contract expansion returns to the primary
   agent.
 
-### D2 - Offline migration and rollback
+### D2 - Removed: prototype migration
 
-- **Outcome:** Fixture legacy state migrates atomically and can be recovered or
-  rolled back without losing post-import data.
-- **Original workstreams covered:** B11.
-- **Ownership:** Migration coordinator, snapshot/journal tooling, schema-version
-  ledger, and migration tests.
-- **Reuse:** B08 preview, A4 projection receipts, D1 compatibility check, SQLite
-  backup, and existing isolated roots.
-- **Dependencies:** D1.
-- **Acceptance:** Active-writer/fingerprint refusal, WAL-safe backup, interrupted
-  apply, migration ID/checksum replay, newer-schema refusal, and rollback with
-  conflicts/post-import writes all preserve one authority.
-- **Non-goals:** Live data, cutover, downgrade, UI, or provider calls.
-- **Parallelism:** Can run beside D3-D5 after D1.
-- **Stop condition:** A migration needs destructive live behavior or changes an
-  application-owned schema outside its versioned upgrade path.
+B11 is removed from scope by [V2 starts fresh](V2-SCOPE.md). Do not schedule
+prototype import or rollback work. V2's own schema evolution/recovery evidence
+remains part of D7; plugin update recovery remains B20.
 
 ### D3 - Scoped continuation and compaction
 
@@ -440,16 +432,16 @@ reaches the same projection; absent paths retain the legacy rollback route.
 - **Original workstreams covered:** B26.
 - **Ownership:** `scripts/package/`, verification gates, artifact manifests,
   compatibility wrappers, and root documentation/catalog integration.
-- **Reuse:** Existing stager, V2 builder evidence, A5 MCP entrypoint, D2 migration,
+- **Reuse:** Existing stager, V2 builder evidence, A5 MCP entrypoint,
   D3-D6 accepted components, and behavior matrix.
 - **Delivered partial evidence:** the V2 app bundles application Python sources,
   Swift resources, and an external-runtime checker/contract; one moved copy ran
   from an unrelated directory without checkout imports and preserved model and
   Notebook state across normal quit/reopen. Continue from that builder instead
   of creating another V2 packaging path.
-- **Dependencies:** A5 and D2-D6.
+- **Dependencies:** A5 and D3-D6.
 - **Acceptance:** Clean isolated build; exact resources/modules; actual signatures
-  and helper bytes; no bytecode mutation; legacy launch/token compatibility;
+  and helper bytes; no bytecode mutation; V2 schema-version, transactional-upgrade and recovery evidence;
   headless/plugin fixtures without source; G1-G7/all-local results recorded.
 - **Non-goals:** Install, notarization, live providers/host/AX, or obsolete-code
   deletion without reference proof.
@@ -460,12 +452,12 @@ reaches the same projection; absent paths retain the legacy rollback route.
 
 ### D8 - Scheduled live qualification
 
-- **Outcome:** The accepted staged artifact is migrated, installed, and qualified
+- **Outcome:** The accepted staged artifact is installed with fresh state and qualified
   with recoverable real host/provider/device evidence.
 - **Original workstreams covered:** B27.
 - **Ownership:** Primary agent and one operational verifier; exact target/state/
   snapshot/runbook files only.
-- **Reuse:** D7 artifact and checks, D2 rollback, documented isolated coding and
+- **Reuse:** D7 artifact and checks, V2 recovery evidence, documented isolated coding and
   Notebook scenarios, and preserved fallback environment.
 - **Dependencies:** D7 plus separate user authorization after impact disclosure.
 - **Acceptance:** Recorded real route/billing, streaming/tools/cancel/compaction,
@@ -483,4 +475,4 @@ reaches the same projection; absent paths retain the legacy rollback route.
 No product scope decision is currently required. B24 is resolved as trusted mode
 only. A future request to advertise restricted execution would reopen its
 qualified-helper/OS-denial work. B27 requires operational authorization after
-B26, not a change to the original scope.
+B26, under the fresh-start scope in V2-SCOPE.md.

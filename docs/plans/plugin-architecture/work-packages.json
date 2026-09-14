@@ -139,15 +139,11 @@
     {
       "id": "B11",
       "title": "Offline migration and rollback rehearsal",
-      "depends_on": [
-        "B08",
-        "B09",
-        "B10"
-      ],
+      "depends_on": [],
       "conditional_dependencies": [],
-      "status": "planned",
-      "details": "BACKLOG.md",
-      "documentation": "Update owned subsystem guide(s) and submit catalog delta; required for acceptance."
+      "status": "removed_from_scope",
+      "details": "V2-SCOPE.md",
+      "documentation": "Removed slice; no acceptance documentation delta is required."
     },
     {
       "id": "B12",
@@ -343,7 +339,6 @@
       "title": "Finish packaging, compatibility wrappers and aggregate local gate",
       "depends_on": [
         "B06",
-        "B11",
         "B15",
         "B16",
         "B23",
@@ -360,7 +355,7 @@
     },
     {
       "id": "B27",
-      "title": "Scheduled live migration and qualification",
+      "title": "Fresh-install qualification and authorized tool switch",
       "depends_on": [
         "B26"
       ],
@@ -574,5 +569,6 @@
     }
   ],
   "scheduling_rule": "A parent is accepted only after depends_on and aggregate_requires are accepted; leaves use their own dependencies. All owned paths are proposed and must be checked for overlap before delegation.",
-  "documentation_required": "Every package/leaf owns a human-readable subsystem guide delta per DOCUMENTATION.md, with purpose, invariants, contracts, extension recipe and parent/catalog links."
+  "documentation_required": "Every package/leaf owns a human-readable subsystem guide delta per DOCUMENTATION.md, with purpose, invariants, contracts, extension recipe and parent/catalog links.",
+  "scope_decision": "V2-SCOPE.md: fresh V2 state; no prototype import; preserve running development tools"
 }

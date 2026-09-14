@@ -1,10 +1,14 @@
 # Dependency-ordered implementation backlog
 
+> Current scope: [V2 starts fresh](V2-SCOPE.md). Prototype saved-state import
+> and legacy-setup compatibility are not delivery requirements. Keep the
+> prototype running solely to preserve development tool access.
+
 Status: proposed work, none implemented by this planning task. [PLAN.md](PLAN.md) and [API.md](API.md) are authoritative. Gates/commands are defined in [VERIFICATION.md](VERIFICATION.md). A slice may contain multiple atomic commits; do not combine unrelated steps merely because they share a phase.
 
 ## Documentation requirement for every slice
 
-Every B00–B27 slice includes the documentation delta required by [DOCUMENTATION.md](DOCUMENTATION.md): colocated subsystem guide, purpose/invariants/contracts/how-to-extend updates and parent/catalog links in the same commit. Source owners own their guides; a separate integrator owns the root README/catalog. B26 finishes the root README narrative and verifies catalog completeness. No newly introduced subsystem is accepted without its human guide.
+Every active B00–B27 slice includes the documentation delta required by [DOCUMENTATION.md](DOCUMENTATION.md): colocated subsystem guide, purpose/invariants/contracts/how-to-extend updates and parent/catalog links in the same commit. Removed slices have no acceptance documentation requirement. Source owners own their guides; a separate integrator owns the root README/catalog. B26 finishes the root README narrative and verifies catalog completeness. No newly introduced subsystem is accepted without its human guide.
 
 ## Execution rules
 
@@ -110,13 +114,12 @@ Extract host-specific JSON-RPC/Responses/catalog rules and launch config from co
 
 Acceptance G2/G4: fake app-server verifies method/event/projection parity, cancellation ownership and unknown-version refusal; no tests launch real Codex or access real tokens. Rollback: bootstrap selects the legacy bridge in isolated qualification only.
 
-### B11 — Offline migration and rollback rehearsal
+### B11 — Removed: prototype migration and rollback rehearsal
 
-Depends: B08, B09, B10. Owner: migration/activation. Paths: migration coordinator/snapshot/export tools.
-
-Validate import to temp DB; require exclusive writer/cutover readiness and unchanged fingerprints; SQLite backup handles WAL; commit data/outbox; preserve sources and snapshot journal. Rehearse rollback with post-import new data, export and conflicts. Add engine schema-version/migration-ID/checksum bookkeeping, transactional upgrades and unsupported-newer-schema refusal, covering future schema changes beyond the one-time import. This task implements tooling, not production cutover.
-
-Acceptance G4: interrupted import never changes authority partially; active-writer refusal; snapshots restore all committed fixture records; no blind downgrade/data loss. Rollback: tested preserved snapshots with compare-before-write.
+Removed from scope, not complete. See [V2 starts fresh](V2-SCOPE.md).
+No prototype saved-state import or import rollback is required. V2's own
+schema-version bookkeeping, transactional upgrades, newer-schema refusal and
+recovery remain B26 acceptance; plugin updates and recovery remain B20.
 
 ## Wave 3 — session engine and provider ports
 
@@ -240,17 +243,17 @@ Acceptance G3: all five states per page, generation races, stale usage, main act
 
 Additional required B25 scope: [Codex configuration editor](CODEX-SETTINGS.md), including structured controls and full TOML editing. Its fixture adapter/parser can be developed alongside other host work; native integration follows the public host-settings contract. B26 acceptance includes this editor.
 
-Depends: B06, B11, B15, B16, B23, B25; B24 only if restricted mode is included. Owner: packaging/final integration.
+Depends: B06, B15, B16, B23, B25; B24 only if restricted mode is included. Owner: packaging/final integration.
 
-Build immutable staged app/engine/SDK artifacts with explicit outputs; include modules/resources/manifests; preserve legacy launch/token entrypoint compatibility and signed-helper bytes. Remove obsolete code only after references/contracts/tests show it unused. Run aggregate local suite once, then rerun only invalidated checks after repairs.
+Build immutable staged app/engine/SDK artifacts with explicit outputs; include modules/resources/manifests; verify V2-required helper identity and V2 schema-version/upgrade/recovery guarantees. Remove obsolete code only after references/contracts/tests show it unused. Run aggregate local suite once, then rerun only invalidated checks after repairs.
 
 Acceptance G7: clean isolated source builds; expected artifact inventory, signatures, no bytecode mutation of signed resources; headless and plugin fixtures pass with no private source checkout. Existing behavior matrix fully mapped. Local source success is not installation/live provider proof.
 
-### B27 — Scheduled live migration and qualification
+### B27 — Fresh-install qualification and authorized tool switch
 
-Depends: B26. Owner: lead + sole finalizer; user schedules protected-runtime cutover.
+Depends: B26. Owner: lead for protected-runtime operations, with independent acceptance review; user schedules protected-runtime cutover.
 
-Before action, disclose exact app/state targets, snapshot recovery and tool availability impact. Only after that separate authorization quiesce old writers, migrate, activate staged version and qualify real providers/host/AX. Validate billing route, streaming/tools/cancel, compaction, restart state, plugin update and helper identity. Preserve a usable fallback environment for the agent connection.
+Before action, disclose exact app/state targets, snapshot recovery and tool availability impact. Only after that separate authorization activate V2 with fresh state and qualify real providers/host/AX. Validate billing route, streaming/tools/cancel, compaction, restart state, plugin update and helper identity. Preserve a usable fallback environment for the agent connection.
 
 Acceptance G8: recorded actual route/provider observations and device behavior; failure invokes tested recovery without losing new data. No automatic push, merge, install or kill follows merely from completing this plan.
 
@@ -258,7 +261,7 @@ Acceptance G8: recorded actual route/provider observations and device behavior; 
 
 - Wave 0: B00 → B01 → B02. Contract decisions remain serial.
 - After B02: B03 and B04 can proceed with exact ownership; B06 starts only after B03; B05 follows B04.
-- After B07: B08/B09 (sequential) and B12 can progress on separate contracts/modules; B16 cached-query preparation follows B12; its refresh-job acceptance also waits for B19. B10 follows projection seam; B11 follows B10.
+- After B07: B08/B09 (sequential) and B12 can progress on separate contracts/modules; B16 cached-query preparation follows B12; its refresh-job acceptance also waits for B19. B10 follows projection seam; B11 is removed from scope.
 - B13 and B14 run in parallel only after B12's provider contract and B10's host seam are merged; B10 owns shared host conversion code and B12 owns shared event types. Provider workers own only their own package conversions, and request shared changes from those owners. B15 integrates both.
 - B17 can proceed after B12 while provider integrations continue; B18 → B19 → B20. B21 follows its listed UI prerequisites.
 - B22 → B23 proves end-to-end external authoring. B24 is independent once B20 lands. B25 feature owners share only frozen client schemas.

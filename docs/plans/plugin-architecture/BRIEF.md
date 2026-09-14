@@ -1,5 +1,9 @@
 # Model Deck extensible architecture planning brief
 
+> Current scope: [V2 starts fresh](V2-SCOPE.md). Prototype saved-state import
+> and legacy-setup compatibility are not delivery requirements. Keep the
+> prototype running solely to preserve development tool access.
+
 Date: 2026-09-12. Lead owns final decisions and integration. Planning only.
 
 ## User objective

@@ -1,5 +1,9 @@
 # Verification, readiness and protected-runtime rules
 
+> Current scope: [V2 starts fresh](V2-SCOPE.md). Prototype saved-state import
+> and legacy-setup compatibility are not delivery requirements. Keep the
+> prototype running solely to preserve development tool access.
+
 Status: planned checks. No application test, build, installation, migration or live provider qualification was run to author this plan. Requested Composer planning agents used the existing routing toolchain; those planning turns are not product conformance evidence. Previously observed Python/Swift test results are historical baseline evidence, not proof of this new architecture.
 
 ## 1. Verification ownership and commands
@@ -14,7 +18,7 @@ The proposed entrypoint is `python3 scripts/verify.py <gate> --state-root <tempo
 | G1 | `contracts` | JSON schemas, valid/invalid examples, Swift/Python round-trip, version compatibility and import-negative fixtures |
 | G2 | `engine` | Headless fixture CLI, operation consistency across clients, state transitions, scoped dispatch, no host launch |
 | G3 | `swift` | Swift package tests/compilation, presenter five-state tests, window geometry and staged UI render inspection |
-| G4 | `migration` | Redacted previews, authority/outbox recovery, CAS conflicts, SQLite backup/WAL recovery, rollback with post-cutover data |
+| G4 | `migration` | V2 authority/outbox recovery, CAS conflicts, schema-version bookkeeping, transactional upgrades, newer-schema refusal and V2 data recovery; prototype import excluded |
 | G5 | `providers` | Shared provider conformance and legacy parity; fake HTTP/SDK/host only |
 | G6 | `extensions` | Separate archive/SDK installation, manifest rejection, lifecycle/quotas/grants, Notebook and other-language fixture |
 | G7 | `package` | Immutable staged output, signed helper identity, resource inventory, no private source import requirement |
@@ -50,7 +54,7 @@ Import enforcement is limited evidence. Pure rules also get deterministic clock/
 | Agent tools | Host remains approval/execution owner; no automatic extension tool injection |
 | Usage | Subscription allowance versus estimates/settled costs; stale good values retained; no key/content logging |
 | Companion | Permission absent/revoked, minimum size, full screen/display/focus, lost host, resize recovery, shutdown |
-| Packaging | Credential helper exact identity, Python/resource completeness, legacy launcher/token command compatibility |
+| Packaging | Credential helper exact identity, Python/resource completeness, V2-required entrypoint behavior |
 
 Map existing named tests to these outcomes before moving files. Add tests only for new contracts, missing edge cases or changed boundaries; avoid duplicate tests that merely mirror new wrapper functions.
 
