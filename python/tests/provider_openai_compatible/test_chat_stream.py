@@ -443,5 +443,138 @@ class ChatStreamTranslatorTests(unittest.TestCase):
         )
 
 
+class ChatStreamOrderingTests(unittest.TestCase):
+    """``_save_continuation`` runs at the top of ``finish()`` before synthetic
+    ``response.output_item.done`` envelopes that close reasoning, message, and
+    tool-call items. The ordering is the property that engine replay relies on:
+    a later same-scope continuation read must see the just-written records
+    before the wire emits the closed items.
+    """
+
+    class _SavingContinuation:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, list]] = []
+
+        def save(self, scope, response_id, records) -> None:
+            self.calls.append((response_id, copy.deepcopy(records)))
+
+    def test_save_runs_before_synthetic_output_item_done_events(self) -> None:
+        continuation = self._SavingContinuation()
+        translator = ChatStreamTranslator(
+            continuation,
+            "scope-fixed",
+            new_id=lambda prefix: f"{prefix}-id",
+            new_item_id=lambda scope: f"continued-{scope}",
+        )
+        translator.feed(
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": "final"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        )
+        events = translator.finish()
+
+        # The single save() call observed the message record before any
+        # synthetic output_item.done event was emitted.
+        self.assertEqual(len(continuation.calls), 1)
+        response_id, saved_records = continuation.calls[0]
+        self.assertTrue(response_id)
+        self.assertEqual(len(saved_records), 1)
+        self.assertEqual(saved_records[0][0]["type"], "message")
+
+        first_done_index = next(
+            i
+            for i, event in enumerate(events)
+            if event.get("type") == "response.output_item.done"
+        )
+        self.assertGreater(first_done_index, 0)
+
+    def test_save_runs_before_tool_call_output_item_done_events(self) -> None:
+        continuation = self._SavingContinuation()
+        translator = ChatStreamTranslator(
+            continuation,
+            "scope-fixed",
+            new_id=lambda prefix: f"{prefix}-id",
+            new_item_id=lambda scope: f"continued-{scope}",
+        )
+        translator.feed(
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call-fixed",
+                                    "function": {
+                                        "name": "lookup",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+        )
+        translator.feed({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})
+        events = translator.finish()
+
+        self.assertEqual(len(continuation.calls), 1)
+        response_id, saved_records = continuation.calls[0]
+        self.assertTrue(response_id)
+        self.assertEqual(len(saved_records), 1)
+        self.assertEqual(saved_records[0][0]["type"], "function_call")
+
+        done_indices = [
+            i
+            for i, event in enumerate(events)
+            if event.get("type") == "response.output_item.done"
+        ]
+        self.assertEqual(len(done_indices), 1)
+        self.assertGreater(done_indices[0], 0)
+
+    def test_save_runs_before_reasoning_output_item_done_events(self) -> None:
+        continuation = self._SavingContinuation()
+        translator = ChatStreamTranslator(
+            continuation,
+            "scope-fixed",
+            new_id=lambda prefix: f"{prefix}-id",
+            new_item_id=lambda scope: f"continued-{scope}",
+        )
+        translator.feed(
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"reasoning_content": "think"},
+                    }
+                ]
+            }
+        )
+        translator.feed({"choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}]})
+        events = translator.finish()
+
+        self.assertEqual(len(continuation.calls), 1)
+        response_id, saved_records = continuation.calls[0]
+        self.assertTrue(response_id)
+        types = [record[0]["type"] for record in saved_records]
+        self.assertIn("reasoning", types)
+
+        done_indices = [
+            i
+            for i, event in enumerate(events)
+            if event.get("type") == "response.output_item.done"
+        ]
+        self.assertGreater(len(done_indices), 0)
+        self.assertGreater(done_indices[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

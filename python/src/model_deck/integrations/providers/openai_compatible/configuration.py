@@ -39,6 +39,7 @@ from model_deck.integrations.providers.openai_compatible.execution import (
 from model_deck.integrations.providers.openai_compatible.http_transport import (
     post_stream as default_post_stream,
 )
+from model_deck.integrations.providers.continuation.store import ContinuationStore
 
 __all__ = [
     "OpenAICompatibleProfile",
@@ -324,6 +325,7 @@ def compose_openai_compatible_profile(
     clock: Callable[[], str] | None = None,
     request_timeout: float | None = None,
     route_definition_factory: Callable[..., Any] | None = None,
+    continuation_store_path: Path | None = None,
 ) -> tuple[OpenAICompatibleExecutionPort, dict[str, Any]]:
     """Compose an executor and the engine route definitions for one profile.
 
@@ -376,6 +378,13 @@ def compose_openai_compatible_profile(
         kwargs["clock"] = clock
     if request_timeout is not None:
         kwargs["request_timeout"] = request_timeout
+    if continuation_store_path is not None:
+        if (
+            not isinstance(continuation_store_path, Path)
+            or not continuation_store_path.is_absolute()
+        ):
+            _reject("continuation store path must be absolute")
+        kwargs["continuation_store"] = ContinuationStore(continuation_store_path)
     port = OpenAICompatibleExecutionPort(
         endpoint_resolver,
         resolver,

@@ -119,7 +119,11 @@ class SessionUseCaseTests(unittest.TestCase):
     def test_create_forwards_route_resolve_and_repository(self) -> None:
         repo = RecordingSessionRepository()
         resolver = RecordingRouteResolver()
-        use_case = CreateSessionUseCase(repo, resolver)
+        use_case = CreateSessionUseCase(
+            repo,
+            resolver,
+            continuation_handle_factory=lambda: "ref:continuation.created",
+        )
         result = use_case.execute(
             {
                 "registration_id": REGISTRATION_ID,
@@ -131,6 +135,16 @@ class SessionUseCaseTests(unittest.TestCase):
         self.assertEqual(len(repo.create_calls), 1)
         self.assertEqual(repo.create_calls[0].registration_id, REGISTRATION_ID)
         self.assertEqual(repo.create_calls[0].host_context_ref, HOST_CTX)
+        self.assertEqual(
+            repo.create_calls[0].continuation_scope,
+            ContinuationScope(
+                connection_id=CONNECTION_ID,
+                provider_model_id="provider/model-a",
+                provider_id="com.example.provider",
+                execution_mode=ExecutionMode.CHAT_COMPLETIONS,
+                handle="ref:continuation.created",
+            ),
+        )
         self.assertEqual(
             result,
             {
@@ -257,7 +271,11 @@ class SessionUseCaseTests(unittest.TestCase):
             connection_id=CONNECTION_ID_ALT,
             provider_model_id="provider/model-b",
         )
-        use_case = SelectSessionModelUseCase(repo, resolver)
+        use_case = SelectSessionModelUseCase(
+            repo,
+            resolver,
+            continuation_handle_factory=lambda: "ref:continuation.replaced",
+        )
         use_case.execute(
             {
                 "session_id": SESSION_ID,
@@ -267,6 +285,16 @@ class SessionUseCaseTests(unittest.TestCase):
             }
         )
         self.assertTrue(repo.select_calls[0].continuation_reset)
+        self.assertEqual(
+            repo.select_calls[0].replacement_continuation_scope,
+            ContinuationScope(
+                connection_id=CONNECTION_ID_ALT,
+                provider_model_id="provider/model-b",
+                provider_id="com.example.provider",
+                execution_mode=ExecutionMode.CHAT_COMPLETIONS,
+                handle="ref:continuation.replaced",
+            ),
+        )
 
     def test_select_route_failure_does_not_mutate(self) -> None:
         repo = RecordingSessionRepository()

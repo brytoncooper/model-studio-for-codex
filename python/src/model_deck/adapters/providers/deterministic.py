@@ -395,6 +395,18 @@ class DeterministicProviderExecutionPort:
         self._started_run_ids: set[str] = set()
         self._recorded_requests: dict[str, RunRequest] = {}
 
+    def prepare_session_continuation_reset(
+        self, _session_id: str, _continuation_handle: str
+    ) -> None:
+        """The deterministic fixture owns no provider-private continuation."""
+        return None
+
+    def commit_session_continuation_reset(self, _reset_token: str) -> None:
+        return None
+
+    def rollback_session_continuation_reset(self, _reset_token: str) -> None:
+        return None
+
     def start(self, request: RunRequest, sink: ProviderRunEventSink) -> ProviderRunHandle:
         self._validate_route(request.route_snapshot)
         self._validate_capabilities(request.route_snapshot, self.script)

@@ -6,6 +6,7 @@ from typing import Any
 
 from model_deck.engine.routing.ports import (
     CapabilityTriState,
+    ContinuationScope,
     ExecutionMode,
     RouteResolveRequest,
     RouteResolver,
@@ -68,6 +69,18 @@ PRINCIPAL_ID = "principal-550e8400-e29b-41d4-a716-446655440005"
 HOST_CTX = "ref:host.context"
 
 
+def _continuation_scope(**overrides: Any) -> ContinuationScope:
+    base = {
+        "connection_id": CONNECTION_ID,
+        "provider_model_id": "provider/model",
+        "provider_id": "com.example.provider",
+        "execution_mode": ExecutionMode.CHAT_COMPLETIONS,
+        "handle": "ref:continuation.handle",
+    }
+    base.update(overrides)
+    return ContinuationScope(**base)
+
+
 def _route_snapshot(**overrides: Any) -> RouteSnapshot:
     base = {
         "registration_id": REGISTRATION_ID,
@@ -127,6 +140,7 @@ class RecordingSessionRepository:
             registration_id=REGISTRATION_ID,
             revision=1,
             host_context_ref=HOST_CTX,
+            continuation_scope=_continuation_scope(),
         )
 
     def create(self, command):
@@ -412,13 +426,23 @@ class RunUseCaseTests(unittest.TestCase):
             start.execute(_start_params(), principal_id=PRINCIPAL_ID)
 
     def test_single_dispatch_and_captured_snapshot(self) -> None:
-        runs, _, routes, provider, _, start = self._build()
+        runs, sessions, routes, provider, _, start = self._build()
         routes.result = _route_snapshot(provider_model_id="provider/captured")
+        sessions.record = dataclasses.replace(
+            sessions.record,
+            continuation_scope=_continuation_scope(
+                provider_model_id="provider/captured"
+            ),
+        )
         first = start.execute(_start_params(), principal_id=PRINCIPAL_ID, authorized_host_context_ref=HOST_CTX)
         second = start.execute(_start_params(), principal_id=PRINCIPAL_ID, authorized_host_context_ref=HOST_CTX)
         self.assertEqual(len(provider.starts), 1)
         self.assertEqual(len(runs.claim_calls), 1)
         self.assertEqual(provider.starts[0].route_snapshot.provider_model_id, "provider/captured")
+        self.assertEqual(
+            provider.starts[0].continuation_scope,
+            _continuation_scope(provider_model_id="provider/captured"),
+        )
         self.assertEqual(first["run"]["run_id"], second["run"]["run_id"])
 
     def test_canonical_input_keeps_existing_admission_hash_shape(self) -> None:

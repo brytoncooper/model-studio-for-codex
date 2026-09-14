@@ -48,6 +48,11 @@ def _item_identity(item):
     raise ContinuationError("This provider returned an unsupported continuation item.")
 
 
+def item_identity(item):
+    """Return the stable provider-neutral identity used for scoped replay."""
+    return _item_identity(item)
+
+
 def local_item_id(original):
     """An id Codex keeps for streaming but drops before sending history to OpenAI.
 

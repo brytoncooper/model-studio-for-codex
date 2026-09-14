@@ -257,18 +257,23 @@ class ChatStreamTranslator:
         events.append({"type": "response.completed", "response": document})
         return events
 
-    def _save_continuation(self):
-        if self.continuation is None:
-            return
+    @property
+    def continuation_records(self):
+        """Detached records for the completed chat segment.
+
+        Execution owns the durable store.  The optional legacy collaborator
+        still receives the same records from ``finish`` for isolated callers.
+        """
+        return copy.deepcopy(self._continuation_records())
+
+    def _continuation_records(self):
         records = []
         if self.message:
             item = {
                 "type": "message",
                 "id": self.message["id"],
                 "role": "assistant",
-                "content": [
-                    {"type": "output_text", "text": self.message["text"]}
-                ],
+                "content": [{"type": "output_text", "text": self.message["text"]}],
             }
             records.append((item, {"assistant_fields": self.assistant_fields}))
         for state in self.tool_calls.values():
@@ -287,16 +292,17 @@ class ChatStreamTranslator:
                     {
                         "type": "reasoning",
                         "id": self.reasoning["id"],
-                        "summary": [
-                            {
-                                "type": "summary_text",
-                                "text": self.reasoning["text"],
-                            }
-                        ],
+                        "summary": [{"type": "summary_text", "text": self.reasoning["text"]}],
                     },
                     {"assistant_fields": self.assistant_fields},
                 )
             )
+        return records
+
+    def _save_continuation(self):
+        if self.continuation is None:
+            return
+        records = self._continuation_records()
         self.continuation.save(self.scope, self.response_id, records)
 
     def _usage(self):

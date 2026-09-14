@@ -12,6 +12,7 @@ import math
 from model_deck.engine.routing.ports import (
     CapabilityFeature,
     CapabilityTriState,
+    ContinuationScope,
     RouteResolveRequest,
     RouteResolver,
 )
@@ -374,8 +375,21 @@ def _provider_request(request: RunRequest) -> RunRequest:
         idempotency_key=request.idempotency_key,
         route_snapshot=request.route_snapshot,
         input=request.input,
+        continuation_scope=request.continuation_scope,
         tools=_tools_advertised_to_provider(request.tools, request.options),
         options=_detached_options(request.options),
+    )
+
+
+def _route_matches_continuation(
+    route: Any,
+    scope: ContinuationScope,
+) -> bool:
+    return (
+        route.connection_id == scope.connection_id
+        and route.provider_id == scope.provider_id
+        and route.provider_model_id == scope.provider_model_id
+        and route.execution_mode == scope.execution_mode
     )
 
 
@@ -645,6 +659,12 @@ class StartRunUseCase:
                 capability_requirements=capability_requirements,
             )
         )
+        if session.continuation_scope is None:
+            raise ValueError("session continuation scope is missing")
+        if not _route_matches_continuation(route, session.continuation_scope):
+            raise ValueError(
+                "registration selection is incompatible with the session continuation scope"
+            )
         command = StartRunCommand(
             admission_key=admission_key,
             request_hash=request_hash,
@@ -656,6 +676,7 @@ class StartRunUseCase:
             tools=validated["tools"],
             authorized_host_context_ref=authorized_host_context_ref,
             options=validated["options"],
+            continuation_scope=session.continuation_scope,
         )
         admission = self._runs.admit(command)
         if not admission.dispatch_required:
@@ -666,6 +687,7 @@ class StartRunUseCase:
             normalized_input=validated["input"],
             tools=validated["tools"],
             options=validated["options"],
+            continuation_scope=session.continuation_scope,
         )
         return {"run": _run_summary(run)}
 
@@ -677,6 +699,7 @@ class StartRunUseCase:
         normalized_input: NormalizedRunInput,
         tools: tuple[ToolDefinition, ...],
         options: RunOptions,
+        continuation_scope: ContinuationScope,
     ) -> RunRecord:
         run = admission.run
         claimed = self._runs.claim_dispatch(
@@ -689,6 +712,7 @@ class StartRunUseCase:
             idempotency_key=idempotency_key,
             route_snapshot=claimed.route_snapshot,
             input=normalized_input,
+            continuation_scope=continuation_scope,
             tools=_tools_advertised_to_provider(tools, options),
             options=_detached_options(options),
         )

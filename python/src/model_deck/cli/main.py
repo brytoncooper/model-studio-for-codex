@@ -117,7 +117,11 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
 
                 profile = OpenAICompatibleProfile.load(provider_config_path)
                 provider_execution, provider_routes = compose_openai_compatible_profile(
-                    profile, route_definition_factory=ProviderRouteDefinition
+                    profile,
+                    route_definition_factory=ProviderRouteDefinition,
+                    continuation_store_path=(
+                        Path(args.state_root) / "engine" / "provider-continuation.sqlite3"
+                    ).resolve(),
                 )
         except (OSError, RuntimeError, TypeError, ValueError):
             _stderr("engine serve: provider configuration is unavailable")
@@ -151,6 +155,7 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
     runtime = build_engine_server(**forward_kwargs)
     if enable_codex_bridge and bridge_paths is not None:
         from model_deck.integrations.hosts.codex.bridge import CodexResponsesBridge
+        from model_deck.integrations.providers.continuation import compaction
 
         descriptor_path, token_path, bridge_state_path = bridge_paths
         bridge = CodexResponsesBridge(
@@ -162,6 +167,7 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
             descriptor_path=descriptor_path,
             rendezvous_loader=load_rendezvous_file,
             client_factory=UnixSocketEngineClient,
+            compaction_codec=compaction,
         )
         runtime.server.start()
         try:

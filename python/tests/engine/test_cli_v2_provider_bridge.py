@@ -128,6 +128,9 @@ class CliV2ProviderServeTests(unittest.TestCase):
         self.compose_fn.assert_called_once_with(
             self.profile,
             route_definition_factory=mock.ANY,
+            continuation_store_path=(
+                state / "engine" / "provider-continuation.sqlite3"
+            ).resolve(),
         )
         kwargs = build_mock.call_args.kwargs
         self.assertIs(kwargs["provider_execution"], self.provider_execution)

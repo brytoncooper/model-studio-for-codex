@@ -68,6 +68,8 @@ from model_deck.engine.sessions.ports import (
     GetSessionCommand,
     SelectModelCommand,
     SessionActiveRunConflictError,
+    SessionContinuationResetPort,
+    SessionContinuationResetUnavailableError,
     SessionNotFoundError,
     SessionRecord,
     SessionRevisionConflictError,
@@ -193,11 +195,17 @@ class SQLiteSessionRunRepository:
         uuid_factory: Callable[[], str] | None = None,
         utc_clock: Callable[[], str] | None = None,
         connect: Callable[[Path], sqlite3.Connection] | None = None,
+        continuation_reset: SessionContinuationResetPort | None = None,
     ) -> None:
+        if continuation_reset is not None and not isinstance(
+            continuation_reset, SessionContinuationResetPort
+        ):
+            raise ValueError("continuation_reset must implement SessionContinuationResetPort")
         self._db_path = db_path
         self._uuid_factory = uuid_factory or (lambda: str(uuid.uuid4()))
         self._utc_clock = utc_clock or (lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
         self._connect_factory = connect or self._default_connect
+        self._continuation_reset = continuation_reset
         self._usage_cursor_key = secrets.token_bytes(32)
 
     def _usage_cursor(self, high_water: int, after: int) -> CommittedUsageCursor:
@@ -278,12 +286,13 @@ class SQLiteSessionRunRepository:
                 session_id = self._new_uuid()
                 conn.execute(
                     "INSERT INTO sessions (session_id, registration_id, revision, host_context_ref, continuation_scope_json) "
-                    "VALUES (?, ?, ?, ?, NULL)",
+                    "VALUES (?, ?, ?, ?, ?)",
                     (
                         session_id,
                         command.registration_id,
                         1,
                         command.host_context_ref,
+                        _serialize_continuation(command.continuation_scope),
                     ),
                 )
                 conn.commit()
@@ -292,6 +301,7 @@ class SQLiteSessionRunRepository:
                     registration_id=command.registration_id,
                     revision=1,
                     host_context_ref=command.host_context_ref,
+                    continuation_scope=command.continuation_scope,
                 )
             except Exception:
                 conn.rollback()
@@ -304,6 +314,8 @@ class SQLiteSessionRunRepository:
         try:
             self._ensure_schema(conn)
             conn.execute("BEGIN IMMEDIATE")
+            reset_token: str | None = None
+            session_committed = False
             try:
                 row = conn.execute(
                     "SELECT session_id, registration_id, revision, host_context_ref, continuation_scope_json "
@@ -326,8 +338,23 @@ class SQLiteSessionRunRepository:
                 ).fetchone()
                 if active is not None:
                     raise SessionActiveRunConflictError("session has an active run")
+                if command.continuation_reset:
+                    previous_scope = _deserialize_continuation(row[4])
+                    if previous_scope is not None:
+                        if self._continuation_reset is None:
+                            raise SessionContinuationResetUnavailableError(
+                                "the selected provider does not support continuation reset"
+                            )
+                        reset_token = self._continuation_reset.prepare_session_continuation_reset(
+                            command.session_id,
+                            previous_scope.handle,
+                        )
                 new_revision = row[2] + 1
-                continuation_json = None if command.continuation_reset else row[4]
+                continuation_json = (
+                    _serialize_continuation(command.replacement_continuation_scope)
+                    if command.continuation_reset
+                    else row[4]
+                )
                 conn.execute(
                     "UPDATE sessions SET registration_id = ?, revision = ?, continuation_scope_json = ? "
                     "WHERE session_id = ?",
@@ -339,17 +366,28 @@ class SQLiteSessionRunRepository:
                     ),
                 )
                 conn.commit()
+                session_committed = True
+                if reset_token is not None:
+                    self._continuation_reset.commit_session_continuation_reset(
+                        reset_token
+                    )
                 return SessionRecord(
                     session_id=row[0],
                     registration_id=command.registration_id,
                     revision=new_revision,
                     host_context_ref=row[3],
-                    continuation_scope=_deserialize_continuation(row[4])
-                    if not command.continuation_reset
-                    else None,
+                    continuation_scope=_deserialize_continuation(continuation_json),
                 )
             except Exception:
-                conn.rollback()
+                if not session_committed:
+                    conn.rollback()
+                    if reset_token is not None and self._continuation_reset is not None:
+                        try:
+                            self._continuation_reset.rollback_session_continuation_reset(
+                                reset_token
+                            )
+                        except Exception:
+                            pass
                 raise
         finally:
             conn.close()
@@ -844,9 +882,11 @@ class SQLiteSessionRunRepository:
             try:
                 dispatchable: list[RunRequest] = []
                 rows = conn.execute(
-                    "SELECT run_id, session_id, client_request_id, idempotency_key, "
-                    "route_snapshot_json, input_json, tools_json, options_json "
-                    "FROM runs WHERE state = ? AND dispatch_claimed = 0",
+                    "SELECT runs.run_id, runs.session_id, runs.client_request_id, runs.idempotency_key, "
+                    "runs.route_snapshot_json, runs.input_json, runs.tools_json, runs.options_json, "
+                    "sessions.continuation_scope_json "
+                    "FROM runs JOIN sessions ON sessions.session_id = runs.session_id "
+                    "WHERE runs.state = ? AND runs.dispatch_claimed = 0",
                     (RunState.ACCEPTED.value,),
                 ).fetchall()
                 for row in rows:
@@ -858,6 +898,7 @@ class SQLiteSessionRunRepository:
                             idempotency_key=row[3],
                             route_snapshot=_deserialize_route_snapshot(row[4]),
                             input=_deserialize_input(row[5]),
+                            continuation_scope=_deserialize_continuation(row[8]),
                             tools=_deserialize_tools(row[6]),
                             options=_deserialize_run_options(row[7]),
                         )
@@ -936,6 +977,7 @@ class SQLiteSessionRunRepository:
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript(_SCHEMA_SQL)
+        _ensure_continuation_scope_column(conn)
         _ensure_run_options_column(conn)
         ensure_projection_outbox_schema(conn)
 
@@ -1075,6 +1117,18 @@ def _deserialize_input(payload: str) -> NormalizedRunInput:
     if not isinstance(messages, list):
         raise ValueError("invalid stored input")
     return NormalizedRunInput(messages=tuple(messages))
+
+
+def _ensure_continuation_scope_column(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "continuation_scope_json" in columns:
+        return
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN continuation_scope_json TEXT")
+    except sqlite3.OperationalError:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+        if "continuation_scope_json" not in columns:
+            raise
 
 
 def _ensure_run_options_column(conn: sqlite3.Connection) -> None:

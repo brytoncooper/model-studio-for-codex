@@ -57,10 +57,30 @@ not mutate the request or collaborator results.
 
 Compaction bytes and reasoning state remain opaque to this host adapter. A
 caller may provide `decode_compaction(item) -> str | None` and
-`normalize_reasoning(item) -> list[normalized item]`. The latter is the future
-B15 seam and may deliberately return an empty list when continuation policy
-has determined that an item carries no model-visible material. Without these
-collaborators, the corresponding input fails before run admission.
+`normalize_reasoning(item) -> list[normalized item]`. The reasoning
+collaborator is the B15 continuation seam and may deliberately return an empty
+list when continuation policy has determined that an item carries no
+model-visible material. Without these collaborators, the corresponding input
+fails before run admission.
+
+The Codex bridge integrates both host compaction entry paths. A streamed
+`/v1/responses` request containing `compaction_trigger` and a unary
+`/v1/responses/compact` request use the same tool-less summary run on the
+configured route and model. The trigger is removed and advertised tools are
+withheld from that engine run. Only a terminal `run.completed` with a non-empty
+summary produces the single `compaction` item Codex expects; a failed run,
+including one that emitted partial text, or an empty summary is discarded and
+does not replace the history. On a later turn, a router-owned compaction item
+is decoded into ordinary user text by the explicit collaborator. Provider-native
+encrypted continuation state is not host-visible replay and is never treated as
+portable across provider, account, or model scope.
+
+The composed bridge always supplies both collaborators. It decodes only the
+Model Deck compaction marker and returns an empty normalized list for opaque
+reasoning. This is explicit cross-provider stripping: the OpenAI-compatible
+execution adapter restores compatible reasoning/signature material from its
+private route-scoped store, while a different route receives no foreign
+ciphertext.
 
 Collaborator exceptions are replaced with a fixed display-safe error. No
 encrypted payload or callback diagnostic is copied into the error message.

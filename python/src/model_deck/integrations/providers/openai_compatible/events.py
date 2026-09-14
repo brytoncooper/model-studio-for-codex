@@ -23,6 +23,20 @@ __all__ = [
 
 
 _ERROR_MESSAGE = "openai-compatible event translation failed"
+
+
+def _strip_for_raw(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Deep-copy a wire item for the raw-provider accumulator.
+
+    We keep the provider-private fields the canonical view strips so that
+    a later same-scope continuation record can replay them back to the
+    provider. ``_id`` and other host-tagged identifiers are preserved as-is.
+    """
+    if not isinstance(item, Mapping):
+        _reject()
+    return copy.deepcopy(dict(item))
+
+
 _IGNORED_EVENT_TYPES = frozenset(
     {
         "response.in_progress",
@@ -134,6 +148,8 @@ class ResponsesEventTranslator:
         self._terminal = False
         self._outstanding_call_id: str | None = None
         self._completed_output_items: list[dict[str, Any]] = []
+        self._raw_provider_items: list[dict[str, Any]] = []
+        self._response_id: str | None = None
 
     @property
     def outstanding_call_id(self) -> str | None:
@@ -150,6 +166,24 @@ class ResponsesEventTranslator:
     @property
     def completed_output_items(self) -> tuple[dict[str, Any], ...]:
         return tuple(copy.deepcopy(self._completed_output_items))
+
+    @property
+    def raw_provider_items(self) -> tuple[dict[str, Any], ...]:
+        """Provider output items with provider-private fields preserved.
+
+        The canonical ``completed_output_items`` view strips fields like
+        ``encrypted_content``, ``reasoning_details`` and
+        ``encrypted_function_args`` so engine events never see opaque provider
+        state. The raw view keeps those fields so a later same-scope
+        continuation record can round-trip them back to the provider. Snapshots
+        are detached; mutating one does not affect later reads.
+        """
+        return tuple(copy.deepcopy(self._raw_provider_items))
+
+    @property
+    def response_id(self) -> str | None:
+        """The provider response id for the currently active segment."""
+        return self._response_id
 
     def mark_tool_result(self, call_id: str) -> None:
         if (
@@ -175,6 +209,9 @@ class ResponsesEventTranslator:
                 _reject()
             self._segment_started = True
             self._segment_ended = False
+            response = envelope.get("response")
+            if isinstance(response, Mapping) and isinstance(response.get("id"), str) and response["id"]:
+                self._response_id = response["id"]
             if self._run_started:
                 return ()
             self._run_started = True
@@ -243,10 +280,12 @@ class ResponsesEventTranslator:
         item_type = item.get("type")
         if item_type == "message":
             normalized = self._normalize_message(item)
+            self._raw_provider_items.append(_strip_for_raw(item))
             if normalized is not None:
                 self._completed_output_items.append(normalized)
             return ()
         if item_type == "reasoning":
+            self._raw_provider_items.append(_strip_for_raw(item))
             return ()
         if item_type != "function_call" or self._outstanding_call_id is not None:
             print(
@@ -280,6 +319,7 @@ class ResponsesEventTranslator:
             )
             raise
         self._outstanding_call_id = call_id
+        self._raw_provider_items.append(_strip_for_raw(item))
         self._completed_output_items.append(
             _validate_history_item(
                 {

@@ -18,7 +18,9 @@ from model_deck.engine.runs.ports import (
     ToolDefinition,
 )
 from model_deck.integrations.providers.openai_compatible.request_mapping import (
+    ApplyResult,
     OpenAICompatibleRequestMappingError,
+    apply_continuation_items,
     build_chat_request,
     build_responses_request,
 )
@@ -325,6 +327,198 @@ class ChatRequestMappingTests(unittest.TestCase):
         )
         self.assertIsNone(caught.exception.__cause__)
         self.assertIsNone(caught.exception.__context__)
+
+
+class ApplyContinuationItemsTests(unittest.TestCase):
+    """apply_continuation_items must match by visible identity, not by item_ref."""
+
+    def _body(self):
+        return {
+            "model": "m",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hi"}],
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "earlier reply"}],
+                },
+            ],
+            "stream": True,
+        }
+
+    def test_responses_apply_replaces_matching_message_in_place(self) -> None:
+        body = self._body()
+        records = (
+            (
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "earlier reply"}],
+                },
+                {"assistant_fields": {"reasoning_content": "stale"}},
+            ),
+        )
+        apply_continuation_items(body, records, wire="responses")
+        self.assertEqual(len(body["input"]), 2)
+        self.assertEqual(
+            body["input"][1].get("reasoning_content"), "stale"
+        )
+
+    def test_responses_apply_reports_unmatched_records_without_prepending(self) -> None:
+        body = self._body()
+        records = (
+            (
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "no-match"}],
+                },
+                {"assistant_fields": {"reasoning_content": "orphan"}},
+            ),
+        )
+        result = apply_continuation_items(body, records, wire="responses")
+        self.assertEqual(result.matched, 0)
+        self.assertEqual(result.unmatched, 1)
+        # body length unchanged
+        self.assertEqual(len(body["input"]), 2)
+
+    def test_responses_apply_raises_for_required_metadata_missing_on_match(self) -> None:
+        body = self._body()
+        # missing reasoning_content for an item with reasoning field required
+        records = (
+            (
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "earlier reply"}],
+                },
+                {"assistant_fields": {}},
+            ),
+        )
+        with self.assertRaises(OpenAICompatibleRequestMappingError):
+            apply_continuation_items(body, records, wire="responses")
+
+    def test_responses_apply_preserves_provider_private_fields_on_reasoning(self) -> None:
+        body = {
+            "model": "m",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "id": "rs-1",
+                    "summary": [{"type": "summary_text", "text": "thinking"}],
+                    "encrypted_content": "blob-1",
+                },
+            ],
+            "stream": True,
+        }
+        records = (
+            (
+                {
+                    "type": "reasoning",
+                    "id": "rs-1",
+                    "summary": [{"type": "summary_text", "text": "thinking"}],
+                },
+                {"call_fields": {"encrypted_content": "blob-1"}},
+            ),
+        )
+        result = apply_continuation_items(body, records, wire="responses")
+        self.assertEqual(result.matched, 1)
+        self.assertEqual(body["input"][0]["encrypted_content"], "blob-1")
+
+    def test_responses_restore_complete_raw_item_and_reasoning_order(self) -> None:
+        body = self._body()
+        visible_message = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "earlier reply"}],
+        }
+        records = (
+            (
+                {"type": "reasoning", "summary": []},
+                {"raw_item": {
+                    "type": "reasoning", "id": "rs-first",
+                    "summary": [], "encrypted_content": "opaque-first",
+                }},
+                "resp-1",
+            ),
+            (
+                {"type": "reasoning", "summary": []},
+                {"raw_item": {
+                    "type": "reasoning", "id": "rs-second",
+                    "summary": [], "encrypted_content": "opaque-second",
+                }},
+                "resp-1",
+            ),
+            (
+                visible_message,
+                {"raw_item": {
+                    **visible_message,
+                    "id": "msg-provider",
+                    "encrypted_content": "opaque-message",
+                    "signature": "synthetic-signature",
+                }},
+                "resp-1",
+            ),
+        )
+
+        result = apply_continuation_items(body, records, wire="responses")
+
+        self.assertEqual(result.matched, 3)
+        restored = body["input"][1:4]
+        self.assertEqual(
+            [item["id"] for item in restored],
+            ["rs-first", "rs-second", "msg-provider"],
+        )
+        self.assertEqual(restored[0]["encrypted_content"], "opaque-first")
+        self.assertEqual(restored[2]["signature"], "synthetic-signature")
+
+    def test_responses_disambiguate_repeated_visible_messages_by_record_order(self) -> None:
+        visible = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "same reply"}],
+        }
+        body = {"model": "m", "input": [copy.deepcopy(visible), copy.deepcopy(visible)]}
+        records = (
+            (visible, {"raw_item": {**visible, "id": "msg-first", "signature": "sig-1"}}, "resp-1"),
+            (visible, {"raw_item": {**visible, "id": "msg-second", "signature": "sig-2"}}, "resp-2"),
+        )
+
+        result = apply_continuation_items(body, records, wire="responses")
+
+        self.assertEqual(result, ApplyResult(matched=2, unmatched=0))
+        self.assertEqual(
+            [(item["id"], item["signature"]) for item in body["input"]],
+            [("msg-first", "sig-1"), ("msg-second", "sig-2")],
+        )
+
+    def test_chat_apply_replaces_matching_messages(self) -> None:
+        body = {
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "earlier reply"},
+            ],
+            "stream": True,
+        }
+        records = (
+            (
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "earlier reply"}],
+                },
+                {"assistant_fields": {"reasoning_content": "stale"}},
+            ),
+        )
+        apply_continuation_items(body, records, wire="chat_completions")
+        self.assertEqual(
+            body["messages"][1].get("reasoning_content"), "stale"
+        )
 
 
 if __name__ == "__main__":

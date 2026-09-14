@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Mapping
+from collections.abc import Callable
 from typing import Any
 
 from model_deck.engine.routing.ports import (
@@ -96,6 +97,25 @@ def _continuation_scope_payload(scope: ContinuationScope) -> dict[str, Any]:
     }
 
 
+def _new_continuation_handle() -> str:
+    return f"ref:continuation.{uuid.uuid4()}"
+
+
+def _scope_for_route(
+    route: RouteSnapshot,
+    handle_factory: Callable[[], str],
+) -> ContinuationScope:
+    handle = handle_factory()
+    _validate_opaque_ref("continuation handle", handle)
+    return ContinuationScope(
+        connection_id=route.connection_id,
+        provider_model_id=route.provider_model_id,
+        provider_id=route.provider_id,
+        execution_mode=route.execution_mode,
+        handle=handle,
+    )
+
+
 def _session_payload(record: SessionRecord) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "session_id": record.session_id,
@@ -162,9 +182,12 @@ class CreateSessionUseCase:
         self,
         repository: SessionRepository,
         route_resolver: RouteResolver,
+        *,
+        continuation_handle_factory: Callable[[], str] = _new_continuation_handle,
     ) -> None:
         self._repository = repository
         self._route_resolver = route_resolver
+        self._continuation_handle_factory = continuation_handle_factory
 
     def execute(self, params: Mapping[str, Any] | None) -> dict[str, Any]:
         params = dict(params or {})
@@ -174,10 +197,14 @@ class CreateSessionUseCase:
             "registration_id", params.get("registration_id")
         )
         host_context_ref = _optional_host_context_ref(params)
-        _resolve_registration(self._route_resolver, registration_id)
+        route = _resolve_registration(self._route_resolver, registration_id)
         command = CreateSessionCommand(
             registration_id=registration_id,
             host_context_ref=host_context_ref,
+            continuation_scope=_scope_for_route(
+                route,
+                self._continuation_handle_factory,
+            ),
         )
         record = self._repository.create(command)
         return _create_result(record)
@@ -202,9 +229,12 @@ class SelectSessionModelUseCase:
         self,
         repository: SessionRepository,
         route_resolver: RouteResolver,
+        *,
+        continuation_handle_factory: Callable[[], str] = _new_continuation_handle,
     ) -> None:
         self._repository = repository
         self._route_resolver = route_resolver
+        self._continuation_handle_factory = continuation_handle_factory
 
     def execute(self, params: Mapping[str, Any] | None) -> dict[str, Any]:
         params = dict(params or {})
@@ -235,6 +265,11 @@ class SelectSessionModelUseCase:
             registration_id=registration_id,
             expected_revision=expected_revision,
             continuation_reset=continuation_reset,
+            replacement_continuation_scope=(
+                _scope_for_route(route, self._continuation_handle_factory)
+                if continuation_reset
+                else None
+            ),
         )
         record = self._repository.select_model(command)
         return _select_result(record)

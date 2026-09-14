@@ -20,19 +20,22 @@ records bound to a model registration. It backs the wire methods
 
 - `SessionRecord` (frozen, slots) — `session_id`, `registration_id`, `revision`,
   optional `host_context_ref`, optional `continuation_scope`.
-- `CreateSessionCommand` — `registration_id` plus optional `host_context_ref`.
+- `CreateSessionCommand` — `registration_id`, optional `host_context_ref`, and
+  optional engine-issued `continuation_scope`.
 - `GetSessionCommand` — `session_id`.
 - `SelectModelCommand` — `session_id`, `registration_id`, `expected_revision`,
-  optional `continuation_reset` (defaults to `False`).
+  optional `continuation_reset` (defaults to `False`), and an optional
+  replacement scope supplied only for an explicit reset.
 
 ### Continuation scope
 
 `ContinuationScope` is defined in `model_deck.engine.routing.ports` and reused
 here. It carries `connection_id`, `provider_id`, `provider_model_id`,
-`execution_mode`, and an opaque `handle`. The use cases do not construct or
-update a `ContinuationScope` themselves; the repository adapter is the only
-writer. The session port today neither captures a handle from the resolver nor
-hands one off to the runs package.
+`execution_mode`, and an opaque `handle`. `CreateSessionUseCase` resolves the
+selected route and constructs the initial scope with an engine-issued handle.
+`SelectSessionModelUseCase` preserves that scope for a compatible selection or
+constructs a replacement scope for an explicit reset. The repository persists
+the scope, and the runs package copies it into admitted provider work.
 
 ### Repository protocol
 
@@ -54,18 +57,19 @@ hands one off to the runs package.
 
 - `CreateSessionUseCase(repository, route_resolver)` — validates params,
   resolves the registration through `RouteResolver`, calls `repository.create`,
-  returns `{ session_id, revision }`. The resolved `RouteSnapshot` is consumed
-  only as a validation probe; it is not converted into a continuation scope
-  here.
+  returns `{ session_id, revision }`. The resolved `RouteSnapshot` supplies the
+  route identity for a new `ContinuationScope`; the opaque handle is issued by
+  the injected handle factory.
 - `GetSessionUseCase(repository)` — validates `session_id`, calls
   `repository.get`, returns the full `SessionRecord` payload (omitting
   `host_context_ref` and `continuation_scope` when they are unset).
 - `SelectSessionModelUseCase(repository, route_resolver)` — validates params,
   re-reads the session, resolves the new registration, enforces continuation
   compatibility against the stored scope (unless `continuation_reset=True`), and
-  calls `repository.select_model`. Returns `{ session_id, revision }`. The use
-  case never replaces the stored scope itself; it only signals intent via the
-  `continuation_reset` flag on the command.
+  calls `repository.select_model`. Returns `{ session_id, revision }`. An
+  explicit reset includes a newly issued replacement scope on the command; the
+  composed repository also retires provider-private state bound to the prior
+  session id and handle before committing the selection.
 
 ## Invariants
 
@@ -119,9 +123,14 @@ cross-package port vocabulary.
   on missing or removed registrations; returning `None` is not supported.
 - Storage-side revision conflicts are surfaced through the repository contract;
   the use case does not attempt CAS retries.
-- The session port does not capture or hand off a continuation handle today.
-  Compatibility checking between a new `RouteSnapshot` and the stored
-  `ContinuationScope` lives in `select_model`; capture of an opaque `handle`
-  and any hand-off into provider work belong to the repository adapter (and,
-  eventually, the runs package), not to this package's use cases.
+- Continuation handles are engine-issued routing capabilities, not
+  provider-native resume handles. Provider adapters may use the trusted scope
+  to locate private state, but callers and request bodies cannot choose it.
+- Reset retirement spans the engine session database and the provider-private
+  continuation database through a typed prepare/commit/rollback port.
+  Preparation preserves old records; a session-database failure rolls back the
+  reset intent. If the process stops after the session commit, the durable
+  intent lets the replacement scope finish retirement on its next local load.
+  Providers without private state implement an explicit no-op port; an absent
+  port causes reset to fail rather than silently stranding state.
 - The package does not handle transport framing, persistence, or provider IO.

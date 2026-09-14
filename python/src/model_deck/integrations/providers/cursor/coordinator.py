@@ -727,6 +727,18 @@ class CursorExecutionCoordinator:
             entry = self._terminal_handles.get(run_id)
             return entry[0] if entry is not None else None
 
+    def prepare_session_continuation_reset(
+        self, _session_id: str, _continuation_handle: str
+    ) -> None:
+        """Cursor persists no provider-private continuation records."""
+        return None
+
+    def commit_session_continuation_reset(self, _reset_token: str) -> None:
+        return None
+
+    def rollback_session_continuation_reset(self, _reset_token: str) -> None:
+        return None
+
     def start(
         self, request: RunRequest, sink: ProviderRunEventSink
     ) -> ProviderRunHandle:

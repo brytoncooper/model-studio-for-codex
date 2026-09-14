@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
-from model_deck.engine.routing.ports import RouteSnapshot
+from model_deck.engine.routing.ports import ContinuationScope, RouteSnapshot
 
 SUBSCRIBER_QUEUE_MAX_EVENTS = 256
 SUBSCRIBER_QUEUE_MAX_BYTES = 1_048_576
@@ -161,6 +161,7 @@ class RunRequest:
     idempotency_key: str
     route_snapshot: RouteSnapshot
     input: NormalizedRunInput
+    continuation_scope: ContinuationScope | None = None
     tools: tuple[ToolDefinition, ...] = ()
     options: RunOptions = RunOptions()
 
@@ -214,6 +215,7 @@ class StartRunCommand:
     registration_id: str
     route_snapshot: RouteSnapshot
     input: NormalizedRunInput
+    continuation_scope: ContinuationScope | None = None
     tools: tuple[ToolDefinition, ...] = ()
     authorized_host_context_ref: str | None = None
     options: RunOptions = RunOptions()

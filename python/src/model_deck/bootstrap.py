@@ -59,6 +59,7 @@ from model_deck.engine.runs.use_cases import (
     SubmitToolResultUseCase,
 )
 from model_deck.engine.runs.ports import ProviderExecutionPort
+from model_deck.engine.sessions.ports import SessionContinuationResetPort
 from model_deck.engine.sessions.use_cases import (
     CreateSessionUseCase,
     GetSessionUseCase,
@@ -306,7 +307,14 @@ def build_engine_server(
                         capability_snapshot_ref="ref:capability.fixture",
                     ),
                 }
-            session_run_repository = SQLiteSessionRunRepository(application_database_path)
+            session_run_repository = SQLiteSessionRunRepository(
+                application_database_path,
+                continuation_reset=(
+                    run_provider
+                    if isinstance(run_provider, SessionContinuationResetPort)
+                    else None
+                ),
+            )
             run_repository = session_run_repository
             usage_repository = SqliteUsageRepository(application_database_path)
             usage_query = ReconciledUsageQueryUseCase(

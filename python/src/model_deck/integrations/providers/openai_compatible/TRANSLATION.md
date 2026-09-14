@@ -26,6 +26,16 @@ Pure Responses-to-chat-completions request translation, extracted from
 - ID generation defaults to UUID but accepts an injectable `new_id`.
 - No env, home, network, or credential access.
 
+The execution adapter, not this pure translator, owns B15 persistence. It
+constructs the trusted nine-field session/route scope from the engine's
+`RunRequest`, loads ordered records from the private continuation store, and
+passes only matching records through `load_record`. Responses-wire replay
+restores the complete raw provider item; chat-wire replay restores the
+provider-specific assistant and tool-call fields supported by that wire.
+Required missing or incompatible records fail before HTTP. Only a terminal
+successful response is saved, and a compaction checkpoint clears earlier
+provider-private state before the compacted conversation continues.
+
 ## Known limits
 
 - Input must already be Responses-normalized; this module does not run

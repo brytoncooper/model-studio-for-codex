@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from model_deck.integrations.hosts.codex.bridge import CodexResponsesBridge, _ResponsesStream
 from model_deck.integrations.hosts.codex.state import BridgeState
 from model_deck.integrations.hosts.codex.tool_conversion import ToolConversionError, convert_tools, restore_tool_identity
+from model_deck.integrations.providers.continuation import compaction
 
 
 class BridgePrimitiveTests(unittest.TestCase):
@@ -142,6 +143,7 @@ class CodexResponsesBridgeHTTPTests(unittest.TestCase):
             profile=profile, state_path=root / "bridge-state.json",
             token_path=root / "bridge-token", descriptor_path=root / "bridge.json",
             rendezvous_loader=lambda _path: None, client_factory=lambda *args, **kwargs: None,
+            compaction_codec=compaction,
         )
         self.engine = _FakeEngine()
         self.bridge.engine = self.engine
@@ -167,6 +169,46 @@ class CodexResponsesBridgeHTTPTests(unittest.TestCase):
         connection.close()
         return [json.loads(block.removeprefix("data: ")) for block in payload.strip().split("\n\n")]
 
+    def _post_path(self, path: str, body: dict, *, thread_id: str = "thread-1"):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.request("POST", path, body=json.dumps(body), headers={
+            "Authorization": f"Bearer {self.bridge.token}", "Content-Type": "application/json",
+            "x-codex-turn-metadata": json.dumps({"thread_id": thread_id, "turn_id": "compact-1"}),
+        })
+        response = connection.getresponse()
+        payload = response.read().decode("utf-8")
+        connection.close()
+        return response.status, payload
+
+    def test_streamed_compaction_emits_one_local_item_and_withholds_tools(self) -> None:
+        self.engine.next_events.append([
+            {"kind": "usage.observed", "usage": {"unit_kind": "output_tokens", "units": 4}},
+            {"kind": "content.delta", "delta": "handoff"}, {"kind": "run.completed"},
+        ])
+        events = self._post({"tools": [{"type": "function", "name": "must_not_run"}],
+                             "input": [{"type": "message", "role": "user", "content": "x"},
+                                       {"type": "compaction_trigger"}]})
+        items = [event["item"] for event in events if event["type"] == "response.output_item.done"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["type"], "compaction")
+        starts = [params for method, params in self.engine.calls if method == "engine.v1.runs.start"]
+        self.assertEqual(starts[-1]["tools"], [])
+        self.assertNotIn("compaction_trigger", json.dumps(starts[-1]))
+
+    def test_unary_compaction_returns_only_item_shape(self) -> None:
+        self.engine.next_events.append([{"kind": "content.delta", "delta": "summary"}, {"kind": "run.completed"}])
+        status, payload = self._post_path("/v1/responses/compact", {"input": [{"type": "message", "role": "user", "content": "x"}]})
+        self.assertEqual(status, 200)
+        result = json.loads(payload)
+        self.assertEqual(result["output"][0]["type"], "compaction")
+        self.assertNotIn("id", result)
+
+    def test_failed_compaction_with_partial_text_returns_no_item(self) -> None:
+        self.engine.next_events.append([{"kind": "content.delta", "delta": "partial"}, {"kind": "run.failed"}])
+        status, payload = self._post_path("/v1/responses/compact", {"input": [{"type": "message", "role": "user", "content": "x"}]})
+        self.assertEqual(status, 502)
+        self.assertNotIn("partial", payload)
+
     def test_streams_text_and_continues_same_engine_session(self) -> None:
         self.engine.next_events.extend([
             [{"kind": "content.delta", "delta": "fixed"}, {"kind": "run.completed"}],
@@ -181,6 +223,34 @@ class CodexResponsesBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(starts[0]["session_id"], starts[1]["session_id"])
         self.assertEqual(sum(method == "engine.v1.sessions.create" for method, _ in self.engine.calls), 1)
         self.assertEqual(sum(event["type"] == "response.completed" for event in first), 1)
+
+    def test_opaque_reasoning_is_stripped_before_engine_admission(self) -> None:
+        self.engine.next_events.append([
+            {"kind": "content.delta", "delta": "continued"},
+            {"kind": "run.completed"},
+        ])
+
+        events = self._post({
+            "input": [
+                {"type": "message", "role": "user", "content": "continue"},
+                {
+                    "type": "reasoning",
+                    "id": "rs_private",
+                    "encrypted_content": "must-not-cross-the-host-boundary",
+                    "summary": [],
+                },
+            ]
+        })
+
+        self.assertIn("continued", [event.get("delta") for event in events])
+        start = next(
+            params
+            for method, params in self.engine.calls
+            if method == "engine.v1.runs.start"
+        )
+        serialized = json.dumps(start)
+        self.assertNotIn("rs_private", serialized)
+        self.assertNotIn("must-not-cross-the-host-boundary", serialized)
 
     def test_tool_result_resumes_same_run(self) -> None:
         tools = [{"type": "namespace", "name": "shell", "tools": [{"type": "function", "name": "run", "parameters": {"type": "object"}}]}]

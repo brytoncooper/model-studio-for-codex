@@ -495,3 +495,165 @@ class IdentityAwareUsageEmissionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RawProviderItemsAccumulationTests(unittest.TestCase):
+    """Raw provider items preserve provider-private fields; canonical events strip them.
+
+    Per B15 the provider-private state (``encrypted_content``, ``reasoning_details``,
+    ``encrypted_function_args``) must round-trip into a scoped continuation record
+    so a later same-scope request can replay it. The canonical view that engine
+    events consume must not contain those fields.
+    """
+
+    def test_reasoning_output_item_accumulates_raw_provider_state(self) -> None:
+        translator = _translator(_identity())
+        translator.translate({"type": "response.created", "response": {}})
+
+        reasoning_item = {
+            "type": "reasoning",
+            "id": "rs-secret-1",
+            "summary": [{"type": "summary_text", "text": "thinking"}],
+            "encrypted_content": "opaque-blob-1",
+            "reasoning_details": [{"type": "summary", "text": "thinking"}],
+        }
+        events = translator.translate(
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": reasoning_item,
+            }
+        )
+
+        self.assertEqual(events, ())
+        raw = translator.raw_provider_items
+        self.assertEqual(len(raw), 1)
+        self.assertEqual(raw[0]["type"], "reasoning")
+        self.assertEqual(raw[0]["encrypted_content"], "opaque-blob-1")
+        self.assertEqual(
+            raw[0]["reasoning_details"], [{"type": "summary", "text": "thinking"}]
+        )
+        self.assertEqual(translator.completed_output_items, ())
+
+    def test_raw_provider_items_preserve_provider_private_fields_canonical_strips(self) -> None:
+        translator = _translator(_identity())
+        translator.translate({"type": "response.created", "response": {}})
+
+        translator.translate(
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}],
+                    "reasoning_details": [{"type": "summary", "text": "leaked"}],
+                },
+            }
+        )
+        translator.translate(
+            {
+                "type": "response.output_item.done",
+                "output_index": 1,
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "lookup",
+                    "arguments": "{}",
+                    "encrypted_function_args": "encrypted-args",
+                },
+            }
+        )
+
+        # Canonical events strip provider-private fields.
+        self.assertEqual(
+            translator.completed_output_items,
+            (
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}],
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "lookup",
+                    "arguments": "{}",
+                },
+            ),
+        )
+        # Raw preserves them so a continuation record can round-trip them.
+        raw = translator.raw_provider_items
+        self.assertEqual(len(raw), 2)
+        self.assertEqual(
+            raw[0]["reasoning_details"], [{"type": "summary", "text": "leaked"}]
+        )
+        self.assertEqual(raw[1]["encrypted_function_args"], "encrypted-args")
+        # Canonical view passed to events has no provider-private fields.
+        for canonical in translator.completed_output_items:
+            self.assertNotIn("reasoning_details", canonical)
+            self.assertNotIn("encrypted_function_args", canonical)
+            self.assertNotIn("encrypted_content", canonical)
+
+    def test_raw_provider_items_property_isolates_external_mutation(self) -> None:
+        translator = _translator(_identity())
+        translator.translate({"type": "response.created", "response": {}})
+
+        translator.translate(
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {
+                    "type": "reasoning",
+                    "id": "rs-x",
+                    "summary": [{"type": "summary_text", "text": "thinking"}],
+                    "encrypted_content": "blob",
+                },
+            }
+        )
+
+        snapshot = translator.raw_provider_items
+        snapshot[0]["encrypted_content"] = "tampered"
+        self.assertEqual(translator.raw_provider_items[0]["encrypted_content"], "blob")
+
+    def test_raw_provider_items_accumulate_in_output_order(self) -> None:
+        translator = _translator(_identity())
+        translator.translate({"type": "response.created", "response": {}})
+
+        for index, kind in enumerate(("reasoning", "message", "function_call")):
+            if kind == "reasoning":
+                item = {
+                    "type": "reasoning",
+                    "id": f"rs-{index}",
+                    "summary": [{"type": "summary_text", "text": "x"}],
+                    "encrypted_content": f"blob-{index}",
+                }
+            elif kind == "message":
+                item = {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": f"m-{index}"}],
+                    "reasoning_details": [{"type": "summary", "text": "leaked"}],
+                }
+            else:
+                item = {
+                    "type": "function_call",
+                    "call_id": f"call-{index}",
+                    "name": "lookup",
+                    "arguments": "{}",
+                    "encrypted_function_args": f"args-{index}",
+                }
+            translator.translate(
+                {"type": "response.output_item.done", "output_index": index, "item": item}
+            )
+
+        raw = translator.raw_provider_items
+        self.assertEqual(
+            [item["type"] for item in raw],
+            ["reasoning", "message", "function_call"],
+        )
+        self.assertEqual(raw[0]["encrypted_content"], "blob-0")
+        self.assertEqual(
+            raw[1]["reasoning_details"], [{"type": "summary", "text": "leaked"}]
+        )
+        self.assertEqual(raw[2]["encrypted_function_args"], "args-2")

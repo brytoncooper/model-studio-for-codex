@@ -29,7 +29,15 @@ format/tool-choice settings and aliases. It must preserve encrypted-input and
 compaction checks. The original broker still owns SDK model/reasoning/Fast
 selection; this adapter does not reconstruct prompt envelopes or configure SDKs.
 Aliases map wire tool names to host-authorized `ToolDefinition.name` values.
-Opaque continuation is refused; it is not silently resumed or billed again.
+
+For B15, continuation between Codex turns is a host-owned normalized
+full-history replay: `request.input_messages` contains the complete detached
+history for this turn, and each `start` creates one new SDK generation from
+that history. This process adapter does not look up or synthesize a provider
+resume token. The installed and deterministic fake `cursor-sdk==1.0.31` paths
+have no verified portable provider-native resume API, so any non-null
+`continuation_handle` is explicitly refused rather than silently resumed or
+billed again.
 
 `normalize_usage` receives the request, intermediate **whole usage events**, and
 the final whole done/error event (or `None` after local shutdown). It returns
@@ -45,10 +53,15 @@ accepted. Before SDK startup, no usage event is fabricated.
 
 Only SDK `started` produces `run.started`. Text/thinking become text/reasoning
 content deltas, split at the frozen 65536-character limit. Tool requests restore
-the authorized alias. SDK `done: finished` completes only without an outstanding
-tool; other done statuses interrupt. SDK errors use a fixed failure event, even
-before startup. The coordinator permits early failure/interruption, but still
-rejects early text, tools, cancellation events, or successful completion.
+the authorized alias. A tool request suspends the current SDK generation at
+the callback boundary; `submit_tool_result` forwards the result to that same
+owned process/session, after which the event pump continues. The adapter
+allows only one outstanding callback and does not turn this within-run
+suspension into a cross-run continuation handle. SDK `done: finished`
+completes only without an outstanding tool; other done statuses interrupt. SDK
+errors use a fixed failure event, even before startup. The coordinator permits
+early failure/interruption, but still rejects early text, tools, cancellation
+events, or successful completion.
 
 The legacy process represents EOF as an error event, so this adapter reports that
 as failure; it does not infer a distinct exit status from error-message text.
@@ -82,5 +95,7 @@ broker subprocess backed by the no-network fake SDK, and one temporary SQLite
 engine integration. Separate isolated V2 qualification covers the real SDK
 subprocess, credentials, tools, Codex-thread follow-up, cancellation, and usage.
 A hung injected cleanup can leave its daemon thread running; the adapter cannot
-prove termination beyond the injected process's contract. Provider-native
-continuation remains B15.
+prove termination beyond the injected process's contract. Router/provider
+compaction is outside this adapter's continuation contract: the router runs a
+separate tool-less summary turn and later replays the summary as input. No
+provider-native continuation handle is fabricated or claimed.

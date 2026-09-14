@@ -1,4 +1,4 @@
-# Cursor provider execution and isolated V2 binding (B14)
+# Cursor provider execution, isolated V2 binding, and continuation (B14/B15)
 
 ## V2 composition
 
@@ -13,6 +13,41 @@ shell, web, settings, external MCP, and subagent features remain disabled, so
 Codex owns approvals and actual tool execution. Cancellation terminates only
 the owned broker process group and reports remote termination as unknown.
 Missing SDK usage or cost is omitted, not invented as zero.
+
+## Continuation boundary (B15)
+
+Cursor continuation is Codex-owned normalized full-history replay. For each
+Codex turn, the host normalizes the conversation history into the
+application-owned run input, and the coordinator copies that complete history
+into a fresh `CursorStartRequest`. The Cursor broker then starts one new SDK
+generation for that turn. A later turn therefore replays the history on the
+same selected route; it does not ask the Cursor SDK to resume a previous
+generation.
+
+Within one active generation, the supported callback continuation is the tool
+boundary. A Cursor tool event suspends that generation, the adapter emits one
+host-owned `tool.requested` event, and an accepted `tool_result(call_id,
+output)` is forwarded to the same owned SDK session. The process pump then
+continues that generation. Only one tool call may be outstanding, and exact
+replays of an already accepted result are idempotent; a changed result or
+wrong call is rejected.
+
+The installed and deterministic fake `cursor-sdk==1.0.31` paths have no
+verified portable provider-native resume API. `continuation_handle` remains
+explicitly unsupported for this adapter: a non-null handle is refused, no
+opaque handle is fabricated, and no native continuation claim is made. A
+route/session changes never reuse another run's coordinator handle or callback
+state. Each run keeps its own broker process. Session, connection, and
+provider-model identity are copied from the immutable route snapshot, while
+the profile supplies the workspace and state-root paths used by that isolated
+process.
+
+Router/provider compaction is a separate operation. It is a Codex-owned
+summary turn that removes tool definitions and tool choice, so it is
+intentionally tool-less; its resulting summary is replayed as ordinary input
+history. Compaction is not a Cursor resume token, does not extend an active
+SDK generation, and does not change the B14 ownership of approvals,
+cancellation, or process cleanup.
 
 ## Ownership
 
@@ -49,8 +84,12 @@ optional continuation handle) carrying deep copies, so later caller
 mutation cannot affect the dispatched request. The tools tuple carries
 `ToolDefinition` advertisements (name, nested input schema,
 host-execution flag, optional description) detached to the runtime seam,
-distinct from emitted tool-call IDs. The route snapshot carries
-no continuation handle today, so the adapter leaves that field unset for B15.
+distinct from emitted tool-call IDs. The engine carries its own route-scoped
+continuation identity for isolation, but Cursor does not consume that identity
+as an SDK resume token. The adapter leaves `CursorStartRequest`'s native handle
+unset, and the process runtime refuses a non-null handle rather than treating
+it as an implicit SDK resume request. The input messages are the normalized
+full-history replay for this turn, not a provider-native continuation token.
 
 A start whose route snapshot carries a `provider_id` other than the
 cursor provider id is rejected before any registration or dispatch.
@@ -176,5 +215,8 @@ checks, follow-up context, local cancellation, token usage, and owned-process
 cleanup. The package-owned no-network gate supplies the original B14 fixture
 proof without repeating a live request. Local process cleanup cannot confirm
 remote Cursor termination, and unavailable SDK cost remains unknown.
-Provider-native continuation handles remain B15; V2 follow-up preserves context
-through Codex and starts a new SDK generation on the same route.
+The B15 continuation guarantee is limited to Codex-owned full-history replay
+between turns and tool callback suspension within a turn. The installed/fake
+SDK path has no verified portable provider-native resume API; non-null
+`continuation_handle` input is refused, and no fabricated handle or native
+continuation guarantee is exposed.

@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import json
+import http.client
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
-from model_deck.engine.routing.ports import ExecutionMode, RouteSnapshot
+from model_deck.engine.routing.ports import (
+    CapabilityFeature,
+    CapabilityTriState,
+    ContinuationScope,
+    ExecutionMode,
+    RouteSnapshot,
+)
 from model_deck.engine.runs.input_codec import parse_normalized_messages
 from model_deck.engine.runs.ports import (
     ProviderCancelTerminationStatus,
@@ -22,6 +31,12 @@ from model_deck.integrations.providers.openai_compatible.execution import (
     OpenAICompatibleExecutionPort,
     WireMode,
 )
+from model_deck.integrations.providers.continuation.compaction import (
+    SUMMARIZATION_PROMPT,
+    SUMMARY_PREFIX,
+)
+from model_deck.integrations.providers.continuation import compaction
+from model_deck.integrations.providers.continuation.store import ContinuationRouteScope, ContinuationStore
 
 
 RUN_ID = "550e8400-e29b-41d4-a716-446655440003"
@@ -205,15 +220,18 @@ def _route() -> RouteSnapshot:
 def _request(
     *,
     run_id: str = RUN_ID,
+    session_id: str = SESSION_ID,
+    route: RouteSnapshot | None = None,
+    continuation_scope: ContinuationScope | None = None,
     options: RunOptions = RunOptions(),
     tools: tuple[ToolDefinition, ...] = (),
 ) -> RunRequest:
     return RunRequest(
         run_id=run_id,
-        session_id=SESSION_ID,
+        session_id=session_id,
         client_request_id="client-1",
         idempotency_key="execution-1",
-        route_snapshot=_route(),
+        route_snapshot=route or _route(),
         input=parse_normalized_messages(
             [
                 {
@@ -225,7 +243,20 @@ def _request(
         ),
         tools=tools,
         options=options,
+        continuation_scope=continuation_scope,
     )
+
+
+def _continuation_scope(**overrides: object) -> ContinuationScope:
+    values = {
+        "connection_id": CONNECTION_ID,
+        "provider_model_id": "provider/model-1",
+        "provider_id": PROVIDER_ID,
+        "execution_mode": ExecutionMode.RESPONSES,
+        "handle": "ref:continuation-handle-1",
+    }
+    values.update(overrides)
+    return ContinuationScope(**values)
 
 
 def _config(wire_mode: WireMode = WireMode.AUTO) -> OpenAICompatibleEndpointConfig:
@@ -245,6 +276,7 @@ def _port(
     config: OpenAICompatibleEndpointConfig | None = None,
     endpoint_calls: list | None = None,
     credential_calls: list | None = None,
+    continuation_store: ContinuationStore | None = None,
 ) -> OpenAICompatibleExecutionPort:
     def resolve_endpoint(reference: str, revision: int):
         if endpoint_calls is not None:
@@ -262,6 +294,7 @@ def _port(
         post_stream=post,
         clock=lambda: NOW,
         request_timeout=7,
+        continuation_store=continuation_store,
     )
 
 
@@ -664,26 +697,376 @@ class OpenAICompatibleExecutionTests(unittest.TestCase):
         self.assertNotIn(SECRET, repr(handle))
 
 
+class OpenAICompatibleContinuationIntegrationTests(unittest.TestCase):
+    def _tool(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="lookup",
+            description="Lookup weather",
+            input_schema={"type": "object"},
+            host_execution_required=True,
+        )
+
+    def _message_response(self, text: str = "done", *, encrypted: str | None = None) -> FakeResponse:
+        response_id = f"resp-message-{text}"
+        item = {
+            "type": "message",
+            "id": "msg-provider-1",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text}],
+        }
+        if encrypted is not None:
+            item["encrypted_content"] = encrypted
+        return FakeResponse(
+            200,
+            _sse(
+                {"type": "response.created", "response": {"id": response_id}},
+                {"type": "response.output_item.done", "item": item},
+                {"type": "response.completed", "response": {"id": response_id}},
+            ),
+        )
+
+    def _route_scope(self) -> ContinuationRouteScope:
+        return ContinuationRouteScope(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            connection_revision=3,
+            provider_id=PROVIDER_ID,
+            provider_model_id="provider/model-1",
+            execution_mode=ExecutionMode.RESPONSES.value,
+            endpoint_config_ref="ref:test.endpoint",
+            credential_ref="ref:test.credential",
+            continuation_handle="ref:continuation-handle-1",
+        )
+
+    def test_same_scope_tool_resume_restores_private_function_fields(self) -> None:
+        scope = _continuation_scope()
+        first = FakeResponse(
+            200,
+            _sse(
+                {"type": "response.created", "response": {"id": "resp-tool-1"}},
+                {"type": "response.output_item.done", "item": {
+                    "type": "function_call", "id": "fc-provider-1", "call_id": "call-1",
+                    "name": "lookup", "arguments": '{"city":"Oslo"}',
+                    "encrypted_function_args": "opaque-args", "signature": "sig-1",
+                }},
+                {"type": "response.completed", "response": {"id": "resp-tool-1"}},
+            ),
+        )
+        second = self._message_response()
+        post = FakePostStream(first, second)
+        with TemporaryDirectory(prefix="md-continuation-", dir="/tmp") as folder:
+            store = ContinuationStore(Path(folder) / "continuation.sqlite3")
+            port = _port(post, continuation_store=store)
+            sink = EventSink()
+            handle = port.start(
+                _request(continuation_scope=scope, tools=(self._tool(),)), sink
+            )
+            sink.wait_for("tool.requested")
+            self.assertEqual(
+                handle.submit_tool_result("call-1", {"forecast": "sunny"}).outcome,
+                SubmitToolResultProviderOutcome.ACCEPTED,
+            )
+            sink.wait_for("run.completed")
+            resumed = json.loads(post.calls[1]["payload"])
+            function_call = next(item for item in resumed["input"] if item.get("type") == "function_call")
+            self.assertEqual(function_call["encrypted_function_args"], "opaque-args")
+            self.assertEqual(function_call["signature"], "sig-1")
+
+    def test_different_scope_and_missing_record_fail_before_http(self) -> None:
+        scope = _continuation_scope()
+        with TemporaryDirectory(prefix="md-continuation-", dir="/tmp") as folder:
+            store = ContinuationStore(Path(folder) / "continuation.sqlite3")
+            store.save_response(self._route_scope(), "resp-old", [("item-1", {
+                "type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": "old"}],
+            }, {"raw_item": {"type": "message", "role": "assistant",
+                               "content": [{"type": "output_text", "text": "old"}],
+                               "encrypted_content": "opaque"}})])
+            for request in (
+                _request(continuation_scope=_continuation_scope(handle="ref:other-handle")),
+                replace(_request(continuation_scope=scope), route_snapshot=replace(_route(), connection_revision=99)),
+            ):
+                post = FakePostStream(self._message_response())
+                sink = EventSink()
+                endpoint_calls: list = []
+                credential_calls: list = []
+                _port(
+                    post,
+                    continuation_store=store,
+                    endpoint_calls=endpoint_calls,
+                    credential_calls=credential_calls,
+                ).start(request, sink)
+                sink.wait_for("run.failed")
+                self.assertEqual(post.calls, [])
+                self.assertEqual(endpoint_calls, [])
+                self.assertEqual(credential_calls, [])
+
+            mismatch = _request(
+                continuation_scope=scope,
+                route=_route(),
+            )
+            mismatch = replace(mismatch, input=parse_normalized_messages([
+                    {"type": "message", "role": "assistant",
+                     "content": [{"type": "output_text", "text": "not-old"}]}
+                ]))
+            post = FakePostStream(self._message_response())
+            sink = EventSink()
+            endpoint_calls = []
+            credential_calls = []
+            _port(
+                post,
+                continuation_store=store,
+                endpoint_calls=endpoint_calls,
+                credential_calls=credential_calls,
+            ).start(mismatch, sink)
+            sink.wait_for("run.failed")
+            self.assertEqual(post.calls, [])
+            self.assertEqual(endpoint_calls, [])
+            self.assertEqual(credential_calls, [])
+
+    def test_store_reopen_reuses_state_and_compaction_clears_it(self) -> None:
+        scope = _continuation_scope()
+        with TemporaryDirectory(prefix="md-continuation-", dir="/tmp") as folder:
+            path = Path(folder) / "continuation.sqlite3"
+            store = ContinuationStore(path)
+            first_post = FakePostStream(self._message_response("remember", encrypted="opaque"))
+            first_sink = EventSink()
+            _port(first_post, continuation_store=store).start(
+                _request(continuation_scope=scope), first_sink
+            )
+            first_sink.wait_for("run.completed")
+
+            reopened = ContinuationStore(path)
+            history_request = _request(continuation_scope=scope)
+            history_request = replace(history_request, input=parse_normalized_messages([
+                    {"type": "message", "role": "assistant",
+                     "content": [{"type": "output_text", "text": "remember"}]}
+                ]))
+            second_post = FakePostStream(self._message_response("next"))
+            second_sink = EventSink()
+            _port(second_post, continuation_store=reopened).start(history_request, second_sink)
+            second_sink.wait_for("run.completed")
+            restored = json.loads(second_post.calls[0]["payload"])
+            self.assertEqual(restored["input"][0]["encrypted_content"], "opaque")
+
+            barrier_request = _request(continuation_scope=scope)
+            barrier_request = replace(barrier_request, input=parse_normalized_messages([
+                    {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": SUMMARY_PREFIX + "\nsummary"}]}
+                ]))
+            barrier_post = FakePostStream(self._message_response("after"))
+            barrier_sink = EventSink()
+            _port(barrier_post, continuation_store=reopened).start(barrier_request, barrier_sink)
+            barrier_sink.wait_for("run.completed")
+            records = reopened.load_all(self._route_scope())
+            self.assertTrue(records)
+            self.assertTrue(all(
+                record.metadata.get("raw_item", {}).get("encrypted_content") != "opaque"
+                for record in records
+            ))
+
+    def test_failed_session_persistence_rolls_back_prepared_provider_reset(self) -> None:
+        from model_deck.adapters.storage.sqlite_session_run_repository import (
+            SQLiteSessionRunRepository,
+        )
+        from model_deck.engine.routing.ports import ContinuationScope
+        from model_deck.engine.sessions.ports import (
+            CreateSessionCommand,
+            GetSessionCommand,
+            SelectModelCommand,
+        )
+
+        with TemporaryDirectory(prefix="md-continuation-reset-", dir="/tmp") as folder:
+            root = Path(folder)
+            store = ContinuationStore(root / "provider-continuation.sqlite3")
+            provider = _port(
+                FakePostStream(self._message_response()), continuation_store=store
+            )
+            repository = SQLiteSessionRunRepository(
+                root / "state.sqlite3",
+                uuid_factory=lambda: SESSION_ID,
+                continuation_reset=provider,
+            )
+            engine_scope = _continuation_scope()
+            repository.create(
+                CreateSessionCommand(
+                    registration_id=REGISTRATION_ID,
+                    continuation_scope=engine_scope,
+                )
+            )
+            visible = {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "old"}],
+            }
+            store.save_response(
+                self._route_scope(),
+                "resp-old",
+                [("old-item", visible, {"raw_item": visible})],
+            )
+            invalid_replacement = ContinuationScope(
+                connection_id=CONNECTION_ID,
+                provider_model_id="provider/model-2",
+                provider_id=PROVIDER_ID,
+                execution_mode="invalid",  # type: ignore[arg-type]
+                handle="ref:continuation.replacement",
+            )
+
+            with self.assertRaises(AttributeError):
+                repository.select_model(
+                    SelectModelCommand(
+                        session_id=SESSION_ID,
+                        registration_id=REGISTRATION_ID,
+                        expected_revision=1,
+                        continuation_reset=True,
+                        replacement_continuation_scope=invalid_replacement,
+                    )
+                )
+
+            stored_session = repository.get(GetSessionCommand(session_id=SESSION_ID))
+            self.assertEqual(stored_session.continuation_scope, engine_scope)
+            self.assertEqual(store.load_all(self._route_scope())[0].response_id, "resp-old")
+
+    def test_reset_commit_failure_is_adopted_by_replacement_scope(self) -> None:
+        from model_deck.adapters.storage.sqlite_session_run_repository import (
+            SQLiteSessionRunRepository,
+        )
+        from model_deck.engine.sessions.ports import (
+            CreateSessionCommand,
+            GetSessionCommand,
+            SelectModelCommand,
+        )
+
+        with TemporaryDirectory(prefix="md-continuation-reset-", dir="/tmp") as folder:
+            root = Path(folder)
+            store = ContinuationStore(root / "provider-continuation.sqlite3")
+            provider = _port(
+                FakePostStream(self._message_response()), continuation_store=store
+            )
+
+            class CommitFailureReset:
+                def prepare_session_continuation_reset(
+                    self, session_id: str, continuation_handle: str
+                ) -> str | None:
+                    return provider.prepare_session_continuation_reset(
+                        session_id, continuation_handle
+                    )
+
+                def commit_session_continuation_reset(self, _reset_token: str) -> None:
+                    raise RuntimeError("simulated reset commit failure")
+
+                def rollback_session_continuation_reset(self, reset_token: str) -> None:
+                    provider.rollback_session_continuation_reset(reset_token)
+
+            repository = SQLiteSessionRunRepository(
+                root / "state.sqlite3",
+                uuid_factory=lambda: SESSION_ID,
+                continuation_reset=CommitFailureReset(),
+            )
+            engine_scope = _continuation_scope()
+            replacement_engine_scope = _continuation_scope(
+                provider_model_id="provider/model-2",
+                handle="ref:continuation.replacement",
+            )
+            repository.create(
+                CreateSessionCommand(
+                    registration_id=REGISTRATION_ID,
+                    continuation_scope=engine_scope,
+                )
+            )
+            visible = {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "old"}],
+            }
+            old_route_scope = self._route_scope()
+            store.save_response(
+                old_route_scope,
+                "resp-old",
+                [("old-item", visible, {"raw_item": visible})],
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "simulated reset commit failure"):
+                repository.select_model(
+                    SelectModelCommand(
+                        session_id=SESSION_ID,
+                        registration_id=REGISTRATION_ID,
+                        expected_revision=1,
+                        continuation_reset=True,
+                        replacement_continuation_scope=replacement_engine_scope,
+                    )
+                )
+
+            stored_session = repository.get(GetSessionCommand(session_id=SESSION_ID))
+            self.assertEqual(stored_session.revision, 2)
+            self.assertEqual(
+                stored_session.continuation_scope, replacement_engine_scope
+            )
+            self.assertEqual(store.load_all(old_route_scope)[0].response_id, "resp-old")
+
+            replacement_route_scope = ContinuationRouteScope(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                connection_revision=3,
+                provider_id=PROVIDER_ID,
+                provider_model_id="provider/model-2",
+                execution_mode=ExecutionMode.RESPONSES.value,
+                endpoint_config_ref="ref:test.endpoint",
+                credential_ref="ref:test.credential",
+                continuation_handle="ref:continuation.replacement",
+            )
+            self.assertEqual(store.load_all(replacement_route_scope), [])
+            store.save_response(
+                replacement_route_scope,
+                "resp-new",
+                [("new-item", visible, {"raw_item": visible})],
+            )
+            self.assertEqual(
+                store.load_all(replacement_route_scope)[0].response_id,
+                "resp-new",
+            )
+
+
 class EngineProviderInjectionFixtureTests(unittest.TestCase):
-    def test_real_engine_accepts_injected_http_provider_events(self) -> None:
+    def test_real_engine_accepts_provider_events_and_resets_continuation(self) -> None:
         from model_deck.adapters.routing.registered import ProviderRouteDefinition
         from model_deck.adapters.transport.rendezvous import load_rendezvous_file
         from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
         from model_deck.bootstrap import build_engine_server
         from model_deck_contracts.paths import repo_root
 
-        response = FakeResponse(
-            200,
-            _sse(
-                {"type": "response.created", "response": {}},
-                {"type": "response.output_text.delta", "delta": "engine result"},
-                {"type": "response.completed", "response": {}},
-            ),
-        )
-        provider = _port(FakePostStream(response))
         temporary = TemporaryDirectory(prefix="md-http-", dir="/tmp")
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
+        continuation_store = ContinuationStore(
+            root / "state" / "engine" / "provider-continuation.sqlite3"
+        )
+
+        def provider_response(response_id: str, text: str) -> FakeResponse:
+            return FakeResponse(
+                200,
+                _sse(
+                    {"type": "response.created", "response": {"id": response_id}},
+                    {"type": "response.output_text.delta", "delta": text},
+                    {
+                        "type": "response.output_item.done",
+                        "item": {
+                            "type": "message",
+                            "id": f"msg-{response_id}",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": text}],
+                            "encrypted_content": f"opaque-{response_id}",
+                        },
+                    },
+                    {"type": "response.completed", "response": {"id": response_id}},
+                ),
+            )
+
+        post = FakePostStream(
+            provider_response("resp-before-reset", "engine result"),
+            provider_response("resp-after-reset", "fresh route result"),
+        )
+        provider = _port(post, continuation_store=continuation_store)
         runtime = build_engine_server(
             state_root=root / "state",
             artifact_root=root / "artifact",
@@ -787,6 +1170,261 @@ class EngineProviderInjectionFixtureTests(unittest.TestCase):
                 run = call(session, 7, "runs.get", {"run_id": run["run_id"]})["run"]
                 time.sleep(0.01)
             self.assertEqual(run["state"], "completed")
+
+            replacement_model = call(
+                session,
+                8,
+                "models.register",
+                {
+                    "connection_id": CONNECTION_ID,
+                    "provider_model_id": "provider/model-2",
+                    "display_name": "HTTP Fixture Replacement",
+                    "expected_revision": 0,
+                    "idempotency_key": "http-model-replacement",
+                },
+            )["model"]
+            selected = call(
+                session,
+                9,
+                "sessions.select_model",
+                {
+                    "session_id": session_id,
+                    "registration_id": replacement_model["registration_id"],
+                    "expected_revision": 1,
+                    "continuation_reset": True,
+                },
+            )
+            self.assertEqual(selected["revision"], 2)
+            replacement_run = call(
+                session,
+                10,
+                "runs.start",
+                {
+                    "session_id": session_id,
+                    "registration_id": replacement_model["registration_id"],
+                    "client_request_id": "http-provider-fixture-after-reset",
+                    "idempotency_key": "http-run-after-reset",
+                },
+            )["run"]
+            deadline = time.monotonic() + 2
+            while replacement_run["state"] != "completed" and time.monotonic() < deadline:
+                replacement_run = call(
+                    session,
+                    11,
+                    "runs.get",
+                    {"run_id": replacement_run["run_id"]},
+                )["run"]
+                time.sleep(0.01)
+            self.assertEqual(replacement_run["state"], "completed")
+            self.assertEqual(len(post.calls), 2)
+
+    def test_codex_bridge_continues_tools_and_resumes_after_compaction(self) -> None:
+        from model_deck.adapters.routing.registered import ProviderRouteDefinition
+        from model_deck.adapters.transport.rendezvous import load_rendezvous_file
+        from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
+        from model_deck.bootstrap import build_engine_server
+        from model_deck.integrations.hosts.codex.bridge import CodexResponsesBridge
+        from model_deck_contracts.paths import repo_root
+
+        def message_response(response_id: str, text: str, **private_fields: str) -> FakeResponse:
+            item = {
+                "type": "message",
+                "id": f"msg-{response_id}",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text}],
+                **private_fields,
+            }
+            return FakeResponse(200, _sse(
+                {"type": "response.created", "response": {"id": response_id}},
+                {"type": "response.output_text.delta", "delta": text},
+                {"type": "response.output_item.done", "item": item},
+                {"type": "response.completed", "response": {"id": response_id}},
+            ))
+
+        tool_response = FakeResponse(200, _sse(
+            {"type": "response.created", "response": {"id": "resp-tool"}},
+            {"type": "response.output_item.done", "item": {
+                "type": "function_call",
+                "id": "fc-provider",
+                "call_id": "call-weather",
+                "name": "lookup",
+                "arguments": '{"city":"Oslo"}',
+                "encrypted_function_args": "opaque-tool-arguments",
+                "signature": "synthetic-tool-signature",
+            }},
+            {"type": "response.completed", "response": {"id": "resp-tool"}},
+        ))
+        post = FakePostStream(
+            message_response(
+                "resp-first",
+                "remembered alpha",
+                encrypted_content="opaque-first-state",
+                signature="synthetic-first-signature",
+            ),
+            tool_response,
+            message_response("resp-after-tool", "tool complete", encrypted_content="opaque-tool-state"),
+            message_response("resp-summary", "alpha and its tool result are retained"),
+            message_response("resp-after-compact", "continued after compact", encrypted_content="fresh-state"),
+        )
+
+        temporary = TemporaryDirectory(prefix="md-b15-integrated-", dir="/tmp")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        continuation_path = root / "state" / "engine" / "provider-continuation.sqlite3"
+        provider = _port(post, continuation_store=ContinuationStore(continuation_path))
+        runtime = build_engine_server(
+            state_root=root / "state",
+            artifact_root=root / "artifact",
+            socket_root=root / "socket",
+            source_root=repo_root(),
+            legacy_agents_dir=(
+                Path(__file__).resolve().parents[1] / "engine" / "fixtures" / "legacy_agent"
+            ),
+            default_connection_id=CONNECTION_ID,
+            enable_application_state=True,
+            provider_execution=provider,
+            provider_route_definitions={
+                PROVIDER_ID: ProviderRouteDefinition(
+                    execution_mode=ExecutionMode.RESPONSES,
+                    capability_features=(
+                        CapabilityFeature("tools", CapabilityTriState.SUPPORTED),
+                        CapabilityFeature(
+                            "parallel_tool_calls",
+                            CapabilityTriState.UNSUPPORTED,
+                        ),
+                    ),
+                    capability_snapshot_ref="ref:test.capabilities",
+                )
+            },
+        )
+        runtime.server.start()
+        self.addCleanup(runtime.server.stop)
+        profile = SimpleNamespace(
+            connection_id=CONNECTION_ID,
+            provider_id=PROVIDER_ID,
+            endpoint_config_ref="ref:test.endpoint",
+            credential_ref="ref:test.credential",
+            provider_model_id="provider/model-1",
+            display_name="B15 integrated fixture",
+            billing_description="deterministic fixture; no billing",
+        )
+        bridge = CodexResponsesBridge(
+            rendezvous_path=runtime.rendezvous_path,
+            credential_path=runtime.enrollment.credential_path,
+            profile=profile,
+            state_path=root / "bridge-state.json",
+            token_path=root / "bridge-token",
+            descriptor_path=root / "bridge.json",
+            rendezvous_loader=load_rendezvous_file,
+            client_factory=UnixSocketEngineClient,
+            compaction_codec=compaction,
+        )
+        base_url = bridge.start()
+        self.addCleanup(bridge.stop)
+        port_number = int(base_url.split(":")[2].split("/")[0])
+
+        def send(body: dict, *, thread_id: str = "thread-one") -> tuple[int, list[dict]]:
+            connection = http.client.HTTPConnection("127.0.0.1", port_number, timeout=10)
+            connection.request(
+                "POST",
+                "/v1/responses",
+                body=json.dumps(body),
+                headers={
+                    "Authorization": f"Bearer {bridge.token}",
+                    "Content-Type": "application/json",
+                    "x-codex-turn-metadata": json.dumps({
+                        "thread_id": thread_id,
+                        "turn_id": f"turn-{thread_id}-{len(post.calls)}",
+                    }),
+                },
+            )
+            response = connection.getresponse()
+            payload = response.read().decode("utf-8")
+            status = response.status
+            connection.close()
+            events = [
+                json.loads(block.removeprefix("data: "))
+                for block in payload.strip().split("\n\n")
+                if block.startswith("data: ")
+            ]
+            return status, events
+
+        first_history = [
+            {"type": "message", "role": "user", "content": "remember alpha"},
+        ]
+        status, first_events = send({"input": first_history})
+        self.assertEqual(status, 200)
+        self.assertTrue(any(event["type"] == "response.completed" for event in first_events))
+
+        second_history = [
+            *first_history,
+            {"type": "message", "role": "assistant", "content": "remembered alpha"},
+            {"type": "message", "role": "user", "content": "use lookup"},
+        ]
+        status, tool_events = send({
+            "input": second_history,
+            "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
+        })
+        self.assertEqual(status, 200)
+        tool_item = next(
+            event["item"] for event in tool_events
+            if event["type"] == "response.output_item.done"
+        )
+        self.assertEqual(tool_item["call_id"], "call-weather")
+        second_wire = json.loads(post.calls[1]["payload"])
+        restored_first = next(
+            item for item in second_wire["input"]
+            if item.get("type") == "message" and item.get("role") == "assistant"
+        )
+        self.assertEqual(restored_first["encrypted_content"], "opaque-first-state")
+
+        tool_history = [
+            *second_history,
+            tool_item,
+            {"type": "function_call_output", "call_id": "call-weather", "output": "sunny"},
+        ]
+        status, after_tool_events = send({
+            "input": tool_history,
+            "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
+        })
+        self.assertEqual(status, 200)
+        self.assertTrue(any(event["type"] == "response.completed" for event in after_tool_events))
+        tool_wire = json.loads(post.calls[2]["payload"])
+        restored_tool = next(item for item in tool_wire["input"] if item.get("type") == "function_call")
+        self.assertEqual(restored_tool["encrypted_function_args"], "opaque-tool-arguments")
+        self.assertEqual(restored_tool["signature"], "synthetic-tool-signature")
+
+        full_history = [
+            *tool_history,
+            {"type": "message", "role": "assistant", "content": "tool complete"},
+        ]
+        status, compact_events = send({
+            "input": [*full_history, {"type": "compaction_trigger"}],
+        })
+        self.assertEqual(status, 200)
+        compact_item = next(
+            event["item"] for event in compact_events
+            if event["type"] == "response.output_item.done"
+        )
+        self.assertEqual(compact_item["type"], "compaction")
+        compact_wire = json.loads(post.calls[3]["payload"])
+        self.assertEqual(
+            compact_wire["input"][-1]["content"][0]["text"],
+            SUMMARIZATION_PROMPT,
+        )
+
+        status, after_compact_events = send({
+            "input": [
+                compact_item,
+                {"type": "message", "role": "user", "content": "continue"},
+            ]
+        })
+        self.assertEqual(status, 200)
+        self.assertTrue(any(event["type"] == "response.completed" for event in after_compact_events))
+        post_compact_wire = json.loads(post.calls[4]["payload"])
+        self.assertNotIn("opaque-first-state", json.dumps(post_compact_wire))
+        self.assertIn("alpha and its tool result are retained", json.dumps(post_compact_wire))
+
 
 
 if __name__ == "__main__":

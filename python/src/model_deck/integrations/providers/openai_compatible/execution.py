@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from model_deck.engine.runs.input_codec import (
     normalized_messages_to_wire,
@@ -26,10 +26,23 @@ from model_deck.engine.runs.ports import (
     SubmitToolResultProviderResult,
 )
 
+from model_deck.engine.routing.ports import ContinuationScope, ExecutionMode
+
+from ..continuation import compaction as _compaction
+from ..continuation.store import (
+    ContinuationError,
+    ContinuationRecord,
+    ContinuationRouteScope,
+)
+
 from .chat_stream import ChatStreamTranslator
 from .events import ResponsesEventTranslator, RunIdentity
 from .http_transport import DEFAULT_TIMEOUT, post_stream as default_post_stream
-from .request_mapping import build_chat_request, build_responses_request
+from .request_mapping import (
+    apply_continuation_items,
+    build_chat_request,
+    build_responses_request,
+)
 from .sse import (
     ProviderEventTerminalValidator,
     SegmentTermination,
@@ -38,6 +51,7 @@ from .sse import (
 )
 
 __all__ = [
+    "ContinuationStoreProtocol",
     "CredentialResolver",
     "EndpointResolver",
     "OpenAICompatibleEndpointConfig",
@@ -47,6 +61,44 @@ __all__ = [
     "RunIdentity",
     "WireMode",
 ]
+
+
+class ContinuationStoreProtocol(Protocol):
+    """Minimal surface this port uses from the durable continuation store.
+
+    The full store API is owned by the sibling continuation package; this
+       protocol only names the methods the port actually invokes so tests can
+       supply a stub without re-implementing the schema. The companion
+       helper ``_validate_continuation_scope`` enforces the trust contract on
+    every load and save.
+    """
+
+    def save_response(
+        self,
+        scope: ContinuationRouteScope,
+        response_id: str,
+        items: list[tuple[str, Mapping[str, Any], Mapping[str, Any]]],
+    ) -> None: ...
+
+    def load_all(self, scope: ContinuationRouteScope) -> list[ContinuationRecord]: ...
+
+    def clear(self, scope: ContinuationRouteScope) -> None: ...
+
+    def prepare_session_reset(
+        self, session_id: str, continuation_handle: str
+    ) -> str | None: ...
+
+    def commit_session_reset(self, reset_token: str) -> None: ...
+
+    def rollback_session_reset(self, reset_token: str) -> None: ...
+
+
+def _scope_string(value: Any) -> str:
+    if hasattr(value, "value") and isinstance(getattr(value, "value", None), str):
+        return value.value
+    if isinstance(value, str) and value:
+        return value
+    _reject()
 
 
 _FAILURE_MESSAGE = "The provider execution failed."
@@ -151,6 +203,103 @@ def _encode_tool_output(result: Any) -> str:
     return encoded
 
 
+def _validate_continuation_scope(
+    request: RunRequest,
+) -> ContinuationRouteScope:
+    """Build the trusted nine-field route scope from RunRequest identity.
+
+    The scope is constructed exclusively from session_id (RunRequest) and
+    captured RouteSnapshot fields (connection_id/revision, provider_id,
+    provider_model_id, execution_mode, endpoint_config_ref, credential_ref).
+    Continuation handle is the engine-issued identifier from
+    ``request.continuation_scope.handle``. Worker-supplied or body-supplied
+    fields are NEVER trusted to build the scope.
+    """
+    if type(request.session_id) is not str or not request.session_id:
+        _reject()
+    route = request.route_snapshot
+    if (
+        type(route.connection_id) is not str
+        or not route.connection_id
+        or type(route.connection_revision) is not int
+        or isinstance(route.connection_revision, bool)
+        or type(route.provider_model_id) is not str
+        or not route.provider_model_id
+        or type(route.provider_id) not in (str,)
+        or not route.provider_id
+        or type(route.execution_mode) is not ExecutionMode
+    ):
+        _reject()
+    if not isinstance(route.endpoint_config_ref, str) or not route.endpoint_config_ref:
+        _reject()
+    if not isinstance(route.credential_ref, str) or not route.credential_ref:
+        _reject()
+    scope_obj = request.continuation_scope
+    if scope_obj is None:
+        _reject()
+    if not isinstance(scope_obj, ContinuationScope):
+        _reject()
+    if (
+        scope_obj.connection_id != route.connection_id
+        or scope_obj.provider_model_id != route.provider_model_id
+        or _scope_string(scope_obj.provider_id) != _scope_string(route.provider_id)
+        or _scope_string(scope_obj.execution_mode) != _scope_string(route.execution_mode)
+    ):
+        _reject()
+    handle = scope_obj.handle
+    if not isinstance(handle, str) or not handle:
+        _reject()
+    return ContinuationRouteScope(
+        session_id=request.session_id,
+        connection_id=route.connection_id,
+        connection_revision=route.connection_revision,
+        provider_id=_scope_string(route.provider_id),
+        provider_model_id=route.provider_model_id,
+        execution_mode=_scope_string(route.execution_mode),
+        endpoint_config_ref=route.endpoint_config_ref,
+        credential_ref=route.credential_ref,
+        continuation_handle=handle,
+    )
+
+
+def _input_contains_compaction_barrier(input_items: Any) -> bool:
+    """True when this run carries a router-made compaction item.
+
+    The summary-generation run may consume scoped provider state but must not
+    install its generated summary as normal provider continuation. A later
+    request containing a Model Deck decoded compaction checkpoint must not
+    auto-inject pre-compaction opaque history; we clear/invalidate scoped
+    provider records at that barrier before transport.
+    """
+    if not isinstance(input_items, list):
+        return False
+    for item in input_items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "message" or item.get("role") != "user":
+            continue
+        for part in item.get("content") or []:
+            if (
+                isinstance(part, dict)
+                and isinstance(part.get("text"), str)
+                and part["text"].startswith(_compaction.SUMMARY_PREFIX + "\n")
+            ):
+                return True
+    return False
+
+
+def _is_compaction_summary_request(input_items: Any) -> bool:
+    if not isinstance(input_items, list) or not input_items:
+        return False
+    item = input_items[-1]
+    if not isinstance(item, dict) or item.get("type") != "message" or item.get("role") != "user":
+        return False
+    return any(
+        isinstance(part, dict) and part.get("text") == _compaction.SUMMARIZATION_PROMPT
+        for part in item.get("content") or []
+    )
+
+
 class OpenAICompatibleExecutionPort:
     """Execute typed runs through injected endpoint and credential resolvers."""
 
@@ -162,6 +311,7 @@ class OpenAICompatibleExecutionPort:
         post_stream: Callable[..., Any] = default_post_stream,
         clock: Callable[[], str] = _utc_now,
         request_timeout: float = DEFAULT_TIMEOUT,
+        continuation_store: ContinuationStoreProtocol | None = None,
     ) -> None:
         if (
             not callable(endpoint_resolver)
@@ -175,17 +325,65 @@ class OpenAICompatibleExecutionPort:
             or not math.isfinite(float(request_timeout))
         ):
             _reject()
+        if continuation_store is not None and any(
+            not callable(getattr(continuation_store, name, None))
+            for name in (
+                "save_response",
+                "load_all",
+                "clear",
+                "prepare_session_reset",
+                "commit_session_reset",
+                "rollback_session_reset",
+            )
+        ):
+            _reject()
         self._endpoint_resolver = endpoint_resolver
         self._credential_resolver = credential_resolver
         self._post_stream = post_stream
         self._clock = clock
         self._request_timeout = float(request_timeout)
+        self._continuation_store = continuation_store
         self._lock = threading.Lock()
         self._endpoint_cache: dict[
             tuple[str, int], OpenAICompatibleEndpointConfig
         ] = {}
         self._wire_cache: dict[tuple[str, int], WireMode] = {}
         self._handles: set[OpenAICompatibleRunHandle] = set()
+
+    def prepare_session_continuation_reset(
+        self, session_id: str, continuation_handle: str
+    ) -> str | None:
+        store = self._continuation_store
+        if store is None:
+            return None
+        try:
+            return store.prepare_session_reset(session_id, continuation_handle)
+        except ContinuationError:
+            raise OpenAICompatibleExecutionError(
+                "The local continuation store could not be reset."
+            ) from None
+
+    def commit_session_continuation_reset(self, reset_token: str) -> None:
+        store = self._continuation_store
+        if store is None:
+            return
+        try:
+            store.commit_session_reset(reset_token)
+        except ContinuationError:
+            raise OpenAICompatibleExecutionError(
+                "The local continuation store could not be reset."
+            ) from None
+
+    def rollback_session_continuation_reset(self, reset_token: str) -> None:
+        store = self._continuation_store
+        if store is None:
+            return
+        try:
+            store.rollback_session_reset(reset_token)
+        except ContinuationError:
+            raise OpenAICompatibleExecutionError(
+                "The local continuation store could not be reset."
+            ) from None
 
     def start(
         self,
@@ -306,6 +504,22 @@ class OpenAICompatibleRunHandle:
         self._pending: _PendingToolResult | None = None
         self._submitted: dict[str, str] = {}
         self._threads: list[threading.Thread] = []
+        # Continuation state (only used when owner._continuation_store is set).
+        # _scope is the trusted nine-field route scope bound on the first
+        # segment; _response_id is captured from response.created so save()
+        # has a stable response identifier; _continuation_cleared is the
+        # per-segment compaction barrier flag — once a router-made
+        # compaction item appears in the input we do not auto-inject
+        # pre-compaction opaque history and we have already cleared the
+        # scoped records via store.clear() before transport.
+        self._scope: ContinuationRouteScope | None = None
+        self._response_id: str | None = None
+        self._continuation_cleared: bool = False
+        self._raw_provider_start = 0
+        self._continuation_suppressed = False
+        self._segment_continuation_records: list[
+            tuple[Mapping[str, Any], Mapping[str, Any], str | None]
+        ] = []
 
     def __repr__(self) -> str:
         with self._state_lock:
@@ -483,7 +697,14 @@ class OpenAICompatibleRunHandle:
     def _runtime_values(
         self,
     ) -> tuple[tuple[str, int], OpenAICompatibleEndpointConfig, str]:
+        # Validate and load local continuation before endpoint configuration or
+        # credentials are resolved. Missing, corrupt, or incompatible state is
+        # a local refusal and must not engage secret-bearing collaborators.
+        self._prepare_continuation_for_segment()
+        continuation_records = self._load_continuation_records()
+        self._validate_continuation_history(continuation_records)
         with self._state_lock:
+            self._segment_continuation_records = continuation_records
             if (
                 self._endpoint_key is not None
                 and self._config is not None
@@ -509,23 +730,225 @@ class OpenAICompatibleRunHandle:
             self._credential = credential
         return key, config, credential
 
+    def _validate_continuation_history(
+        self,
+        records: list[tuple[Mapping[str, Any], Mapping[str, Any], str | None]],
+    ) -> None:
+        if not records:
+            return
+        segment_request = replace(
+            self._request,
+            input=parse_normalized_messages(list(self._history)),
+        )
+        body = build_responses_request(segment_request)
+        result = apply_continuation_items(body, records, wire="responses")
+        if result.unmatched:
+            _reject("Required continuation is missing or does not match this history.")
+
+    def _prepare_continuation_for_segment(self) -> None:
+        """Bind the trusted continuation scope and apply the compaction barrier.
+
+        The scope is constructed exclusively from ``request.session_id`` and
+        the captured ``RouteSnapshot`` plus the engine-issued continuation
+        handle. Worker-supplied or body-supplied fields are NEVER trusted to
+        build the scope. When the request input carries a router-made
+        compaction item (the user's decoded summary checkpoint), the
+        scoped records are cleared via ``store.clear(scope)`` before
+        transport so pre-compaction opaque history cannot be auto-injected.
+        A later same-scope run may install fresh records; this run's
+        generated summary is NEVER installed as provider continuation.
+        """
+        store = self._owner._continuation_store
+        if store is None:
+            return
+        with self._state_lock:
+            already_bound = self._scope is not None
+            already_cleared = self._continuation_cleared
+        if not already_bound:
+            try:
+                scope = _validate_continuation_scope(self._request)
+            except OpenAICompatibleExecutionError:
+                raise
+            except ContinuationError:
+                raise OpenAICompatibleExecutionError(
+                    "The local continuation store could not be read."
+                ) from None
+            with self._state_lock:
+                self._scope = scope
+        if already_cleared:
+            return
+        with self._state_lock:
+            scope = self._scope
+            input_items = self._history
+            self._continuation_suppressed = _is_compaction_summary_request(input_items)
+        if scope is None:
+            return
+        if _input_contains_compaction_barrier(input_items):
+            try:
+                store.clear(scope)
+            except ContinuationError:
+                raise OpenAICompatibleExecutionError(
+                    "The local continuation store could not be read."
+                ) from None
+            with self._state_lock:
+                self._continuation_cleared = True
+
+    def _load_continuation_records(self) -> list[tuple[Mapping[str, Any], Mapping[str, Any], str | None]]:
+        store = self._owner._continuation_store
+        with self._state_lock:
+            scope = self._scope
+            history = list(self._history)
+        if store is None or scope is None or self._continuation_cleared:
+            return []
+        try:
+            stored = store.load_all(scope)
+        except ContinuationError:
+            raise OpenAICompatibleExecutionError(
+                "The local continuation store could not be read."
+            ) from None
+        if not stored:
+            requires_continuation = False
+            for item in history:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") in {"function_call", "reasoning"}:
+                    requires_continuation = True
+                elif item.get("type") == "message" and item.get("role") == "assistant":
+                    requires_continuation = True
+            if requires_continuation:
+                raise OpenAICompatibleExecutionError(
+                    "Required continuation is missing or does not match this history."
+                )
+            return []
+        records: list[tuple[Mapping[str, Any], Mapping[str, Any], str | None]] = []
+        for record in stored:
+            raw_item = record.metadata.get("raw_item")
+            if not isinstance(raw_item, Mapping):
+                raise OpenAICompatibleExecutionError(
+                    "The local continuation store could not be read."
+                )
+            records.append((self._visible_item(raw_item), record.metadata, record.response_id))
+        return records
+
+    @staticmethod
+    def _visible_item(raw_item: Mapping[str, Any]) -> dict[str, Any]:
+        kind = raw_item.get("type")
+        if kind == "message":
+            return {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": part.get("text", "")}
+                    for part in raw_item.get("content") or []
+                    if isinstance(part, Mapping) and part.get("type") == "output_text"
+                ],
+            }
+        if kind == "function_call":
+            return {
+                "type": "function_call",
+                "call_id": raw_item.get("call_id"),
+                "name": raw_item.get("name"),
+                "arguments": raw_item.get("arguments"),
+            }
+        if kind == "reasoning":
+            return {
+                "type": "reasoning",
+                "summary": list(raw_item.get("summary") or []),
+            }
+        raise OpenAICompatibleExecutionError(_ERROR_MESSAGE)
+
+    def _save_responses_continuation(self) -> None:
+        store = self._owner._continuation_store
+        if store is None or self._continuation_suppressed:
+            return
+        with self._state_lock:
+            scope = self._scope
+            start = self._raw_provider_start
+        response_id = self._events.response_id
+        if scope is None or not response_id:
+            return
+        raw_items = self._events.raw_provider_items[start:]
+        saved: list[tuple[str, Mapping[str, Any], Mapping[str, Any]]] = []
+        for index, raw_item in enumerate(raw_items):
+            if raw_item.get("type") not in {"message", "function_call", "reasoning"}:
+                continue
+            visible = self._visible_item(raw_item)
+            item_ref = f"{response_id}:{start + index}"
+            saved.append((item_ref, visible, {"raw_item": raw_item}))
+        if not saved:
+            return
+        try:
+            store.save_response(scope, response_id, saved)
+        except ContinuationError:
+            raise OpenAICompatibleExecutionError(
+                "The local continuation store could not be saved."
+            ) from None
+
+    def _save_chat_continuation(self, chat: ChatStreamTranslator) -> None:
+        store = self._owner._continuation_store
+        if store is None or self._continuation_suppressed:
+            return
+        with self._state_lock:
+            scope = self._scope
+        if scope is None:
+            return
+        items = []
+        for index, (visible, metadata) in enumerate(chat.continuation_records):
+            item_ref = f"{chat.response_id}:{index}"
+            raw_item = dict(visible)
+            if metadata.get("assistant_fields"):
+                raw_item.update(metadata["assistant_fields"])
+            if metadata.get("call_fields"):
+                raw_item.update(metadata["call_fields"])
+            items.append((
+                item_ref,
+                visible,
+                {
+                    "raw_item": raw_item,
+                    "assistant_fields": metadata.get("assistant_fields", {}),
+                    "call_fields": metadata.get("call_fields", {}),
+                },
+            ))
+        if not items:
+            return
+        try:
+            store.save_response(scope, chat.response_id, items)
+        except ContinuationError:
+            raise OpenAICompatibleExecutionError(
+                "The local continuation store could not be saved."
+            ) from None
+
     def _open_response(
         self,
         config: OpenAICompatibleEndpointConfig,
         credential: str,
         wire: WireMode,
     ) -> Any:
+        with self._state_lock:
+            records = list(self._segment_continuation_records)
         segment_request = replace(
             self._request,
             input=parse_normalized_messages(list(self._history)),
         )
         if wire is WireMode.RESPONSES:
             body = build_responses_request(segment_request)
+            if records:
+                result = apply_continuation_items(body, records, wire="responses")
+                if result.unmatched:
+                    _reject("Required continuation is missing or does not match this history.")
         else:
+            responses_body = build_responses_request(segment_request)
+            if records:
+                result = apply_continuation_items(responses_body, records, wire="responses")
+                if result.unmatched:
+                    _reject("Required continuation is missing or does not match this history.")
             body = build_chat_request(
                 segment_request,
                 provider_id=config.vendor_id,
+                continuation_records=records,
             )
+        with self._event_lock:
+            self._raw_provider_start = len(self._events.raw_provider_items)
         payload = json.dumps(
             body,
             allow_nan=False,
@@ -576,6 +999,8 @@ class OpenAICompatibleRunHandle:
             )
         if chat is not None:
             for envelope in chat.finish():
+                if envelope.get("type") == "response.completed":
+                    self._save_chat_continuation(chat)
                 saw_wire_terminal = (
                     self._translate_envelope(envelope) or saw_wire_terminal
                 )
@@ -625,6 +1050,8 @@ class OpenAICompatibleRunHandle:
                     flush=True,
                 )
                 raise
+            if event_type == "response.completed":
+                self._save_responses_continuation()
             for event in translated:
                 self._publish_locked(event)
         return event_type in {

@@ -12,10 +12,9 @@ import uuid
 from collections.abc import Iterator, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from model_deck.engine.runs.input_codec import normalized_messages_to_wire
-
 from .input_normalization import CodexInputNormalizationError, normalize_codex_input
 from .state import BridgeState
 from .tool_conversion import ToolConversionError, convert_tools, restore_tool_identity
@@ -23,6 +22,22 @@ from .tool_conversion import ToolConversionError, convert_tools, restore_tool_id
 
 _CLIENT_NAME = "model-deck-v2-codex-bridge"
 _TERMINAL_KINDS = frozenset({"run.completed", "run.failed", "run.cancelled", "run.interrupted"})
+
+
+class CompactionCodec(Protocol):
+    """Host-injected summary codec; provider packages remain independent."""
+
+    def has_trigger(self, request: dict[str, Any]) -> bool: ...
+    def summarization_request(self, request: dict[str, Any]) -> dict[str, Any]: ...
+    def summary_from_events(self, events: list[dict[str, Any]]) -> str: ...
+    def encode(self, summary: str, model: str | None = None) -> str: ...
+    def decode(self, encrypted_content: Any) -> dict[str, Any] | None: ...
+    def compaction_item(self, encrypted_content: str) -> dict[str, Any]: ...
+    def response_events(
+        self,
+        item: dict[str, Any],
+        usage: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
 
 
 class EngineRPC:
@@ -211,9 +226,16 @@ class _ResponsesStream:
 class CodexResponsesBridge:
     """Own the loopback HTTP server and map Codex threads to engine sessions."""
 
-    def __init__(self, *, rendezvous_path: Path, credential_path: Path, profile: Any, state_path: Path, token_path: Path, descriptor_path: Path, rendezvous_loader: Any, client_factory: Any) -> None:
+    def __init__(self, *, rendezvous_path: Path, credential_path: Path, profile: Any, state_path: Path, token_path: Path, descriptor_path: Path, rendezvous_loader: Any, client_factory: Any, compaction_codec: CompactionCodec) -> None:
         self.engine = EngineRPC(Path(rendezvous_path), Path(credential_path), rendezvous_loader=rendezvous_loader, client_factory=client_factory)
         self.profile = profile
+        required_codec_methods = (
+            "has_trigger", "summarization_request", "summary_from_events",
+            "compaction_item", "encode", "response_events", "decode",
+        )
+        if any(not callable(getattr(compaction_codec, name, None)) for name in required_codec_methods):
+            raise ValueError("compaction codec is unavailable")
+        self._compaction = compaction_codec
         self.state = BridgeState(Path(state_path))
         self.token_path = Path(token_path)
         self.descriptor_path = Path(descriptor_path)
@@ -281,7 +303,7 @@ class CodexResponsesBridge:
         resumed_call_id: str | None = None
         response_started = False
         stage = "request-routing"
-        if handler.path != "/v1/responses":
+        if handler.path not in ("/v1/responses", "/v1/responses/compact"):
             handler.send_error(404)
             return
         if handler.headers.get("Authorization") != f"Bearer {self.token}":
@@ -290,6 +312,10 @@ class CodexResponsesBridge:
         try:
             stage = "request-body"
             body = self._read_body(handler)
+            compaction_mode = handler.path == "/v1/responses/compact" or self._compaction.has_trigger(body)
+            if compaction_mode:
+                self._handle_compaction(handler, body, unary=handler.path == "/v1/responses/compact")
+                return
             stage = "tool-conversion"
             tools, aliases = convert_tools(body.get("tools"))
             stage = "turn-metadata"
@@ -307,7 +333,12 @@ class CodexResponsesBridge:
                     {"type": "message", "role": "developer", "content": instructions},
                     *source_items,
                 ]
-            normalized = normalize_codex_input(source_items, aliases)
+            normalized = normalize_codex_input(
+                source_items,
+                aliases,
+                decode_compaction=self._decode_compaction,
+                normalize_reasoning=self._strip_host_reasoning,
+            )
             stage = "session-resolution"
             session_id = self._session_for_thread(thread_id)
             pending = self._matching_tool_result(thread_id, body.get("input", []))
@@ -386,6 +417,77 @@ class CodexResponsesBridge:
                     pass
             else:
                 handler.send_error(502, "Model Deck engine request failed")
+
+    def _handle_compaction(self, handler: BaseHTTPRequestHandler, body: dict[str, Any], *, unary: bool) -> None:
+        """Run the router-owned summary turn and publish it only after success."""
+        if not isinstance(body.get("input", []), list):
+            raise ValueError("Responses input must be a list")
+        metadata = json.loads(handler.headers.get("x-codex-turn-metadata", "{}"))
+        thread_id = metadata.get("thread_id") if isinstance(metadata, dict) else None
+        if not isinstance(thread_id, str) or not thread_id:
+            raise ValueError("thread metadata is required")
+        tools, aliases = convert_tools(body.get("tools"))
+        del tools  # compaction intentionally starts a tool-less run
+        prepared = self._compaction.summarization_request(body)
+        source_items = prepared.get("input", [])
+        normalized = normalize_codex_input(
+            source_items,
+            aliases,
+            decode_compaction=lambda item: self._decode_compaction(item),
+            normalize_reasoning=self._strip_host_reasoning,
+        )
+        session_id = self._session_for_thread(thread_id)
+        turn_id = metadata.get("turn_id")
+        request_key = turn_id if isinstance(turn_id, str) and turn_id else str(uuid.uuid4())
+        started = self.engine.call("engine.v1.runs.start", {
+            "session_id": session_id, "client_request_id": request_key[:64],
+            "idempotency_key": request_key[:128], "registration_id": self.registration_id,
+            "input": {"messages": normalized_messages_to_wire(normalized)}, "tools": [],
+            "options": {"parallel_tool_calls": False},
+        })
+        run_id = str(started.get("run", started)["run_id"])
+        translator = _ResponsesStream(run_id, self.profile.provider_model_id, aliases)
+        events = []
+        terminal = False
+        successful = False
+        for engine_event in self.engine.subscribe_events(run_id):
+            translated, terminal = translator.translate(engine_event)
+            events.extend(translated)
+            if terminal:
+                successful = engine_event.get("kind") == "run.completed"
+                break
+        summary = self._compaction.summary_from_events(events)
+        completed = translator.completed()["response"] if successful else None
+        if not successful or not summary or completed is None:
+            self._cancel_once(run_id)
+            raise RuntimeError("compaction run did not produce a summary")
+        item = self._compaction.compaction_item(
+            self._compaction.encode(summary, self.profile.provider_model_id)
+        )
+        if unary:
+            response = {"output": [item]}
+            if completed.get("usage") is not None:
+                response["usage"] = completed["usage"]
+            handler.send_response(200)
+            handler.send_header("Content-Type", "application/json")
+            handler.end_headers()
+            handler.wfile.write(json.dumps(response, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+            return
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream")
+        handler.send_header("Cache-Control", "no-cache")
+        handler.end_headers()
+        for event in self._compaction.response_events(item, completed.get("usage")):
+            self._write_event(handler, event)
+
+    def _decode_compaction(self, item: dict[str, Any]) -> str | None:
+        record = self._compaction.decode(item.get("encrypted_content"))
+        return record.get("summary") if isinstance(record, dict) else None
+
+    @staticmethod
+    def _strip_host_reasoning(_item: dict[str, Any]) -> list[dict[str, Any]]:
+        """Strip provider-private state from provider-neutral host history."""
+        return []
 
     def _stream(
         self,
@@ -530,4 +632,4 @@ class CodexResponsesBridge:
         os.replace(temporary, path)
 
 
-__all__ = ["CodexResponsesBridge", "EngineRPC"]
+__all__ = ["CodexResponsesBridge", "CompactionCodec", "EngineRPC"]

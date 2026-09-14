@@ -110,6 +110,31 @@ ChatGPT subscription allowance. The profile stores only an executable credential
 command and opaque reference; secrets are resolved at run start and are never
 written into the profile.
 
+## Isolated Codex compaction reproduction
+
+The bridge accepts both Codex compaction entry paths: a streamed
+`POST /v1/responses` request with `compaction_trigger`, and a unary
+`POST /v1/responses/compact` request. Both use the same configured route and
+model for a tool-less summary run. The bridge emits one `compaction` item only
+after a terminal `run.completed` with a non-empty summary. A failed run,
+including one that emitted partial text, or an empty summary is discarded and
+does not replace the host history. A router-owned item is later replayed to the
+host as summary text; provider-native encrypted continuation state is a
+separate provider-scoped concern and is not host-visible replay.
+
+Reproduce this behavior only with a fresh absolute scratch `--state-root`, an
+isolated fixture project, and the loopback bridge descriptor, token, sockets,
+and Codex configuration created below that root. The `run_isolated_codex.py`
+harness provides the isolated `HOME`, `CODEX_HOME`, `XDG_CONFIG_HOME`, and
+temporary directory; direct endpoint fixtures must use the same descriptor's
+authenticated `127.0.0.1` URL and the V2-owned state. Do not point a fixture at
+the installed app, live Model Deck or Codex state, a live socket, or a live
+configuration, and do not treat this reproduction as a live cutover. The
+deterministic integrated fixture qualifies the loopback bridge, engine,
+OpenAI-compatible execution, private continuation store, tool callback, both
+compaction endpoints, and post-compaction continuation. It does not qualify
+Codex Desktop UI or a live provider.
+
 On 2026-09-14 an isolated Cursor Composer 2.5 run used Codex shell tools, changed
 subtraction to addition, and passed two `python3 -m unittest -v` checks. A
 follow-up on the same Codex thread recalled the exact bug and test count. V2
@@ -182,8 +207,8 @@ This is an unsigned local development artifact. Its configured Python
 interpreter must remain available and contain the dependencies from
 `python/pyproject.toml`. The coding composition supports one configured
 OpenAI-compatible route and serial tool calls only; parallel tool-call responses
-are rejected rather than truncated. Codex Desktop UI integration, opaque
-reasoning/compaction qualification, provider-reported cost, marketplace,
+are rejected rather than truncated. Codex Desktop UI integration,
+live-provider opaque reasoning/compaction qualification, provider-reported cost, marketplace,
 signing, distribution, bundled Python, and live-app cutover are not qualified.
 Normal quit drains and reaps the engine and extension workers. The final
 SIGKILL fallback is deliberately scoped to the known engine PID; a deliberately

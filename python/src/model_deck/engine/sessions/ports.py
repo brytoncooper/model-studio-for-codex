@@ -19,6 +19,7 @@ class SessionRecord:
 class CreateSessionCommand:
     registration_id: str
     host_context_ref: str | None = None
+    continuation_scope: ContinuationScope | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,7 @@ class SelectModelCommand:
     registration_id: str
     expected_revision: int
     continuation_reset: bool = False
+    replacement_continuation_scope: ContinuationScope | None = None
 
 
 @runtime_checkable
@@ -43,6 +45,19 @@ class SessionRepository(Protocol):
     def select_model(self, command: SelectModelCommand) -> SessionRecord: ...
 
 
+@runtime_checkable
+class SessionContinuationResetPort(Protocol):
+    """Two-phase retirement of provider-private state during session reset."""
+
+    def prepare_session_continuation_reset(
+        self, session_id: str, continuation_handle: str
+    ) -> str | None: ...
+
+    def commit_session_continuation_reset(self, reset_token: str) -> None: ...
+
+    def rollback_session_continuation_reset(self, reset_token: str) -> None: ...
+
+
 class SessionNotFoundError(LookupError):
     pass
 
@@ -52,4 +67,8 @@ class SessionRevisionConflictError(ValueError):
 
 
 class SessionActiveRunConflictError(ValueError):
+    pass
+
+
+class SessionContinuationResetUnavailableError(ValueError):
     pass

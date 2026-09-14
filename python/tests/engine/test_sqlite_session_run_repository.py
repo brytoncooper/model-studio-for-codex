@@ -45,6 +45,7 @@ from model_deck.engine.sessions.ports import (
     GetSessionCommand,
     SelectModelCommand,
     SessionActiveRunConflictError,
+    SessionContinuationResetUnavailableError,
     SessionNotFoundError,
     SessionRevisionConflictError,
 )
@@ -88,12 +89,48 @@ def _continuation_scope(**overrides: Any) -> ContinuationScope:
     return ContinuationScope(**base)
 
 
+class _RecordingContinuationReset:
+    def __init__(self, *, fail_prepare: bool = False) -> None:
+        self.fail_prepare = fail_prepare
+        self.prepared: list[tuple[str, str]] = []
+        self.committed: list[str] = []
+        self.rolled_back: list[str] = []
+
+    def prepare_session_continuation_reset(
+        self, session_id: str, continuation_handle: str
+    ) -> str | None:
+        if self.fail_prepare:
+            raise RuntimeError("reset failed")
+        self.prepared.append((session_id, continuation_handle))
+        return "reset-token"
+
+    def commit_session_continuation_reset(self, reset_token: str) -> None:
+        self.committed.append(reset_token)
+
+    def rollback_session_continuation_reset(self, reset_token: str) -> None:
+        self.rolled_back.append(reset_token)
+
+
+class _NoPrivateContinuationReset:
+    def prepare_session_continuation_reset(
+        self, _session_id: str, _continuation_handle: str
+    ) -> None:
+        return None
+
+    def commit_session_continuation_reset(self, _reset_token: str) -> None:
+        return None
+
+    def rollback_session_continuation_reset(self, _reset_token: str) -> None:
+        return None
+
+
 def _repo(
     temp_dir: str,
     *,
     uuids: list[str] | None = None,
     clock: list[str] | None = None,
     connect: Any = None,
+    continuation_reset: Any = None,
 ) -> SQLiteSessionRunRepository:
     ids = iter(uuids or [SESSION_ID, RUN_ID, RUN_ID_2])
     times = iter(clock or ["2026-01-01T00:00:00Z"])
@@ -102,6 +139,7 @@ def _repo(
         uuid_factory=lambda: next(ids),
         utc_clock=lambda: next(times, "2026-01-01T00:00:00Z"),
         connect=connect,
+        continuation_reset=continuation_reset,
     )
 
 
@@ -161,27 +199,41 @@ class SQLiteSessionRunRepositoryTests(unittest.TestCase):
 
     def test_session_create_get_and_select_model_cas(self) -> None:
         with TemporaryDirectory() as temp_dir:
-            repo = _repo(temp_dir)
+            repo = _repo(temp_dir, continuation_reset=_NoPrivateContinuationReset())
+            initial_scope = _continuation_scope()
             created = repo.create(
                 CreateSessionCommand(
                     registration_id=REGISTRATION_ID,
                     host_context_ref=HOST_CTX,
+                    continuation_scope=initial_scope,
                 )
             )
             self.assertEqual(created.session_id, SESSION_ID)
             self.assertEqual(created.revision, 1)
+            self.assertEqual(created.continuation_scope, initial_scope)
             loaded = repo.get(GetSessionCommand(session_id=SESSION_ID))
             self.assertEqual(loaded.registration_id, REGISTRATION_ID)
+            self.assertEqual(loaded.continuation_scope, initial_scope)
+            replacement_scope = _continuation_scope(
+                connection_id="550e8400-e29b-41d4-a716-446655440099",
+                provider_model_id="provider/replacement-model",
+                handle="ref:continuation.replacement",
+            )
             selected = repo.select_model(
                 SelectModelCommand(
                     session_id=SESSION_ID,
                     registration_id=REGISTRATION_ID_ALT,
                     expected_revision=1,
                     continuation_reset=True,
+                    replacement_continuation_scope=replacement_scope,
                 )
             )
             self.assertEqual(selected.revision, 2)
-            self.assertIsNone(selected.continuation_scope)
+            self.assertEqual(selected.continuation_scope, replacement_scope)
+            self.assertEqual(
+                _repo(temp_dir).get(GetSessionCommand(session_id=SESSION_ID)).continuation_scope,
+                replacement_scope,
+            )
             with self.assertRaises(SessionRevisionConflictError):
                 repo.select_model(
                     SelectModelCommand(
@@ -202,6 +254,129 @@ class SQLiteSessionRunRepositoryTests(unittest.TestCase):
                         session_id=SESSION_ID,
                         registration_id=REGISTRATION_ID,
                         expected_revision=1,
+                    )
+                )
+
+    def test_select_model_reset_retires_old_provider_continuation(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            reset = _RecordingContinuationReset()
+            repo = _repo(temp_dir, continuation_reset=reset)
+            initial_scope = _continuation_scope()
+            repo.create(
+                CreateSessionCommand(
+                    registration_id=REGISTRATION_ID,
+                    host_context_ref=HOST_CTX,
+                    continuation_scope=initial_scope,
+                )
+            )
+            replacement_scope = _continuation_scope(
+                provider_model_id="provider/replacement-model",
+                handle="ref:continuation.replacement",
+            )
+
+            selected = repo.select_model(
+                SelectModelCommand(
+                    session_id=SESSION_ID,
+                    registration_id=REGISTRATION_ID_ALT,
+                    expected_revision=1,
+                    continuation_reset=True,
+                    replacement_continuation_scope=replacement_scope,
+                )
+            )
+
+            self.assertEqual(reset.prepared, [(SESSION_ID, initial_scope.handle)])
+            self.assertEqual(reset.committed, ["reset-token"])
+            self.assertEqual(reset.rolled_back, [])
+            self.assertEqual(selected.continuation_scope, replacement_scope)
+
+    def test_select_model_reset_failure_rolls_back_session_change(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            reset = _RecordingContinuationReset(fail_prepare=True)
+            repo = _repo(temp_dir, continuation_reset=reset)
+            initial_scope = _continuation_scope()
+            repo.create(
+                CreateSessionCommand(
+                    registration_id=REGISTRATION_ID,
+                    host_context_ref=HOST_CTX,
+                    continuation_scope=initial_scope,
+                )
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "reset failed"):
+                repo.select_model(
+                    SelectModelCommand(
+                        session_id=SESSION_ID,
+                        registration_id=REGISTRATION_ID_ALT,
+                        expected_revision=1,
+                        continuation_reset=True,
+                        replacement_continuation_scope=_continuation_scope(
+                            handle="ref:continuation.replacement"
+                        ),
+                    )
+                )
+
+            stored = repo.get(GetSessionCommand(session_id=SESSION_ID))
+            self.assertEqual(stored.revision, 1)
+            self.assertEqual(stored.registration_id, REGISTRATION_ID)
+            self.assertEqual(stored.continuation_scope, initial_scope)
+
+    def test_select_model_persistence_failure_rolls_back_reset_intent(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            reset = _RecordingContinuationReset()
+            repo = _repo(temp_dir, continuation_reset=reset)
+            initial_scope = _continuation_scope()
+            repo.create(
+                CreateSessionCommand(
+                    registration_id=REGISTRATION_ID,
+                    continuation_scope=initial_scope,
+                )
+            )
+            invalid_replacement = ContinuationScope(
+                connection_id=CONNECTION_ID,
+                provider_model_id="provider/replacement-model",
+                provider_id="com.example.provider",
+                execution_mode="invalid",  # type: ignore[arg-type]
+                handle="ref:continuation.replacement",
+            )
+
+            with self.assertRaises(AttributeError):
+                repo.select_model(
+                    SelectModelCommand(
+                        session_id=SESSION_ID,
+                        registration_id=REGISTRATION_ID_ALT,
+                        expected_revision=1,
+                        continuation_reset=True,
+                        replacement_continuation_scope=invalid_replacement,
+                    )
+                )
+
+            self.assertEqual(reset.prepared, [(SESSION_ID, initial_scope.handle)])
+            self.assertEqual(reset.committed, [])
+            self.assertEqual(reset.rolled_back, ["reset-token"])
+            stored = repo.get(GetSessionCommand(session_id=SESSION_ID))
+            self.assertEqual(stored.revision, 1)
+            self.assertEqual(stored.continuation_scope, initial_scope)
+
+    def test_select_model_reset_without_explicit_provider_support_is_refused(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo = _repo(temp_dir)
+            repo.create(
+                CreateSessionCommand(
+                    registration_id=REGISTRATION_ID,
+                    continuation_scope=_continuation_scope(),
+                )
+            )
+
+            with self.assertRaises(SessionContinuationResetUnavailableError):
+                repo.select_model(
+                    SelectModelCommand(
+                        session_id=SESSION_ID,
+                        registration_id=REGISTRATION_ID_ALT,
+                        expected_revision=1,
+                        continuation_reset=True,
+                        replacement_continuation_scope=_continuation_scope(
+                            handle="ref:continuation.replacement"
+                        ),
                     )
                 )
 
@@ -437,7 +612,14 @@ class SQLiteSessionRunRepositoryTests(unittest.TestCase):
             session_two = "550e8400-e29b-41d4-a716-446655440012"
             run_two = "550e8400-e29b-41d4-a716-446655440013"
             repo = _repo(temp_dir, uuids=[SESSION_ID, RUN_ID, session_two, run_two])
-            _create_session(repo)
+            continuation_scope = _continuation_scope()
+            repo.create(
+                CreateSessionCommand(
+                    registration_id=REGISTRATION_ID,
+                    host_context_ref=HOST_CTX,
+                    continuation_scope=continuation_scope,
+                )
+            )
             second_session = repo.create(
                 CreateSessionCommand(registration_id=REGISTRATION_ID, host_context_ref=HOST_CTX)
             )
@@ -458,6 +640,10 @@ class SQLiteSessionRunRepositoryTests(unittest.TestCase):
             )
             recovery = repo.recover_after_restart("2026-01-02T00:00:00Z")
             self.assertEqual(recovery.dispatchable_requests[0].run_id, accepted.run.run_id)
+            self.assertEqual(
+                recovery.dispatchable_requests[0].continuation_scope,
+                continuation_scope,
+            )
             self.assertEqual(recovery.interrupted_run_ids, (claimed.run.run_id,))
             interrupted = repo.get(GetRunCommand(run_id=claimed.run.run_id))
             self.assertEqual(interrupted.state, RunState.INTERRUPTED)
@@ -581,6 +767,68 @@ class SQLiteSessionRunRepositoryTests(unittest.TestCase):
             with self.assertRaises(RunNotFoundError):
                 repo.get(GetRunCommand(run_id=RUN_ID))
 
+
+    def test_legacy_sessions_table_without_continuation_scope_json_opens(self) -> None:
+        """A pre-existing sessions table lacking continuation_scope_json must open and
+        accept all session operations without an OperationalError. The fix must add the
+        column with the smallest additive migration, analogous to the run-options column
+        migration applied to the runs table.
+        """
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "state.sqlite3"
+            # Pre-create the legacy sessions table without continuation_scope_json.
+            setup = sqlite3.connect(db_path)
+            try:
+                setup.execute(
+                    "CREATE TABLE sessions ("
+                    "session_id TEXT PRIMARY KEY, "
+                    "registration_id TEXT NOT NULL, "
+                    "revision INTEGER NOT NULL, "
+                    "host_context_ref TEXT"
+                    ")"
+                )
+                # Insert a legacy row so the migration does not silently lose data.
+                setup.execute(
+                    "INSERT INTO sessions (session_id, registration_id, revision, host_context_ref) "
+                    "VALUES (?, ?, ?, ?)",
+                    ("legacy-session", REGISTRATION_ID, 1, HOST_CTX),
+                )
+                setup.commit()
+            finally:
+                setup.close()
+
+            repo = _repo(temp_dir, uuids=[SESSION_ID, "550e8400-e29b-41d4-a716-446655440020"])
+            # Opening the repository and creating a new session must succeed on a legacy DB.
+            created = repo.create(
+                CreateSessionCommand(registration_id=REGISTRATION_ID, host_context_ref=HOST_CTX)
+            )
+            self.assertEqual(created.session_id, SESSION_ID)
+            self.assertIsNone(created.continuation_scope)
+
+            # The legacy row must still be readable once the column exists.
+            legacy_loaded = repo.get(GetSessionCommand(session_id="legacy-session"))
+            self.assertEqual(legacy_loaded.registration_id, REGISTRATION_ID)
+            self.assertIsNone(legacy_loaded.continuation_scope)
+
+            # select_model on a legacy row must persist a NULL continuation_scope.
+            repo.select_model(
+                SelectModelCommand(
+                    session_id="legacy-session",
+                    registration_id=REGISTRATION_ID,
+                    expected_revision=1,
+                    continuation_reset=True,
+                )
+            )
+            reopened = repo.get(GetSessionCommand(session_id="legacy-session"))
+            self.assertEqual(reopened.revision, 2)
+            self.assertIsNone(reopened.continuation_scope)
+
+            # The new column must exist on disk afterwards.
+            with sqlite3.connect(db_path) as conn:
+                columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+                }
+                self.assertIn("continuation_scope_json", columns)
 
 if __name__ == "__main__":
     unittest.main()

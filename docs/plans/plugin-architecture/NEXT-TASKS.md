@@ -308,6 +308,14 @@ the original slice.
 - **Acceptance:** Provider/account/model/mode crossover refuses or strips private
   state explicitly; both legacy entry paths and SDK continuation pass; failed
   summaries never replace history.
+- **Delivered:** Engine-issued route/session scope, private durable OpenAI-compatible
+  continuation records, complete provider-item/signature restoration, explicit
+  opaque-host stripping, both Codex compaction entry paths, failed-summary
+  preservation, store reopen, Cursor's actual SDK callback/history mechanism,
+  and a bridge-to-engine-to-provider-to-store post-compaction fixture.
+- **Remaining:** None for B15. Job-backed public `sessions.compact` execution
+  remains coupled to B19's generic job/history runner; live-provider cache/state
+  qualification and unsupported native Cursor resume are not inferred.
 - **Non-goals:** New summarization algorithms, cross-provider opaque state, live
   calls, or full UI.
 - **Parallelism:** Can run with D1, D2, D4, and D5.

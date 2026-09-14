@@ -463,6 +463,7 @@ class ComposeOpenAICompatibleProfileTests(unittest.TestCase):
                 post_stream=lambda **kwargs: None,
                 endpoint_resolver=resolver,
                 route_definition_factory=ProviderRouteDefinition,
+                continuation_store_path=root / "continuation.sqlite3",
             )
             self.assertEqual(len(definitions), 1)
             definition = definitions[PROVIDER_ID]
@@ -473,6 +474,35 @@ class ComposeOpenAICompatibleProfileTests(unittest.TestCase):
             self.assertEqual(definition.capability_snapshot_ref, CAPABILITY_REF)
             self.assertTrue(callable(port.start))
             self.assertTrue(callable(port.close))
+            self.assertEqual(
+                port._continuation_store.path,
+                root / "continuation.sqlite3",
+            )
+            self.assertFalse((root / "continuation.sqlite3").exists())
+
+    def test_compose_rejects_relative_continuation_store_path(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="md-cfg-") as tmp:
+            root = Path(tmp)
+            helper = _helper_script(root, "import sys; sys.stdout.write('secret')")
+            profile = OpenAICompatibleProfile.load(
+                _write_profile(
+                    root,
+                    _profile_dict(
+                        credential_command={
+                            "executable": str(helper),
+                            "args": [],
+                            "timeout_ms": 5000,
+                        }
+                    ),
+                )
+            )
+            with self.assertRaises(OpenAICompatibleProfileError):
+                compose_openai_compatible_profile(
+                    profile,
+                    post_stream=lambda **kwargs: None,
+                    route_definition_factory=ProviderRouteDefinition,
+                    continuation_store_path=Path("continuation.sqlite3"),
+                )
 
 
 if __name__ == "__main__":
