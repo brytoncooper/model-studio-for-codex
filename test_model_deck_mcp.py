@@ -427,5 +427,166 @@ class DeckTests(unittest.TestCase):
         self.assertEqual(mcp.handle_message(self.deck, {"jsonrpc": "2.0", "method": "ping", "id": 1, "params": []})["error"]["code"], -32602)
 
 
+class WriteConvergenceTests(unittest.TestCase):
+    """B06 stdio entrypoint behavior: tools/call routes through the write service when configured."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        (root / "agents").mkdir()
+        self.registry = RoutingRegistry(root / "agents", preferences_path=root / "preferences.json",
+                                        selection_path=root / "selection.json", display_names_path=root / "names.json")
+        self.registry.endpoints_path = root / "endpoints.json"
+        self.registry.endpoints_path.write_text(json.dumps({
+            ACCOUNT: {"name": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "wire": "auto"},
+        }))
+
+    def _make_deck(self, transport, resolver, locator):
+        from model_deck.integrations.clients.mcp.registry_resolver import (
+            EngineRegisteredModelPresentation,
+        )
+        return mcp.Deck(self.registry, pricing_loader=lambda: PRICING,
+                        executable="/Applications/Model Deck.app/Contents/MacOS/ModelDeck",
+                        fetch=lambda url, headers: {"data": []},
+                        settings={"config_path": str(Path(self.temp.name) / "config.toml"),
+                                  "state_dir": str(Path(self.temp.name) / "state"),
+                                  "agents_dir": str(Path(self.temp.name) / "agents")},
+                        engine_transport=transport, connection_resolver=resolver,
+                        registered_locator=locator,
+                        registered_presentation=EngineRegisteredModelPresentation(transport))
+
+    def test_add_model_routes_through_engine_when_write_service_configured(self):
+        captured = []
+        class _Transport:
+            def call_engine(self, method, params):
+                captured.append((method, dict(params)))
+                if method == "engine.v1.models.register":
+                    return {"model": {"registration_id": "abc", "provider_model_id": params["provider_model_id"],
+                                       "connection_id": ACCOUNT, "display_name": params["display_name"], "revision": 1}}
+                return {"connections": [{"connection_id": ACCOUNT}]}
+
+        class _Resolver:
+            def resolve(self, endpoint):
+                return ACCOUNT
+
+        class _Locator:
+            def find(self, provider_model_id):
+                captured.append(("find", provider_model_id))
+                return ("abc", 1)
+
+        deck = self._make_deck(_Transport(), _Resolver(), _Locator())
+        result = deck.call("add_model", {"model": "deepseek/deepseek-v4.1-flash"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["model"], "deepseek/deepseek-v4.1-flash")
+        methods = [c[0] for c in captured if isinstance(c[0], str) and c[0].startswith("engine.")]
+        self.assertIn("engine.v1.models.register", methods)
+        # codex_settings.handle must NOT be called when the write service is configured.
+        with mock.patch.object(mcp.codex_settings, "handle", side_effect=AssertionError("legacy codex_settings.handle reached")):
+            deck.call("add_model", {"model": "deepseek/deepseek-v4.1-flash", "endpoint": "OpenRouter"})
+
+    def test_remove_model_routes_through_engine_when_write_service_configured(self):
+        captured = []
+        class _Transport:
+            def call_engine(self, method, params):
+                captured.append((method, dict(params)))
+                if method == "engine.v1.models.list":
+                    return {"items": [{"registration_id": "reg-1", "provider_model_id": "deepseek/deepseek-v4.1-flash",
+                                         "connection_id": ACCOUNT, "display_name": "DeepSeek", "revision": 4}]}
+                if method == "engine.v1.models.remove":
+                    return {"removed": True}
+                return {}
+
+        class _Resolver:
+            def resolve(self, endpoint):
+                return ACCOUNT
+
+        class _Locator:
+            def find(self, provider_model_id):
+                return ("reg-1", 4)
+
+        deck = self._make_deck(_Transport(), _Resolver(), _Locator())
+        result = deck.call("remove_model", {"model": "deepseek/deepseek-v4.1-flash"})
+        self.assertTrue(result["ok"])
+        methods = [c[0] for c in captured]
+        self.assertIn("engine.v1.models.remove", methods)
+
+    def test_set_display_name_routes_through_engine_when_write_service_configured(self):
+        captured = []
+        class _Transport:
+            def call_engine(self, method, params):
+                captured.append((method, dict(params)))
+                if method == "engine.v1.models.rename":
+                    return {"model": {"registration_id": "reg-1", "provider_model_id": "deepseek/deepseek-v4.1-flash",
+                                       "connection_id": ACCOUNT, "display_name": params["display_name"], "revision": 2}}
+                return {}
+
+        class _Resolver:
+            def resolve(self, endpoint):
+                return ACCOUNT
+
+        class _Locator:
+            def find(self, provider_model_id):
+                return ("reg-1", 1)
+
+        deck = self._make_deck(_Transport(), _Resolver(), _Locator())
+        result = deck.call("set_display_name", {"model": "deepseek/deepseek-v4.1-flash", "name": "Friendly"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["name"], "Friendly")
+
+    def test_legacy_path_preserved_when_engine_seams_absent(self):
+        # No engine_transport/connection_resolver/registered_locator passed.
+        deck = mcp.Deck(self.registry, pricing_loader=lambda: PRICING,
+                        executable="/Applications/Model Deck.app/Contents/MacOS/ModelDeck",
+                        fetch=lambda url, headers: {"data": []},
+                        settings={"config_path": str(Path(self.temp.name) / "config.toml"),
+                                  "state_dir": str(Path(self.temp.name) / "state"),
+                                  "agents_dir": str(Path(self.temp.name) / "agents")})
+        self.assertIsNone(deck._write_service)
+        with mock.patch.object(mcp.codex_settings, "handle", return_value={"agent_name": "fixture_role"}) as settings:
+            result = deck.add_model("deepseek/deepseek-v4.1-flash", endpoint="OpenRouter")
+        self.assertTrue(result["ok"])
+        settings.assert_called_once()
+
+    def test_incomplete_engine_composition_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "must be supplied together"):
+            mcp.Deck(
+                self.registry,
+                engine_transport=object(),
+                connection_resolver=object(),
+                registered_locator=object(),
+            )
+
+    def test_stdio_entrypoint_dispatches_add_model_through_engine(self):
+        """End-to-end through serve()/handle_message with the write service configured."""
+
+        class _Transport:
+            def call_engine(self, method, params):
+                if method == "engine.v1.models.register":
+                    return {"model": {"registration_id": "reg-1", "provider_model_id": params["provider_model_id"],
+                                       "connection_id": ACCOUNT, "display_name": params["display_name"], "revision": 1}}
+                return {}
+
+        class _Resolver:
+            def resolve(self, endpoint):
+                return ACCOUNT
+
+        class _Locator:
+            def find(self, provider_model_id):
+                return ("reg-1", 1)
+
+        deck = self._make_deck(_Transport(), _Resolver(), _Locator())
+        request = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                              "params": {"name": "add_model", "arguments": {"model": "deepseek/deepseek-v4.1-flash"}}}) + "\n"
+        stdin = io.StringIO(request)
+        stdout = io.StringIO()
+        mcp.serve(stdin, stdout, deck)
+        reply = json.loads(stdout.getvalue().strip())
+        self.assertFalse(reply["result"]["isError"])
+        payload = json.loads(reply["result"]["content"][0]["text"])
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["model"], "deepseek/deepseek-v4.1-flash")
+
+
 if __name__ == "__main__":
     unittest.main()

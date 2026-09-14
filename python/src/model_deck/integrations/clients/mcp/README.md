@@ -1,6 +1,9 @@
 # MCP client adapter (B06)
 
-This package converges **model read** orchestration for MCP onto `model_deck.engine.model_library` use cases. The root stdio entrypoint (`model_deck_mcp.py`) composes these types after its existing tool argument validation. Registered-model reads use `ListModelsUseCase`; search and endpoint listing use the named legacy adapter. Writes still use the existing root implementation and are not converged.
+This package converges registered-model reads and available MCP writes on the
+public engine API. The root stdio entrypoint (`model_deck_mcp.py`) composes the
+engine path after its existing tool argument validation when explicit isolated
+rendezvous and credential paths are present.
 
 ## Boundary
 
@@ -9,13 +12,29 @@ This package converges **model read** orchestration for MCP onto `model_deck.eng
 | `list_added_models` | `ListModelsUseCase` (`collection=registered`) + `McpRegisteredModelPresentation` |
 | `search_models` | `ListModelsUseCase` (`collection=catalog`) when `McpCatalogEndpointResolver` maps the endpoint to a cached connection; otherwise `LegacyMcpApplicationAdapter` |
 | `list_endpoints` | `LegacyMcpApplicationAdapter` until connection projection exposes MCP-shaped endpoint rows |
-| Writes (`add_model`, `remove_model`, …) | Root `Deck.call` invokes its existing raw Deck methods; application-adapter write convergence remains pending |
+| `add_model` | Authenticated `connections.list` resolution, then `models.register` |
+| `set_display_name` | Authoritative `models.list` revision, then `models.rename` |
+| `remove_model` | Authoritative `models.list` revision, then `models.remove` |
 
 ## Injection rules
 
 - Repositories and catalog readers are injected into `ListModelsUseCase` by the host/bootstrap layer.
-- No Codex settings, Keychain, or subprocess calls inside this package.
+- No Codex settings, Keychain, registry writes, or host-file writes inside this package.
 - No new storage imports; use engine ports and existing adapters only.
+
+## Engine selection
+
+`MODEL_DECK_ENGINE_RENDEZVOUS_PATH` and
+`MODEL_DECK_ENGINE_CREDENTIAL_PATH` must both be absolute paths. When supplied,
+the entrypoint loads the descriptor and credential from disk, authenticates to
+the Unix socket, and routes registered reads plus add/remove/display-name
+mutations through the engine. Supplying only one path fails closed. When both
+are absent, the named legacy adapter remains available as the rollback path.
+
+The engine path forwards current revisions and synthesizes fresh bounded
+idempotency keys. Its presentation does not guess a role, price, or billing
+route from the model name: unknown price is `not listed`, role is omitted, and
+billing is attributed to the saved provider connection.
 
 ## Root entrypoint composition
 
@@ -38,7 +57,7 @@ root entrypoint. `McpReadError` becomes `DeckError` at this boundary, retaining 
 existing agent-visible error envelope. Raw Deck methods do not call the service,
 so the named adapter cannot recursively enter read composition.
 
-The root builds a fresh [registry snapshot](registry_snapshot.py) for each
+In legacy mode, the root builds a fresh [registry snapshot](registry_snapshot.py) for each
 registered-model request. It reuses `RoutingRegistry.load_models`,
 `display_name_for`, `Deck.saved_endpoint_name`, `endpoint_billing` and the shared
 legacy row-formatting helper. No second parser or repository storage exists.
@@ -70,9 +89,11 @@ test_model_deck_mcp`; from `python`, run `PYTHONPATH=src python -m unittest
 tests.engine.test_mcp_model_reads`. Root tests exercise real JSON-RPC read
 composition, mixed routes, fresh reads after mutations, selected-account
 search, validation/error envelopes, explicit source/vendor loading and missing
-package refusal. Loader tests stage only temporary fixture resources and send
-initialization, not live model or credential requests. They do not qualify a
-signed app artifact, runtime installation or complete B06 write convergence.
+package refusal. The full-path projection test stages the entrypoint and vendor
+packages into a fresh directory with no source `PYTHONPATH`, connects to an
+authenticated isolated engine, and exercises add/list/rename/remove through
+stdio. It does not qualify a signed app artifact, runtime installation, or live
+credentials.
 
 ## Catalog search provenance
 

@@ -17,8 +17,12 @@
   "vendor": {
     "required_files": [
       "model_deck/__init__.py", "model_deck/bootstrap.py", "model_deck/cli/main.py",
+      "model_deck/cli/codex_projection_composition.py",
       "model_deck/integrations/clients/mcp/__init__.py",
+      "model_deck/cli/mcp_engine_transport.py",
       "model_deck/integrations/clients/mcp/registry_snapshot.py",
+      "model_deck/integrations/clients/mcp/registry_resolver.py",
+      "model_deck/integrations/clients/mcp/writes.py",
       "model_deck_contracts/__init__.py", "model_deck_contracts/validator.py",
       "model_deck_contracts/schemas/contracts/engine.v1/vocabulary.schema.json",
       "model_deck_contracts/schemas/contracts/plugin.v1/manifest.schema.json",

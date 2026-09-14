@@ -2,6 +2,7 @@
 and add them to Model Deck itself. Stdio JSON-RPC. It can only add models to endpoints the user
 already saved; it never sees or writes API keys (keyed lookups go through the credential helper)."""
 import json
+import os
 import re
 import subprocess
 import sys
@@ -24,7 +25,13 @@ elif not (_VENDOR / "model_deck" / "__init__.py").is_file():
     )
 try:
     from model_deck.engine.model_library.use_cases import ListModelsUseCase
-    from model_deck.integrations.clients.mcp import McpModelReadService, McpReadError, as_legacy_adapter
+    from model_deck.integrations.clients.mcp import (
+        McpModelReadService,
+        McpEngineError,
+        McpReadError,
+        McpWriteError,
+        as_legacy_adapter,
+    )
     from model_deck.integrations.clients.mcp.registry_snapshot import McpRegistrySnapshot
 except ModuleNotFoundError as error:
     raise SystemExit(
@@ -84,13 +91,78 @@ def endpoint_billing(entry):
 
 
 class Deck:
-    def __init__(self, registry=None, pricing_loader=None, executable=None, fetch=None, settings=None, benchmarks=None):
+    def __init__(self, registry=None, pricing_loader=None, executable=None, fetch=None, settings=None, benchmarks=None,
+                 engine_transport=None, connection_resolver=None, registered_locator=None,
+                 registered_presentation=None):
         self.registry = registry or RoutingRegistry()
         self.pricing_loader = pricing_loader or pricing.load
         self.executable = executable or app_executable()
         self.fetch = fetch or fetch_json
         self.settings = dict(settings or {})
         self.benchmarks = benchmarks
+        self._engine_transport = engine_transport
+        self._engine_presentation = registered_presentation
+        engine_seams = (
+            engine_transport,
+            connection_resolver,
+            registered_locator,
+            registered_presentation,
+        )
+        if any(seam is not None for seam in engine_seams) and not all(
+            seam is not None for seam in engine_seams
+        ):
+            raise ValueError("engine transport, resolvers, and presentation must be supplied together")
+        if all(seam is not None for seam in engine_seams):
+            from model_deck.integrations.clients.mcp import McpModelWriteService
+            self._write_service = McpModelWriteService(
+                transport=engine_transport,
+                connection_resolver=connection_resolver,
+                registered_locator=registered_locator,
+                presentation=registered_presentation,
+            )
+        else:
+            self._write_service = None
+
+    @classmethod
+    def from_environment(cls, environ=None):
+        environment = os.environ if environ is None else environ
+        rendezvous = environment.get("MODEL_DECK_ENGINE_RENDEZVOUS_PATH")
+        credential = environment.get("MODEL_DECK_ENGINE_CREDENTIAL_PATH")
+        if rendezvous is None and credential is None:
+            return cls()
+        if not rendezvous or not credential:
+            raise DeckError(
+                "MODEL_DECK_ENGINE_RENDEZVOUS_PATH and "
+                "MODEL_DECK_ENGINE_CREDENTIAL_PATH must be configured together"
+            )
+        rendezvous_path = Path(rendezvous)
+        credential_path = Path(credential)
+        if not rendezvous_path.is_absolute() or not credential_path.is_absolute():
+            raise DeckError("Model Deck engine paths must be absolute")
+        try:
+            from model_deck.cli.mcp_engine_transport import (
+                UnixSocketMcpEngineTransport,
+            )
+            from model_deck.integrations.clients.mcp.registry_resolver import (
+                EngineConnectionResolver,
+                EngineRegisteredModelLocator,
+                EngineRegisteredModelPresentation,
+            )
+            transport = UnixSocketMcpEngineTransport.from_paths(
+                rendezvous_path=rendezvous_path,
+                credential_path=credential_path,
+            )
+        except (OSError, ValueError) as error:
+            raise DeckError("Model Deck engine connection is unavailable") from error
+        return cls(
+            engine_transport=transport,
+            connection_resolver=EngineConnectionResolver(transport),
+            registered_locator=EngineRegisteredModelLocator(transport),
+            registered_presentation=EngineRegisteredModelPresentation(transport),
+            settings={},
+            benchmarks=None,
+            pricing_loader=lambda: {},
+        )
 
     # -- endpoints -----------------------------------------------------------------------------
 
@@ -422,10 +494,59 @@ class Deck:
             raise DeckError("Missing arguments: " + ", ".join(missing))
         if name in {"list_added_models", "search_models", "list_endpoints"}:
             try:
+                if name == "list_added_models" and self._engine_transport is not None:
+                    from model_deck.integrations.clients.mcp.presenters import (
+                        present_list_added_models,
+                    )
+                    engine_result = self._engine_transport.call_engine(
+                        "engine.v1.models.list", {"collection": "registered"}
+                    )
+                    return present_list_added_models(
+                        engine_result,
+                        self._engine_presentation,
+                    )
                 return getattr(self._model_read_service(name), name)(**arguments)
-            except McpReadError as error:
+            except (McpEngineError, McpReadError, McpWriteError) as error:
+                raise DeckError(str(error)) from None
+        if self._write_service is not None and name in {"add_model", "remove_model", "set_display_name"}:
+            try:
+                if name == "add_model":
+                    return self._write_service.register_model(
+                        arguments["model"],
+                        endpoint=arguments.get("endpoint"),
+                        display_name=arguments.get("display_name"),
+                    )
+                if name == "remove_model":
+                    return self._write_service.remove_model(arguments["model"])
+                return self._write_service.rename_model(arguments["model"], name=arguments.get("name"))
+            except McpWriteError as error:
+                # McpWriteError may wrap a structured already_registered payload.
+                from model_deck.integrations.clients.mcp.errors import McpWriteError as _McpWrite
+                if isinstance(error, _McpWrite):
+                    payload = _decode_write_error_payload(error)
+                    if payload is not None:
+                        return payload
                 raise DeckError(str(error)) from None
         return getattr(self, name)(**arguments)
+
+
+def _decode_write_error_payload(error):
+    """Recover a structured already_registered payload from a McpWriteError.
+
+    The write service raises a McpWriteError whose args[0] is a JSON
+    payload when the registration already exists. We unwrap it so the
+    legacy envelope is returned to the agent instead of being raised.
+    """
+    if not error.args:
+        return None
+    first = error.args[0]
+    if not isinstance(first, str) or not first.startswith("{"):
+        return None
+    try:
+        document = json.loads(first)
+    except json.JSONDecodeError:
+        return None
+    return document if isinstance(document, dict) else None
 
 
 TOOLS = [
@@ -541,7 +662,11 @@ def serve(stdin, stdout, deck):
 
 
 def main():
-    serve(sys.stdin, sys.stdout, Deck())
+    try:
+        deck = Deck.from_environment()
+    except DeckError as error:
+        raise SystemExit(str(error)) from None
+    serve(sys.stdin, sys.stdout, deck)
 
 
 if __name__ == "__main__":

@@ -92,3 +92,87 @@ def present_catalog_search(
     if billing_note is not None:
         payload["billing_note"] = billing_note
     return payload
+
+
+# ---------------------------------------------------------------------------
+# B06 write presenters: shape engine results into legacy MCP envelopes.
+# The legacy envelopes carry the same top-level keys the unconverted
+# application code emitted before the write seam moved to the engine, so
+# downstream agents see no breaking change.
+# ---------------------------------------------------------------------------
+
+_REGISTER_MESSAGE_TEMPLATE = (
+    "Added {model} on {endpoint}. It appears in Codex's picker on the next turn; "
+    "spawn it with spawn_agent model=\"{model}\"."
+)
+_REGISTER_ALREADY_MESSAGE_TEMPLATE = (
+    "{model} is already added on {endpoint}. It appears in Codex's picker on the next turn; "
+    "spawn it with spawn_agent model=\"{model}\"."
+)
+_RENAME_MESSAGE_TEMPLATE = (
+    "Renamed {model} to {name}. The picker reflects the new name on the next turn."
+)
+_REMOVE_MESSAGE_TEMPLATE = (
+    "Removed {model}. It leaves Codex's picker on the next turn."
+)
+
+
+def present_register_result(
+    engine_result: dict[str, Any],
+    *,
+    endpoint: str,
+    billing: str,
+    billing_note: str | None,
+    price: str,
+    already_registered: bool = False,
+    role: str | None = None,
+) -> dict[str, Any]:
+    model_record = engine_result.get("model", {}) if isinstance(engine_result, dict) else {}
+    provider_model_id = str(model_record.get("provider_model_id", ""))
+    display_name = str(model_record.get("display_name") or "")
+    message_template = _REGISTER_ALREADY_MESSAGE_TEMPLATE if already_registered else _REGISTER_MESSAGE_TEMPLATE
+    payload: dict[str, Any] = {
+        "ok": True,
+        "model": provider_model_id,
+        "endpoint": endpoint,
+        "already_registered": already_registered,
+        "name": display_name,
+        "price": price,
+        "billing": billing,
+        "message": message_template.format(model=provider_model_id, endpoint=endpoint),
+    }
+    if role is not None:
+        payload["role"] = role
+    if billing_note is not None:
+        payload["billing_note"] = billing_note
+    return payload
+
+
+def present_rename_result(
+    engine_result: dict[str, Any],
+    *,
+    requested_name: str,
+) -> dict[str, Any]:
+    model_record = engine_result.get("model", {}) if isinstance(engine_result, dict) else {}
+    provider_model_id = str(model_record.get("provider_model_id", ""))
+    display_name = str(model_record.get("display_name") or requested_name)
+    return {
+        "ok": True,
+        "model": provider_model_id,
+        "name": display_name,
+        "message": _RENAME_MESSAGE_TEMPLATE.format(model=provider_model_id, name=display_name),
+    }
+
+
+def present_remove_result(
+    engine_result: dict[str, Any],
+    *,
+    provider_model_id: str,
+) -> dict[str, Any]:
+    removed = bool(engine_result.get("removed")) if isinstance(engine_result, dict) else False
+    return {
+        "ok": True,
+        "removed": removed,
+        "model": provider_model_id,
+        "message": _REMOVE_MESSAGE_TEMPLATE.format(model=provider_model_id),
+    }

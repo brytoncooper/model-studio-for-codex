@@ -43,3 +43,41 @@ class McpCatalogSearchProvenance(Protocol):
     """Host-owned source/verified/note metadata for cache-backed catalog search envelopes."""
 
     def catalog_search_metadata(self, connection_id: str) -> tuple[str, bool, str]: ...
+
+
+@runtime_checkable
+class McpEngineTransport(Protocol):
+    """One-shot authenticated call into the engine JSON-RPC server.
+
+    A single ``call_engine`` does the hello/auth handshake once per
+    open session and reuses it for subsequent calls. Engine error
+    envelopes are normalized into :class:`McpEngineError` so the write
+    service can translate them.
+    """
+
+    def call_engine(self, method: str, params: dict[str, Any]) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class McpConnectionResolver(Protocol):
+    """Deterministic resolver from a saved endpoint identifier to a UUID.
+
+    Implementations fetch ``engine.v1.connections.list`` on demand, cache
+    the result for the lifetime of the resolver, and resolve the sole
+    connection when ``endpoint`` is ``None``. Multiple connections without
+    an explicit endpoint raise :class:`McpWriteError`.
+    """
+
+    def resolve(self, endpoint: str | None) -> str: ...
+
+
+@runtime_checkable
+class McpRegisteredModelLocator(Protocol):
+    """Authoritative source for an existing registration's id and revision.
+
+    Implementations fetch ``engine.v1.models.list {"collection":
+    "registered"}`` and return ``(registration_id, revision)`` for the
+    given provider_model_id, or ``None`` when it is not registered.
+    """
+
+    def find(self, provider_model_id: str) -> tuple[str, int] | None: ...
