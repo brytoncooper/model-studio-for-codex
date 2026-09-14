@@ -110,8 +110,25 @@ the original slice.
 
 ### V1 - Swift extraction and Models path acceptance
 
-- **Outcome:** Current B04/B05 implementation has one revision-specific staged
-  and cross-language acceptance record.
+**Completed 2026-09-14.** At `511dd11`, the legacy-compatible stager produced
+`/private/tmp/md-b04-acceptance.gReTAv/artifacts/qualification-511dd11/Model Deck.app`
+from fresh isolated roots. Its 1,805-entry inventory matched the executable,
+assets, resources, vendor, compatibility alias, and two Swift-bundle contract;
+the qualified helper bytes and ad-hoc identity were preserved. Three safe
+self-tests and 39 focused Swift cases passed. The live-Keychain self-test was
+not run because acceptance prohibited live Keychain access; its unchanged
+source/helper scenario remains mapped.
+
+The retained `da32d4f` acceptance record already proves the real Swift client
+and Unix transport against the Python fixture engine, including authenticated
+handshake, four typed catalog rows, repeated `models.list`, server survival,
+and owned cleanup. Current tests re-proved the five presentation states,
+cancellation, stale generations, search/selection, bootstrap boundaries,
+framing, and transport. The space-key handler remains unchanged from the
+pre-extraction source. No catalog-service, presenter, browser-state, or
+transport change after that record invalidated the cross-language proof.
+
+- **Outcome:** B04 and B05 are complete against their original acceptance.
 - **Original workstreams covered:** B04 and B05.
 - **Ownership:** Verification artifacts only; `macos/Package.swift`,
   `ModelDeckClient`, and `ModelDeckPresentation` are read-only unless a reproduced
@@ -128,10 +145,14 @@ the original slice.
 - **Stop condition:** A failing assertion becomes a concrete implementation task;
   do not repair it inside this verification assignment.
 
-The relocated V2 milestone supplies an additional real Swift-client/engine
-create/rename/restart observation, but V1 remains open for the original
-legacy-compatible stage/helper inventory and the complete Models presenter
-state/race/search/selection/keyboard record.
+The relocated V2 artifact at
+`/private/tmp/model-deck-v2-final-delivery.ab6ed4/relocated/Model Deck V2.app`
+was rechecked with its retained runtime validator; staged and relocated trees
+match, and all three Model Deck packages resolve from the relocated bundle.
+The final `511dd11` repair changed only the V2 runtime check/build composition
+and documentation, so it did not invalidate the earlier native walkthrough or
+the B05 catalog acceptance. B25/B26 remain open for their broader parity and
+distribution requirements.
 
 ### V2 - Connection/model repository conformance
 
