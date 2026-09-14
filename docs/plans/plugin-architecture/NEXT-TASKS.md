@@ -5,6 +5,24 @@ are intentionally smaller than the original workstreams. One writer owns each
 listed file set; contract changes or ownership collisions return to the primary
 agent. Existing untracked files are not assumed available or accepted.
 
+## 2026-09-13 delivery-round outcome
+
+- **A1 delivered (`61a105b`):** B01 is complete at the shared exact revision
+  maximum with cross-language fixtures and a non-writing parity/freeze gate.
+- **A2 delivered (`e017437`):** B03 is complete. The real graph is zero-error
+  without allowlist/rule weakening; the B17 boundary prerequisite is removed.
+- **A3 advanced (`e017437`, `779a8da`, `a504e75`):** serving plugins can start, observe,
+  cancel, interrupt, and retrieve bounded job results. Explicit safe resume,
+  event-revocation/confused-deputy/content-grant proof, and remaining supervisor
+  behavior still belong to B19.
+- **B22 export advanced (`779a8da`):** Notebook exports actual stored notes and
+  V2 observes/retrieves the generic result. Optional session metadata and
+  update/re-enable preservation remain.
+
+B16 refresh work is newly unblocked by the public job path. Do not repeat A1 or
+A2; continue the exact remaining requirements above rather than reopening their
+completed boundary/contract slices.
+
 ## 1. Close now by recording existing evidence
 
 The audit closed B00, B02, B08, B12, B13, and B24 in `STATUS.md`. No additional
@@ -12,9 +30,9 @@ implementation task is required for those workstreams. Future aggregate gates
 may rerun their checks, but that is B26 evidence collection rather than reopening
 the original slice.
 
-## 2. Highest-priority ready assignments
+## 2. Delivery-round assignments (historical scope and acceptance)
 
-### A1 - Contract parity and current G1 evidence
+### A1 - Contract parity and current G1 evidence — delivered
 
 - **Outcome:** Python, Swift, and canonical contract resources accept the same
   bounded values and a non-writing check proves bundle parity at one revision.
@@ -35,7 +53,7 @@ the original slice.
 - **Stop condition:** Any required public-field or semantic change beyond the
   numeric parity repair returns to the primary agent.
 
-### A2 - Restore the enforced architecture graph
+### A2 - Restore the enforced architecture graph — delivered
 
 - **Outcome:** The full current source graph passes with the existing negative
   fixtures and concrete construction remains at composition boundaries.
@@ -56,7 +74,7 @@ the original slice.
 - **Stop condition:** If fixing an edge requires a new public contract or moves
   state ownership across systems, return to the primary agent.
 
-### A3 - Public serving plugin-job path
+### A3 - Public serving plugin-job path — accepted slice delivered; B19 remains
 
 - **Outcome:** A supervised installed plugin can start a durable job, expose its
   status, cancel it, and record worker loss as interrupted.

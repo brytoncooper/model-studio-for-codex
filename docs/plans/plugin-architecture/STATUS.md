@@ -1,10 +1,9 @@
 # B00-B27 completion audit
 
-Source and evidence were audited 2026-09-13 at pushed revision
-`548b24de486c1d744847c5f881dd34a351a26f56` on
-`refactor/plugin-architecture`; this status document was authored afterward and
-does not change the audited source revision. At audit start, local `HEAD` and
-`origin/refactor/plugin-architecture` were equal. The preserved
+The bounded B01/B03/B19/B22 delivery round was integrated 2026-09-13 through
+local revision `a504e75` on `refactor/plugin-architecture`, starting from the
+independently audited and pushed revision `5a09eee`. Final push state is verified
+outside this self-referential document after its commit. The preserved
 `backup/pre-atomic-hih5xei2` ref remained at
 `7660280cc61757b69fb58e8c15bfc67b691b819d`.
 
@@ -17,13 +16,13 @@ narrow milestone does not close a broader workstream.
 
 ## Result
 
-- **Complete:** 6
+- **Complete:** 8
 - **Implemented; verification remaining:** 3
-- **Integration or implementation remaining:** 18
+- **Integration or implementation remaining:** 16
 - **Blocked:** 1
 - **Scope decision required:** 0
 
-The completed workstreams are B00, B02, B08, B12, B13, and B24. B24 is complete
+The completed workstreams are B00, B01, B02, B03, B08, B12, B13, and B24. B24 is complete
 because its original deliverable was a feasibility investigation and decision,
 not a mandatory production sandbox. The decision is to ship trusted executable
 mode only unless a separately qualified restricted helper/profile is later
@@ -34,9 +33,9 @@ requested; no restricted-mode claim is made.
 | ID | Original deliverable | Status | Current evidence | Exact remaining material requirement | Immediate dependency |
 | --- | --- | --- | --- | --- | --- |
 | B00 | Safe isolated development operation and G0 guard | **Complete** | [development guard](../../../development/README.md), [verification entrypoint](../../../scripts/verify.py), [guard tests](../../../test_development_guard.py), and [wrapper tests](../../../test_editing_check.py); current G0 ran the protected-path/symlink, unsupported-check, bounded-output, and child-timeout cases and passed 37 tests | None for B00. The broader staged artifact/package gate belongs to B26, not G0. | None |
-| B01 | Frozen shared contracts and cross-language encoding | **Implementation remaining** | [API](API.md), [contracts](../../../contracts/README.md), Python/Swift contract tests | Bound panel revisions consistently across schema/Python/Swift (the [native guide](../../../macos/Sources/ModelDeckPresentation/ExtensionUI/README.md) records the mismatch), add a non-writing bundle-parity check, and record a current cross-language freeze result. | Contract owner; no upstream code dependency |
+| B01 | Frozen shared contracts and cross-language encoding | **Complete** | Canonical, Python, and Swift resources share the exact revision range `0...9_007_199_254_740_991`; boundary fixtures pass in both languages; `generate_contracts.py --check` and `scripts/verify.py contracts` compare 200 schemas plus fixtures/inventories without writing | None | None |
 | B02 | Headless CLI -> socket -> model-library path | **Complete** | [bootstrap](../../../python/src/model_deck/bootstrap.py), [CLI subprocess tests](../../../python/tests/engine/test_engine_cli_subprocess.py), [transport tests](../../../python/tests/engine/test_engine_transport.py), and [model-library tests](../../../python/tests/engine/test_model_library.py); 41 focused tests passed, with source assertions for absent engine, incompatible handshake, typed fixture/legacy output, and independent clients | None | None |
-| B03 | Enforced architecture boundaries on the real graph | **Integration remaining** | [checker](../../../scripts/architecture_check.py), [rules](../../../development/architecture/README.md) | Make the actual graph pass. Current scan checked 204 files and reported 11 forbidden edges in dispatch, Codex bridge, provider configuration, and external-host composition; retain the negative fixtures while moving concrete composition to allowed boundaries. | Coordinate B17 composition ownership |
+| B03 | Enforced architecture boundaries on the real graph | **Complete** | The unchanged checker now scans 205 files with zero errors/warnings. Engine dispatch consumes an application gateway, external-host platform/storage dependencies are injected by bootstrap, and Codex/provider concrete factories are supplied by CLI composition. Negative fixtures remain active. | None for B03; B17 still owns broader built-in composition | None |
 | B04 | Swift module extraction with staged app parity | **Implemented; verification remaining** | [Swift package](../../../macos/Package.swift), [app target](../../../macos/Sources/ModelDeckApp/README.md), [stager](../../../scripts/package/README.md) | Run one isolated release stage proving compilation, expected executable/assets/resource bundles, original self-test mapping, and helper-byte/signature behavior. No installation or launch is required. | Prepared helper/vendor fixtures; B26 owns the aggregate package gate |
 | B05 | Models screen on typed engine client | **Implemented; verification remaining** | [client](../../../macos/Sources/ModelDeckClient/README.md), [presenter tests](../../../macos/Tests/ModelDeckPresentationTests/Models/ModelCatalogPresenterTests.swift), root app wiring | Record one Swift-client-to-Python-fixture run plus the loading/ready/empty/failure/unavailable, stale-generation, search/selection, and keyboard checks. | Isolated Swift/Python fixture |
 | B06 | MCP convergence on application use cases | **Integration remaining** | [MCP adapter](../../../python/src/model_deck/integrations/clients/mcp/README.md), [MCP tests](../../../python/tests/engine/test_mcp_model_reads.py) | Route available add/remove/display-name/benchmark mutations through public application operations; prove Swift/CLI/MCP agreement and qualify the staged entrypoint. Reads are already composed. | B07 operations; B16 for benchmark refresh |
@@ -50,12 +49,12 @@ requested; no restricted-mode claim is made.
 | B14 | Cursor execution adapter | **Integration remaining** | [Cursor provider guide](../../../docs/providers/cursor.md), coordinator/process-runtime tests | Bind the extracted adapter to the real SDK/runtime root and prove account routing, reasoning/Fast validation, tool suspension/result identity, cancel/teardown, truncation, parallel sessions, active-run reuse, and feature-loading isolation without live calls. | B10 host/runtime seam |
 | B15 | Continuation and compaction parity | **Implementation remaining** | [extracted helpers](../../../python/src/model_deck/integrations/providers/continuation/README.md) | Add the scoped continuation store/port and compose both legacy compaction entry paths, provider and Cursor continuation, encrypted host context, cross-provider/account/model refusal/stripping, and failed-summary preservation. | B14; B13 is complete |
 | B16 | Usage, pricing, benchmark sources and refresh | **Implementation remaining** | [usage owner](../../../python/src/model_deck/engine/usage/README.md), public `engine.v1.usage.query`, V2 usage UI/live token evidence | Add pricing/benchmark source adapters, provenance/age-bearing cached queries and explicit refresh jobs, UI/MCP consumers, cache-failure behavior, and the settled/estimate/subscription separation. Provider monetary cost remains unknown. | B19 public job execution |
-| B17 | Kernel registration and built-in composition | **Integration remaining** | [kernel](../../../docs/kernel.md), [composition](../../../python/src/model_deck/engine/kernel_composition.py), authenticated generic invocation tests | Migrate static built-ins and specialized provider ports to descriptors, enforce required capabilities at real startup, and prove a minimal vendor-free composition. Also remove the B03-forbidden engine -> plugin-runtime dependency. | B03 boundary repair |
+| B17 | Kernel registration and built-in composition | **Integration remaining** | [kernel](../../../docs/kernel.md), [composition](../../../python/src/model_deck/engine/kernel_composition.py), authenticated generic invocation tests; the former engine-to-plugin-runtime edge is removed behind the application gateway | Migrate static built-ins and specialized provider ports to descriptors, enforce required capabilities at real startup, and prove a minimal vendor-free composition. | None for boundary repair |
 | B18 | Supervised external plugin/provider protocol | **Implementation remaining** | Process runtime/invocation channels, [provider proxy](../../../python/src/model_deck/plugins/provider_proxy/README.md), archived deterministic-provider integration | Add heartbeat, crash backoff/restart-loop and dependency-failure supervision; finish resource/slow-reader/owned-descendant guarantees, credential-scope/model-library-selection proof, shared built-in/external conformance, and explicit resume support. | B17 composition and B19 brokers |
-| B19 | Brokered plugin data, jobs, and events | **Implementation remaining** | [plugin authority/data](../../../python/src/model_deck/engine/plugin_authority/README.md), [jobs](../../../python/src/model_deck/engine/jobs/README.md), event broker; Notebook proves real storage transport | Compose all brokers behind the serving supervisor; add public job get/cancel and explicit resume/runner behavior; prove crash interruption, revocation during subscription, confused-deputy denial, content grants, and retained data through lifecycle changes. | B18 serving supervisor |
+| B19 | Brokered plugin data, jobs, and events | **Implementation remaining** | Serving external plugins receive storage/job brokers; public `jobs.get`/`jobs.cancel`, owner/activation persistence, bounded result retrieval, terminal exclusivity, cancellation acknowledgement, worker-loss interruption, and restart non-replay pass through the real socket/SQLite path | Add safe explicit resume/runner behavior, event-subscription revocation, confused-deputy/content-grant coverage, and the remaining supervisor lifecycle guarantees. The delivered path intentionally does not replay interrupted work. | B18 serving supervisor |
 | B20 | External package lifecycle | **Implementation remaining** | [external host](../../../python/src/model_deck/plugins/external_host/README.md), activation/data composition, public install/enable/disable used by V2 | Implement inspect/update/remove, permission/provenance presentation, staged non-serving validation, grant-renewal rules, in-flight job outcomes, and failed-update/rollback guarantees. Current host explicitly lacks update and pending-work recovery. | B18-B19 |
 | B21 | Declarative extension UI and lifecycle management | **Implementation remaining** | [generic panel decoder/renderer](../../../macos/Sources/ModelDeckPresentation/ExtensionUI/README.md), [V2 app](../../../macos/Sources/ModelDeckV2/README.md) | Add the complete Extensions management experience (install/enable/crash/update/grants), accessibility/focus and all five panel states, and a second unrelated panel proof. Notebook already proves generic list/editor/action rendering. | B20 lifecycle for management states |
-| B22 | Independently packaged Session Notebook | **Implementation remaining** | [Notebook](../../../examples/session-notebook/README.md), commits `18d9b51`, `a0bf599`, `8b4099b`; V2 proves install, native repeated edit, restart persistence, disable/re-enable retention | Add optional session-metadata linkage and a cancellable export job with result/attachment handling; prove package update plus re-enable preservation. Synchronous Markdown preview is not the planned job. | B19 jobs and B20 update |
+| B22 | Independently packaged Session Notebook | **Implementation remaining** | [Notebook](../../../examples/session-notebook/README.md) now exports actual stored notes through its real job broker; V2 generically observes progress/cancel intent and retrieves bounded Markdown output. Deterministic cancellation and worker-loss/non-replay acceptance pass. | Add optional session-metadata linkage and prove package update plus re-enable preservation. Export completion alone does not close those original requirements. | B20 update; B19 resume remains separate |
 | B23 | Author SDK/tooling and second-language proof | **Implementation remaining** | Public generic invoke and committed validate/pack commands; [authoring guide](../../../python/src/model_deck/plugins/authoring/README.md) | Deliver independent Python SDK/wheel, init/dev/test workflow and fresh-project walkthrough; commit and prove the JavaScript negotiate/invoke/cancel/disable fixture. Existing untracked protocol-fixture work is not audited delivery. | B18/B20 stable lifecycle; B22 acceptance example |
 | B24 | Decide optional restricted execution feasibility | **Complete** | [feasibility decision](../../../docs/architecture/restricted-execution-feasibility.md) | Complete only for the feasibility/ship-scope decision: trusted mode ships and restricted mode is not claimed. A future restricted-mode request would require the currently unsatisfied signed helper/profile, runtime qualification, sibling-file/socket/credential/network/subprocess denial, and descendant-inheritance evidence. | None |
 | B25 | Native presenters and platform attachment parity | **Integration remaining** | Extracted model/usage/settings/platform components, [V2 app](../../../macos/Sources/ModelDeckV2/README.md) | Complete overview/connections/registration/usage/host-launch public-operation wiring; finish the Codex settings editor; prove all five states, generation/main-actor/geometry/focus/appearance/process-lifecycle parity; remove legacy orchestration only afterward. | B10, B15, B16, B21 |
@@ -69,6 +68,14 @@ requested; no restricted-mode claim is made.
   disable/re-enable retention in an isolated V2 app. They materially advance
   B18-B22 and B25-B26 but do not supply Notebook jobs/update, the full lifecycle
   manager, the author SDK, native product parity, or distribution evidence.
+- `61a105b`, `e017437`, `779a8da`, and `a504e75` establish the contract parity repair,
+  zero-error dependency graph, serving public plugin-job path, and bounded
+  Notebook Markdown export. An isolated V2 build at
+  `/tmp/model-deck-v2-export.01T1L3` visibly installed/enabled the package,
+  stored a note, showed two job identities/status/progress, and retrieved the
+  expected Markdown. The manual cancel click lost the fast completion race;
+  terminal cancellation is therefore supported by the deterministic
+  broker/runtime acceptance test, not claimed from that UI click.
 - `37378de` and `548b24d` establish a real isolated Codex CLI workflow through
   the V2 loopback bridge and composed OpenAI-compatible provider: tools, project
   mutation, passing test, same-thread continuation, usage, and disconnect-driven
@@ -83,47 +90,34 @@ requested; no restricted-mode claim is made.
 
 ## Audit checks and findings
 
-Focused checks run against the audited revision:
+Current delivery checks:
 
-- `scripts/verify.py development-guard`: 37 tests passed.
-- Model-library CLI/transport/use cases: 41 tests passed.
-- Run/repository/dispatch/replay: 83 tests passed.
-- OpenAI-compatible execution/events/mapping/streaming: 124 tests passed.
-- Migration preview: 36 tests passed with `TMPDIR=/private/tmp`. The first run
-  used the macOS `/tmp` symlink spelling and was rejected by the fixture-root
-  guard; the canonical-root rerun passed.
-- Architecture scan: 204 files checked, **11 errors**. This is a current B03
-  integration failure, not a passed gate.
+- Contract generation was intentional (`--write`), followed by non-writing
+  `--check`: 200 schemas and all bundled fixtures/inventories agree. The repair
+  suite passed 24 Python tests plus 80 subtests and 25 Swift contract tests.
+- The combined Python gate passed 184 tests plus 42 subtests. The focused
+  public-job/Notebook set passed 92 tests plus 23 subtests, including the real
+  Unix-socket, SQLite, subprocess, cancellation, result, worker-loss, and
+  restart/non-replay scenario.
+- The final durable cancellation-idempotency repair passed 41 focused job,
+  SQLite, and real-socket tests; a principal/key now replays its stored result
+  and conflicts if reused for another job.
+- The architecture scan moved from 204 files/11 errors to 205 files/zero errors
+  and zero warnings; focused boundary behavior passed 59 tests plus 8 subtests.
+- Targeted native job observation passed 8 tests. The combined Swift run found
+  one invalid new fixture among 77 tests; after adding its required `kind`, the
+  invalidated 25-test contract slice passed. A release V2 artifact then built
+  and completed the isolated UI walkthrough above.
+- `git diff --check` passed. No live provider request, signing, permanent
+  installation, migration, cutover, or protected-runtime action occurred.
 
-No Swift build, package build, contract generation, live provider request,
-installation, signing, migration, app launch, or protected-runtime action was
-performed. `scripts/generate_contracts.py --check` was not run because it writes
-generated bundles.
-
-Priority findings using the project-audit rubric:
-
-1. **Watch - the enforced architecture graph is currently red.** Evidence: 11
-   forbidden imports from engine/host/provider/plugin-runtime modules. Impact:
-   B03 and B17 cannot close and future integration can deepen boundary drift.
-   Confidence: high. Next module: implementation, followed by change review.
-2. **Watch - broad milestone success masks specific unfinished original scope.**
-   Evidence: Notebook lacks cancellable export/update proof; V2 lacks distribution
-   and full native parity; usage lacks pricing/refresh sources. Impact: B18-B23
-   and B25-B27 remain open despite working product paths. Confidence: high. Next
-   module: task creation, using [NEXT-TASKS.md](NEXT-TASKS.md).
-3. **Info - the handoff and committed coding-usage totals conflict.** Evidence:
-   the V2 guide at `548b24d` records the lower totals above. Impact: no behavior
-   verdict changes, but the larger totals cannot be cited as repository evidence.
-   Confidence: high. Next module: context survey only if the missing artifact is
-   later supplied.
-4. **Info - unrelated untracked work exists and was excluded.** It includes the
-   protocol fixture, job wire, provider execution guide, check scripts, and
-   `python/uv.lock`. Impact: none on this documentation commit; none is counted
-   as delivered. Confidence: high. Next module: none.
+Independent Luna reviews reported no material findings for the contract,
+boundary, or product slices. Existing untracked protocol-fixture/provider-guide,
+client-package, check-script, and lockfile work remains excluded.
 
 ## Next work
 
-The prioritized, bounded, parallelizable assignments are in
-[NEXT-TASKS.md](NEXT-TASKS.md). The first three are contract parity, architecture
-boundary restoration, and serving plugin jobs/lifecycle. No implementation was
-started by this audit.
+The remaining bounded assignments are in [NEXT-TASKS.md](NEXT-TASKS.md). B16 is
+newly unblocked by the public job path. B17 no longer depends on boundary repair,
+and B22 export no longer depends on result delivery; their original remaining
+requirements stay explicit above.
