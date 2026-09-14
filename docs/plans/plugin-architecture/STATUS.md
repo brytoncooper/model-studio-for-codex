@@ -1,428 +1,129 @@
-# Architecture delivery status
+# B00-B27 completion audit
 
-Baseline audited 2026-09-12 through `3551838`; accepted follow-ups are recorded below. This is the master
-delivery checklist for the full B00–B27 plan. A component commit does not close
-its parent task. The running application has not been replaced or reconfigured.
+Source and evidence were audited 2026-09-13 at pushed revision
+`548b24de486c1d744847c5f881dd34a351a26f56` on
+`refactor/plugin-architecture`; this status document was authored afterward and
+does not change the audited source revision. At audit start, local `HEAD` and
+`origin/refactor/plugin-architecture` were equal. The preserved
+`backup/pre-atomic-hih5xei2` ref remained at
+`7660280cc61757b69fb58e8c15bfc67b691b819d`.
 
-## How to read and maintain this record
+This file is the authoritative current checklist for the original 28
+workstreams in [BACKLOG.md](BACKLOG.md). The older range audits
+([B00-B09](status/B00-B09.md), [B10-B18](status/B10-B18.md), and
+[B19-B27](status/B19-B27.md)) remain historical evidence pointers and are
+superseded where they conflict with this audit. A component, test count, or
+narrow milestone does not close a broader workstream.
 
-**Written** means implementation exists. **Integrated** means the intended
-components are connected in executable code. **Verified** requires relevant
-execution evidence, including the acceptance requirements in BACKLOG.md.
-Source-audit links list tests but do not imply those tests ran in the audit.
+## Result
 
-After each accepted commit, update its task row, the evidence below, and the
-remaining action. Mark a task complete only when its entire acceptance scope is
-proved. Keep incomplete requirements visible; do not derive a percentage from
-commit counts or the number of task headings.
+- **Complete:** 6
+- **Implemented; verification remaining:** 3
+- **Integration or implementation remaining:** 18
+- **Blocked:** 1
+- **Scope decision required:** 0
+
+The completed workstreams are B00, B02, B08, B12, B13, and B24. B24 is complete
+because its original deliverable was a feasibility investigation and decision,
+not a mandatory production sandbox. The decision is to ship trusted executable
+mode only unless a separately qualified restricted helper/profile is later
+requested; no restricted-mode claim is made.
 
 ## Master checklist
 
-| Task | Current implementation and integration | Remaining requirement |
-| --- | --- | --- |
-| B00 Isolation | Guards, isolated worktree tooling and staging packager reviewed | Real staged packaging and artifact qualification |
-| B01 Contracts | Shared schemas, resources and language clients written; tool contract corrected | Complete cross-language gate at current revision |
-| B02 Headless model library | CLI/socket/model read path integrated | Record full current G2 acceptance |
-| B03 Architecture enforcement | Runtime classification repaired; parent verified 30 checker tests and full 156-file graph with zero findings | Keep graph gate current as integrations land |
-| B04 Swift packaging | Native library targets extracted | Staged executable/assets/helper verification |
-| B05 Models client | Typed client/presenter and app model path wired | Complete cross-language UI acceptance |
-| B06 MCP | Real entrypoint read composition reviewed; existing registry/formatting/search reused | Converge available mutations; qualify packaged entrypoint |
-| B07 Application state | Revisioned SQLite model/connection operations integrated | Shared repository conformance and active-run removal proof |
-| B08 Import preview | Deterministic read-only preview written | Record current full preview acceptance |
-| B09 Projections | Committed snapshots, invalidation receipts and historical dependency recovery reviewed | Complete fixture composition and conflict resolution |
-| B10 Host bridge | Legacy bridge retained; new host helpers written | Extract and compose actual host bridge/launch policy |
-| B11 Migration | Preview supports preparation | Offline apply, recovery and rollback rehearsal |
-| B12 Sessions/runs | Durable run path, exclusive-lock recovery and injected provider bootstrap reviewed | Complete real-provider and run acceptance gate |
-| B13 HTTP providers | Streaming, request helpers and owned HTTP transport reviewed | Provider execution composition, fallback and parity |
-| B14 Cursor provider | Coordinator and injected legacy-process adapter independently reviewed | Root SDK composition and parity |
-| B15 Continuation | Translation/compaction helpers extracted | Scoped store, both host paths and provider integration |
-| B16 Usage/evidence | Durable reconciliation and authenticated public usage query integrated with fixture runs | Real-provider wiring, pricing and refresh jobs |
-| B17 Kernel | Generic composed operations integrated with authenticated dispatch and discovery | Migrate static built-ins; external schema/principal lifecycle integration |
-| B18 External runtime | Archived standalone provider proven through process channel, proxy and real engine stores | Credential-scope proof and full runtime integration |
-| B19 Plugin capabilities | Storage/events/jobs brokers and durable stores written | Serving supervisor integration, operator jobs and explicit resume |
-| B20 Package lifecycle | Isolated external host now composes staging, lifecycle authority, real subprocess activation, versioned owned data and frozen public lifecycle dispatch for the Notebook proof | Broader product lifecycle management remains outside the Notebook slice |
-| B21 Extension UI | Generic public panel discovery/delivery and a separate isolated native panel executable now exercise the immutable decoder and renderer | Shipping-app attachment and extension management remain separate |
-| B22 Session Notebook | Externally packaged CRUD plugin, contributed list/editor panels, restart persistence and disabled-invocation refusal demonstrated against isolated components | No session metadata, transcript access or background export jobs requested |
-| B23 Author tooling | Plugin validate/pack, lifecycle/panel CLI commands and frozen generic invocation support the Notebook walkthrough | Broader SDK and init/dev workflow remain outside this slice |
-| B24 Restricted execution | Reviewed feasibility document; no restricted runtime implemented | Isolated OS enforcement investigation and qualification |
-| B25 Native parity | Catalog path, authenticated settings persistence and native settings screen reviewed | App attachment and remaining native features |
-| B26 Distribution/docs | Isolated staging packager and subsystem catalog reviewed | Real staged packaging, compatibility wrappers and aggregate gate |
-| B27 Live qualification | Not started | Complete staged readiness, then schedule protected-runtime cutover |
-
-Detailed source audits: [B00–B09](status/B00-B09.md),
-[B10–B18](status/B10-B18.md), [B19–B27](status/B19-B27.md).
-These retain the inspection revision and distinguish evidence from missing work.
-
-## Recent accepted evidence
-
-| Commit | Accepted component | Verification and limit |
-| --- | --- | --- |
-| `2ad32a4` | Advertised tool definitions separated from emitted calls | Parent batch: 194 tests, 135 subtests passed across contracts, runs, Cursor, socket fixtures and jobs. Architecture check of affected tool modules: 16 files, zero findings. Socket fixture accepts the definition schema but its route does not support tools; complete socket-to-tool-provider proof remains. |
-| `ef74e20` | Authorized durable plugin job followups | Included in the 194-test batch; independent review findings repaired and parent reviewed. Broker is not yet connected to serving supervisor. |
-| `a143b51` | Immutable plugin artifact staging | 24 focused tests plus independent cleanup/replacement probes accepted. Failure before filesystem identity is established may leave an empty staging directory; no unknown replacement is deleted. |
-| `3551838` | Codex settings-file persistence | Parent: 45 document/file tests, 8 subtests passed. Independent descriptor, backup and failure probes reviewed. Engine bootstrap composition remains in progress. |
-
-All four commits above, plus the initial checklist `193e016`, were confirmed pushed.
-
-Architecture follow-up: first-party plugin runtime has its own layer. Parent
-verified 30 checker tests and the complete 156-file product scan with zero errors
-or warnings. Core and external plugin/SDK imports of runtime remain forbidden;
-new negative fixtures also reject runtime imports of hosts/providers/private core.
-
-Settings composition follow-up: six independently run real socket tests verify
-read/preview/save against temporary TOML files and SQLite ledgers, durable preview
-and exact save replay across restart, one recoverable backup, stale edit rejection,
-authentication and unchanged defaults. Configured operator identity is injected
-by bootstrap; this is not per-client role enrollment or live settings discovery.
-
-Startup recovery follow-up: independent acceptance ran 40 recovery, transport and
-settings tests. Recovery occurs after the instance lock and before listening;
-claimed active runs interrupt without provider retry, accepted/terminal states
-remain, and a competing instance cannot mutate recovery state.
-
-Provider transport follow-up: 28 focused lifecycle/channel tests and three
-independent subprocess probes passed. One reader handles events and concurrent
-replies; strict matching, bounded queues, whole-batch rejection, deadlines and
-owned-child cleanup were verified. Run ownership and terminal semantics belong
-to the separate proxy review; no real external provider package is qualified yet.
-
-Usage records follow-up: parent ran 20 tests and six subtests after independent
-review repairs. Single-query bounds, exact fractional timestamp comparisons,
-schema-valid complete responses and optional-field presence/replay were verified.
-Records require genuine run/session IDs; legacy ledger IDs and costs are not
-invented. Event and public dispatch wiring remain pending.
-
-Native settings follow-up: a fresh independent library stage passed 31 tests,
-including control actions through actual Command-S, typed enum values, duplicate
-labels, unknown choices and secret metadata exclusion. Parent inspected the
-offscreen layout. This proves the reusable screen, not attachment to the running
-app or an end-to-end Swift-to-file session.
-
-MCP read composition follow-up: 40 tests and independent shared-account route
-probes passed. Validated Deck.call reads traverse the application service while
-reusing registry parsing and legacy output formatting/search. Captured account,
-URL and wire participate in opaque connection identity. Writes remain legacy.
-The Architecture entrypoint requires the engine package in source or staged
-vendor; the new packager must supply it, with no silent service bypass.
-
-Provider proxy follow-up: parent ran 19 tests after independent concurrency
-review and wire-to-engine translation repair. A real coordinator/SQLite test now
-proves waiting-for-tool, result submission, replay without duplicate forwarding,
-and one completed terminal. Slow sinks and blocked acknowledgements remain
-isolated per run. The archived external-process integration is still underway.
-
-Tool-event integration `9e476f0`: independent acceptance passed 37 focused tests
-and a real SQLite/authenticated-socket probe. Internal tool fields remain flat;
-only the public notification nests `tool_call`. Submission returns the run to
-running, arguments are detached, and invalid payloads do not escape on the wire.
-This supersedes the earlier tool-capability limit on the socket fixture; durable
-restart replay remains a separate requirement.
-
-Archived provider `ec56ad1` and cancellation repair `74ef7ed`: independent
-acceptance passed 11 integration/regression tests, followed by 10 cancellations
-and 10 tool-result runs with zero failures. The real ZIP/staging/process pipeline
-uses isolated imports and actual engine repositories. The terminal-race repair
-preserves the committed winner without duplicate publication; unrelated failures
-propagate. Credential brokering and live provider parity remain pending.
-
-Cursor process adapter follow-up: independent acceptance passed 70 focused tests
-and composed probes. Existing payload and usage logic remain injected; synchronous
-tool-result callbacks, early failures, exactly-once cleanup and explicit false,
-zero, empty and null arguments are preserved. Missing arguments fail closed.
-Root SDK composition and live provider qualification remain pending.
-
-Projection snapshots `340c8d6` and invalidation `5bca96a`: seven adapter tests plus
-independent error-boundary probes passed; 49 transactional and outbox tests passed.
-Connection changes advance only their active dependent model revisions in the
-same transaction. Replay and tombstones remain protected. Dependency expansion
-acknowledgments and the complete file projection loop remain pending.
-
-Dependency receipts `4fec8a3`: 43 independently run tests passed. Exact expansion
-proof is committed with connection/model changes; proven metadata is excluded
-before pending-batch limits, without claiming a file was applied. Receipt failure
-rolls back the save. Historical unexpanded rows remain visible and need recovery.
-
-Historical dependency recovery follow-up: M3 reviewed the transaction, grouping,
-replay and conflict behavior; parent independently ran all 29 related tests.
-Valid historical events expand against current committed state without reviving
-tombstones. Invalid rows retain explicit pending conflicts; no file projection
-is claimed by recovery.
-
-Usage reconciliation `64a283d`: 16 reader/reconciliation tests and independent
-SQLite integration passed, alongside the previously reviewed ledger tests.
-Bounded snapshot reads preserve timestamps and optional fields; partial writes
-recover through idempotent reconciliation before queries return. Public socket
-composition remains pending.
-
-HTTP transport `e93e2ac`: nine independently run tests verify exact POST inputs,
-failure cleanup and once-only concurrent close. The primitive remains unwired;
-local close does not claim confirmed remote cancellation.
-
-Kernel composition `300ce44`: 15 final composition tests and independent socket
-probes passed after authorization/static regression checks. Unknown namespaced
-operations are discoverable and invocable through trusted composition. Seven
-invalid/oversized result probes return fixed errors and preserve connection
-usability. Static built-ins and external schema/principal lifecycle remain outside
-this integration.
-
-Public usage query follow-up: 47 independently run tests and a real socket
-timestamp probe passed. Configured fixture runs feed genuine committed events
-through reconciliation; authentication, restart/retry, exact optional fields and
-fixed error responses are verified. Pricing, refresh jobs and live billing parity
-remain separate work.
-
-Lifecycle contracts `280a578`: 11 tests and independent transition review passed.
-Abort/rollback retain recoverable restoration claims until external synchronization
-completes. This is a port freeze, not storage or crash-recovery implementation proof.
-
-Panel contract `34fbb08`: 11 tests and independent strict offline schema validation
-passed. The tree includes labeled inputs and explicit stale-state/binding rules.
-Semantic validation, native rendering and public panel transport remain pending.
-
-Cursor preparation `b66afc7`: 23 independently run tests and parity probes passed.
-The existing manager reuses a pure payload helper; invalid new prompts preserve
-paused sessions. Engine composition and live SDK qualification remain pending.
-
-Staging packager `456a465`: independent review passed 28 tests on macOS Python
-3.12, including benign child cleanup and timeout fixtures. Explicit offline
-vendor bytes, supplied helper identity, fresh output publication and supported
-resource layout are checked. Actual Swift compilation, signatures, resource
-lookup without source, and staged application behavior remain unverified.
-
-## Current independent work
-
-- Versioned SQLite plugin data implementation against the accepted contract.
-- Public socket asynchronous event-delivery repair; acknowledgements must not
-  serve as polling requests for newly published provider events.
-- Archived external provider integration through the public engine socket.
-- Generic CLI invocation review and boundary repairs.
-- Notebook protocol and HTTP provider composition boundary checks.
-- Normalized run-options contracts for provider parity; persistence and consumers
-  will follow the shared contract review.
-
-SQLite lifecycle repository `755ef2a`: 19 focused repository/port tests passed
-in implementation and independent Sol review. Claims, phase revisions, selected
-state, restoration intent and exact retry receipts persist atomically. Service
-composition, real activation/data effects and cross-process qualification remain
-separate requirements; this commit does not close B20.
-
-Extension wire contracts now consistently require revision and retry identity
-for all six mutations, and expose revision on get. Independent Sol review passed
-38 validation cases and verified canonical/Python/Swift copies match. The panel
-schema is also bundled in both languages. These contracts do not establish that
-extension commands are wired into public dispatch.
-
-Provider composition `1ba61e9`: bootstrap accepts an injected execution provider
-and copied route definitions, sharing the existing durable sessions, runs,
-recovery and usage services. Independent repair review passed 43 focused tests;
-the author ran 120 regressions. Invalid capability references fail before state
-creation, caller mutations cannot alter captured routes, and the caller retains
-provider cleanup ownership. Real archived-provider socket integration is next;
-live SDK behavior remains unqualified.
-
-Lifecycle coordination `ad2ae1a`: parent ran 45 service/port/SQLite tests after
-independent review reproduced and verified both repairs. Abort now persists a
-completed freeze with restoration intent, so restart thaws before admission.
-Lease-owned execution rejects competing recovery across two repository objects
-on the same database before effects. The production lease/activation/data
-composition is still required; these tests use explicit temporary databases.
-
-Versioned-data contract `74bf69a`: independent review passed three contract tests.
-Bindings capture namespace, data reference and activation generation; storage
-must share the broker mutation barrier and explicitly control writable state.
-Real generation storage, freeze races and staged migration tests are underway.
-
-Native panel decoding `9031b85`: isolated library compilation and 42 owned tests
-passed after independent review and additional boundary probes. Values are
-immutable; decoding enforces fields, Unicode scalar lengths, strict Booleans,
-node/binding limits and ready-state requirements. Native revision values are
-bounded by signed `Int`; the shared revision schema remains unbounded. B01 must
-resolve that cross-system numeric limit before claiming exact numeric parity.
-
-Contracts `f053c88` and `35ffb6c`: external invocation now requires supervisor
-broker context, panel fetch returns a tree, and run options have shared schema
-and Python types. Parent ran all 57 contract tests; all 200 canonical schemas
-match both generated bundles. Runtime consumers remain in progress.
-
-Native renderer `f63689b`: independent library-only compilation passed two
-renderer tests, 42 decoder tests and two additional state/lookup probes. It uses
-trusted operation lookup, emits action intents, rejects stale lookup results,
-and disables stale/non-ready controls. Public fetch and native app attachment
-remain separate work.
-
-Cross-process lifecycle tests `cec7142`: five tests pass in about one second,
-including distinct-key exclusion, pending/settled replay across processes and a
-cleanup fault probe. Independent review verified all children are reaped and
-temporary resources cleaned even after a worker failure.
-
-Archived-provider socket qualification found a real streaming gap: the server
-only drained notifications after client requests, and the fixture used repeated
-acks to poll. The integration slice remains unaccepted until delayed events reach
-an idle subscribed client without another request. Transport repair is assigned.
-
-The source audit exposed real missing integration and verification work. Earlier
-conversation percentages were estimates, not a measured delivery baseline; this
-checklist replaces them as the source of status.
-
-## Accepted run-options pipeline
-
-`664fb02`, `b93968e` and `fba4688` add strict options conversion, versioned
-SQLite persistence and admission/provider-request propagation. Independent Sol
-reviews accepted each slice after malformed-value and recovery fixes. Parent
-ran 70 combined codec, admission, persistence, use-case and startup recovery
-tests successfully. Omitted options retain the legacy request hash; explicit
-false/empty values survive; malformed stored options fail closed. Provider
-specific mapping and enforcement remain unfinished; see [remaining parity
-work](RUN-OPTIONS-GAP.md). No live application data was migrated.
-
-CLI `bbf52d2` adds authenticated discovery and generic invocation of advertised
-operations with bounded input and fixed failure handling. Independent review
-passed 32 CLI tests. Plugin SDK, package authoring commands and the JavaScript
-fixture remain B23 requirements.
-
-Next / upcoming task: accept the idle-event disconnect repair and versioned
-data freeze-ownership repair, then integrate external invocation and brokers.
-
-## Accepted event delivery and data generations
-
-`7be28e3` delivers events to idle subscribed sockets without polling RPCs and
-removes both dispatch and replay subscriptions when their connection closes.
-Independent review and the parent each passed 63 focused tests, including
-partial frames, credit, ownership and real disconnect cleanup. Archived-provider
-socket tests are being updated to consume notifications without the former
-ack-as-poll workaround.
-
-`150eb43` adds versioned SQLite plugin data. Independent review and the parent
-passed 29 adapter, legacy CRUD and contract tests. Active freeze references
-fence replay, thaw and staging even when two freezes have the same data revision;
-migration incarnations fence callbacks from replaced stages. Lifecycle service
-composition with this real store remains to be verified.
-
-Generic external invocation remains unaccepted: final review reproduced hanging
-unsolicited broker callbacks without deadline enforcement and oversized response
-encoding that abandoned a worker without closing the runtime. Repairs are owned
-by the process runtime worker; independent re-review is required.
-
-Next / upcoming task: verify real lifecycle/data composition and repaired broker
-deadlines, while plugin validate/pack authoring commands are implemented separately.
-
-## Archived provider socket proof
-
-`7a6e8a8` qualifies four isolated archived-provider scenarios over the real
-authenticated engine socket: text, tool result roundtrip, confirmed cancellation
-and durable usage query. Independent review and the parent each passed all four
-tests. The child runs from an extracted ZIP under isolated Python imports. Event
-consumption now waits for pushed notifications and acknowledges only consumed
-events. This does not qualify live SDK credentials, full plugin supervision or
-the packaged Mac app.
-
-Next / upcoming task: review broker deadline repairs and real lifecycle/data
-composition; continue authoring commands and HTTP provider composition planning.
-
-## Accepted external invocation transport
-
-`3609da8` adds canonical plugin invocation and authenticated broker request
-transport. Independent review and the parent passed 50 runtime/provider/external
-integration tests after repairing two reproduced failures. An independent deadline
-owner now closes the child for stuck unsolicited callbacks; oversized responses
-fail closed and clear correlation state. Python callbacks cannot be forcibly
-terminated, so this remains trusted execution rather than OS containment.
-
-Real lifecycle/data integration currently reproduces a missing handoff: install
-and disabled update can settle without activating the corresponding storage
-binding. The selected data revision must reach synchronization and survive recovery,
-including rollback to a removed first-install record. A red integration test and
-contract review are in progress; no test-only revision map is being accepted as
-production integration proof.
-
-Next / upcoming task: settle and implement that lifecycle revision handoff;
-review plugin authoring and storage wire integration in parallel.
-
-## Accepted storage wire adapter
-
-`3903397` connects the four storage broker methods to the existing trusted
-authority and data broker. Runtime activation identity is checked before broker
-access; request and result schemas are validated without inventing grants or
-coercing values. Independent review passed 36 wire/broker/SQLite tests; the parent
-ran the six new wire tests. Real subprocess-to-storage integration is underway.
-
-Next / upcoming task: resolve lifecycle revision synchronization, review authoring
-archive boundaries, and verify subprocess storage integration.
-
-## Accepted provider event alignment and broker composition
-
-`d65b424` aligns the HTTP stream validator with engine events: tool requests use
-flat provider payloads, and failed/interrupted runs may terminate before start.
-Independent review and the parent passed all 84 SSE tests; existing terminal,
-sequence and outstanding-tool checks remain enforced. HTTP execution and actual
-endpoint resolution are still required.
-
-`3c95068` proves the isolated child -> invocation runtime -> storage wire adapter
--> authority/data broker -> SQLite path. Independent review passed four integration
-tests and 25 adjacent tests; the parent also passed the four integration tests.
-The tests reject forged namespaces, revoked handles and mismatched activations
-without replacing the broker dispatcher with a mock.
-
-Next / upcoming task: complete lifecycle revision synchronization and archive
-packing repairs; reuse the existing chat-stream translator in the HTTP package.
-
-## Accepted lifecycle/data composition and chat translation
-
-`a3e9a2d` closes the revision handoff gap: activation admission receives an exact
-expected data revision. Enabled targets use fresh matching validation; non-serving
-targets use the public read-only data lookup. Independent review passed 58 tests,
-including real SQLite rollback, first-install/reinstall tombstone recovery and
-revision-conflict behavior. Parent checks covered the same 58 tests across the
-focused modules. Production lease and activation supervision remain separate.
-
-`acf1a97` extracts the existing chat-stream translator without importing the
-legacy host. Independent AST comparison and complete-output probes confirmed
-parity; parent and reviewer passed 10 focused translation tests. The translator
-still needs HTTP execution composition and normalized host input.
-
-Next / upcoming task: review normalized message contracts and authoring repairs;
-implement the real lease adapter, Codex input conversion and JavaScript fixture.
-
-## Accepted normalized input and authoring commands
-
-`d91a23b` adds provider-neutral message/tool-history values and strict conversion.
-Nine focused tests plus independent privacy/Unicode probes passed; all 57 contract
-tests passed and all 200 schemas match both packaged copies. Public run
-input subsequently migrated in `3142779`, as recorded below.
-
-`063bab9` adds `plugin validate` and `plugin pack`. Independent review and the
-parent passed 49 authoring/CLI tests. Finished archives are validated before
-atomic no-overwrite publication; bounded traversal/read and competing writer
-regressions passed. This does not complete SDK packaging or init/dev/test.
-
-## Accepted host input, provider mapping and engine lease
-
-`f5786c2` binds extension lifecycle ownership to the real engine file lease.
-Independent checks cover ownership shared between wrappers, held state and PID
-fencing; five adapter and five startup tests passed.
-
-`123609b` converts Codex history into the engine-owned normalized input contract.
-Eighteen focused host/codec tests and independent legacy parity and private-error
-probes passed. Opaque reasoning and compaction remain explicit host collaborators.
-
-`0b49f7c` maps typed engine requests into Responses and chat request bodies.
-Independent review passed 44 tests, including malformed tools, error sanitization
-and preservation of image detail. These are pure mappings; HTTP execution and
-production composition remain separate work.
-
-Next: public normalized-input admission, HTTP execution, JavaScript protocol
-verification, and real extension activation composition.
-
-## Accepted public normalized-input admission
-
-`3142779` enforces canonical tagged input before admission side effects and
-updates source fixtures and both packaged schema bundles. Independent review
-passed 50 focused tests and hash/zero-effect probes. Root generation validated
-200 schemas, full bundle byte parity, and 57 contract tests with 224 subtests.
-Stored legacy recovery is preserved explicitly; this is not a database migration.
-
-The wider engine check passed 902 tests and 386 subtests, with two stale test
-failures (a moved CLI import patch and a working-directory-dependent source path).
-The repaired modules passed 57 tests and 6 subtests from the repository root;
-independent review accepted both repairs and passed 57 tests from `python/`.
-This check does not qualify the complete app or close B27.
+| ID | Original deliverable | Status | Current evidence | Exact remaining material requirement | Immediate dependency |
+| --- | --- | --- | --- | --- | --- |
+| B00 | Safe isolated development operation and G0 guard | **Complete** | [development guard](../../../development/README.md), [verification entrypoint](../../../scripts/verify.py), [guard tests](../../../test_development_guard.py), and [wrapper tests](../../../test_editing_check.py); current G0 ran the protected-path/symlink, unsupported-check, bounded-output, and child-timeout cases and passed 37 tests | None for B00. The broader staged artifact/package gate belongs to B26, not G0. | None |
+| B01 | Frozen shared contracts and cross-language encoding | **Implementation remaining** | [API](API.md), [contracts](../../../contracts/README.md), Python/Swift contract tests | Bound panel revisions consistently across schema/Python/Swift (the [native guide](../../../macos/Sources/ModelDeckPresentation/ExtensionUI/README.md) records the mismatch), add a non-writing bundle-parity check, and record a current cross-language freeze result. | Contract owner; no upstream code dependency |
+| B02 | Headless CLI -> socket -> model-library path | **Complete** | [bootstrap](../../../python/src/model_deck/bootstrap.py), [CLI subprocess tests](../../../python/tests/engine/test_engine_cli_subprocess.py), [transport tests](../../../python/tests/engine/test_engine_transport.py), and [model-library tests](../../../python/tests/engine/test_model_library.py); 41 focused tests passed, with source assertions for absent engine, incompatible handshake, typed fixture/legacy output, and independent clients | None | None |
+| B03 | Enforced architecture boundaries on the real graph | **Integration remaining** | [checker](../../../scripts/architecture_check.py), [rules](../../../development/architecture/README.md) | Make the actual graph pass. Current scan checked 204 files and reported 11 forbidden edges in dispatch, Codex bridge, provider configuration, and external-host composition; retain the negative fixtures while moving concrete composition to allowed boundaries. | Coordinate B17 composition ownership |
+| B04 | Swift module extraction with staged app parity | **Implemented; verification remaining** | [Swift package](../../../macos/Package.swift), [app target](../../../macos/Sources/ModelDeckApp/README.md), [stager](../../../scripts/package/README.md) | Run one isolated release stage proving compilation, expected executable/assets/resource bundles, original self-test mapping, and helper-byte/signature behavior. No installation or launch is required. | Prepared helper/vendor fixtures; B26 owns the aggregate package gate |
+| B05 | Models screen on typed engine client | **Implemented; verification remaining** | [client](../../../macos/Sources/ModelDeckClient/README.md), [presenter tests](../../../macos/Tests/ModelDeckPresentationTests/Models/ModelCatalogPresenterTests.swift), root app wiring | Record one Swift-client-to-Python-fixture run plus the loading/ready/empty/failure/unavailable, stale-generation, search/selection, and keyboard checks. | Isolated Swift/Python fixture |
+| B06 | MCP convergence on application use cases | **Integration remaining** | [MCP adapter](../../../python/src/model_deck/integrations/clients/mcp/README.md), [MCP tests](../../../python/tests/engine/test_mcp_model_reads.py) | Route available add/remove/display-name/benchmark mutations through public application operations; prove Swift/CLI/MCP agreement and qualify the staged entrypoint. Reads are already composed. | B07 operations; B16 for benchmark refresh |
+| B07 | Revisioned connection/model transactions | **Implemented; verification remaining** | [connections](../../../python/src/model_deck/engine/connections/README.md), SQLite repositories and focused tests | Run one shared fake/SQLite conformance contract and an admission scenario proving removal blocks new runs without changing a captured active route. | None |
+| B08 | Deterministic redacted legacy-import preview | **Complete** | [preview guide](../../../python/src/model_deck/integrations/hosts/codex/migration_preview/README.md), [preview tests](../../../python/tests/integrations/hosts/codex/test_migration_preview.py); all 36 deterministic-repeat, hash, collision, malformed/foreign/symlink, preservation, and secret-redaction cases passed with `TMPDIR=/private/tmp` | None; apply/rollback is B11. | None |
+| B09 | Conflict-aware host projection/outbox reconciliation | **Implementation remaining** | [projection consumer](../../../python/src/model_deck/integrations/hosts/codex/projection_consumer/README.md), snapshot/invalidation/recovery evidence | Compose the real consumer in bootstrap, re-drive affected registrations on `connection.saved`, and prove mutation -> snapshot -> render -> conditional file -> receipt plus compare-before-write rollback. | B07 state is available |
+| B10 | Codex host adapter and compatibility profile | **Implementation remaining** | [Codex bridge primitives](../../../python/src/model_deck/integrations/hosts/codex/bridge.py), legacy bridge/runtime tests | Extract and compose app-server discovery/mapping/launch preparation, compatibility tri-state and unknown-version refusal; prove projection, cancellation ownership, per-process overrides, and host-bound subscription behavior with a fake app-server. The V2 loopback Responses bridge is narrower evidence. | B09 projection composition |
+| B11 | Offline migration and rollback rehearsal | **Implementation remaining** | B08 preview and projection receipt migrations | Implement temp-DB apply, exclusive-writer/fingerprint guards, WAL-safe snapshot journal, atomic data/outbox commit, migration IDs/checksums/newer-schema refusal, interruption recovery, and rollback with post-import writes/conflicts. | B08-B10 |
+| B12 | Durable sessions/runs state machine with fixture provider | **Complete** | [runs](../../../python/src/model_deck/engine/runs/README.md), [run use-case tests](../../../python/tests/engine/test_run_use_cases.py), [repository tests](../../../python/tests/engine/test_sqlite_session_run_repository.py), dispatch/replay/startup recovery, and V2 workflow; 83 current tests passed for admission replay, single dispatch, recovery, cancellation races, slow readers, capabilities, and route snapshots | None | None |
+| B13 | HTTP provider execution and wire translation | **Complete** | Composed [execution port](../../../python/src/model_deck/integrations/providers/openai_compatible/execution.py), [profile composition](../../../python/src/model_deck/integrations/providers/openai_compatible/configuration.py), [execution tests](../../../python/tests/provider_openai_compatible/test_execution.py), request/event/stream tests, and V2 live coding evidence; 124 current tests passed, including pre-body fallback, no retry after a started/decoded response, malformed/truncated streams, tools, cancel, and real-engine injection. Host-native subscription passthrough remains host-bound rather than entering this general endpoint adapter. | None for the original HTTP-adapter slice. The legacy path is retained for rollback/compatibility until B26; Cursor and continuation remain B14/B15 and live cutover remains B27. | None |
+| B14 | Cursor execution adapter | **Integration remaining** | [Cursor provider guide](../../../docs/providers/cursor.md), coordinator/process-runtime tests | Bind the extracted adapter to the real SDK/runtime root and prove account routing, reasoning/Fast validation, tool suspension/result identity, cancel/teardown, truncation, parallel sessions, active-run reuse, and feature-loading isolation without live calls. | B10 host/runtime seam |
+| B15 | Continuation and compaction parity | **Implementation remaining** | [extracted helpers](../../../python/src/model_deck/integrations/providers/continuation/README.md) | Add the scoped continuation store/port and compose both legacy compaction entry paths, provider and Cursor continuation, encrypted host context, cross-provider/account/model refusal/stripping, and failed-summary preservation. | B14; B13 is complete |
+| B16 | Usage, pricing, benchmark sources and refresh | **Implementation remaining** | [usage owner](../../../python/src/model_deck/engine/usage/README.md), public `engine.v1.usage.query`, V2 usage UI/live token evidence | Add pricing/benchmark source adapters, provenance/age-bearing cached queries and explicit refresh jobs, UI/MCP consumers, cache-failure behavior, and the settled/estimate/subscription separation. Provider monetary cost remains unknown. | B19 public job execution |
+| B17 | Kernel registration and built-in composition | **Integration remaining** | [kernel](../../../docs/kernel.md), [composition](../../../python/src/model_deck/engine/kernel_composition.py), authenticated generic invocation tests | Migrate static built-ins and specialized provider ports to descriptors, enforce required capabilities at real startup, and prove a minimal vendor-free composition. Also remove the B03-forbidden engine -> plugin-runtime dependency. | B03 boundary repair |
+| B18 | Supervised external plugin/provider protocol | **Implementation remaining** | Process runtime/invocation channels, [provider proxy](../../../python/src/model_deck/plugins/provider_proxy/README.md), archived deterministic-provider integration | Add heartbeat, crash backoff/restart-loop and dependency-failure supervision; finish resource/slow-reader/owned-descendant guarantees, credential-scope/model-library-selection proof, shared built-in/external conformance, and explicit resume support. | B17 composition and B19 brokers |
+| B19 | Brokered plugin data, jobs, and events | **Implementation remaining** | [plugin authority/data](../../../python/src/model_deck/engine/plugin_authority/README.md), [jobs](../../../python/src/model_deck/engine/jobs/README.md), event broker; Notebook proves real storage transport | Compose all brokers behind the serving supervisor; add public job get/cancel and explicit resume/runner behavior; prove crash interruption, revocation during subscription, confused-deputy denial, content grants, and retained data through lifecycle changes. | B18 serving supervisor |
+| B20 | External package lifecycle | **Implementation remaining** | [external host](../../../python/src/model_deck/plugins/external_host/README.md), activation/data composition, public install/enable/disable used by V2 | Implement inspect/update/remove, permission/provenance presentation, staged non-serving validation, grant-renewal rules, in-flight job outcomes, and failed-update/rollback guarantees. Current host explicitly lacks update and pending-work recovery. | B18-B19 |
+| B21 | Declarative extension UI and lifecycle management | **Implementation remaining** | [generic panel decoder/renderer](../../../macos/Sources/ModelDeckPresentation/ExtensionUI/README.md), [V2 app](../../../macos/Sources/ModelDeckV2/README.md) | Add the complete Extensions management experience (install/enable/crash/update/grants), accessibility/focus and all five panel states, and a second unrelated panel proof. Notebook already proves generic list/editor/action rendering. | B20 lifecycle for management states |
+| B22 | Independently packaged Session Notebook | **Implementation remaining** | [Notebook](../../../examples/session-notebook/README.md), commits `18d9b51`, `a0bf599`, `8b4099b`; V2 proves install, native repeated edit, restart persistence, disable/re-enable retention | Add optional session-metadata linkage and a cancellable export job with result/attachment handling; prove package update plus re-enable preservation. Synchronous Markdown preview is not the planned job. | B19 jobs and B20 update |
+| B23 | Author SDK/tooling and second-language proof | **Implementation remaining** | Public generic invoke and committed validate/pack commands; [authoring guide](../../../python/src/model_deck/plugins/authoring/README.md) | Deliver independent Python SDK/wheel, init/dev/test workflow and fresh-project walkthrough; commit and prove the JavaScript negotiate/invoke/cancel/disable fixture. Existing untracked protocol-fixture work is not audited delivery. | B18/B20 stable lifecycle; B22 acceptance example |
+| B24 | Decide optional restricted execution feasibility | **Complete** | [feasibility decision](../../../docs/architecture/restricted-execution-feasibility.md) | Complete only for the feasibility/ship-scope decision: trusted mode ships and restricted mode is not claimed. A future restricted-mode request would require the currently unsatisfied signed helper/profile, runtime qualification, sibling-file/socket/credential/network/subprocess denial, and descendant-inheritance evidence. | None |
+| B25 | Native presenters and platform attachment parity | **Integration remaining** | Extracted model/usage/settings/platform components, [V2 app](../../../macos/Sources/ModelDeckV2/README.md) | Complete overview/connections/registration/usage/host-launch public-operation wiring; finish the Codex settings editor; prove all five states, generation/main-actor/geometry/focus/appearance/process-lifecycle parity; remove legacy orchestration only afterward. | B10, B15, B16, B21 |
+| B26 | Immutable packaging, compatibility, docs, aggregate G7 | **Integration remaining** | [legacy-compatible stager](../../../scripts/package/README.md), [V2 builder](../../../scripts/v2/README.md), [catalog](../../architecture/CATALOG.md) | Produce source-independent app/engine/SDK artifacts; prove resource inventory, actual signatures/helper identity, no bytecode mutation, legacy launcher/token compatibility, completed settings editor, behavior-matrix mapping, and implemented G1-G7/all-local gates. V2 remains unsigned and depends on an external Python environment. | B06, B11, B15-B16, B23, B25 |
+| B27 | Scheduled live migration and qualification | **Blocked** | V2 coding and Notebook are isolated milestone evidence only | After B26, separately authorize exact target/state paths, snapshot/recovery and tool availability; then qualify installed migration, real host/AX, routes/billing, streaming/tools/cancel/compaction/restart/plugin update/helper identity and recovery. | B26 plus separate operational authorization |
+
+## Milestone evidence and limits
+
+- `18d9b51`, `a0bf599`, and `8b4099b` establish the packaged Notebook,
+  generic native rendering, repeated editing, persistence, clean shutdown, and
+  disable/re-enable retention in an isolated V2 app. They materially advance
+  B18-B22 and B25-B26 but do not supply Notebook jobs/update, the full lifecycle
+  manager, the author SDK, native product parity, or distribution evidence.
+- `37378de` and `548b24d` establish a real isolated Codex CLI workflow through
+  the V2 loopback bridge and composed OpenAI-compatible provider: tools, project
+  mutation, passing test, same-thread continuation, usage, and disconnect-driven
+  cancellation. The committed guide records `32,453` input, `509` output, and
+  `12,800` cached-input tokens for the final reviewed run. The handoff's
+  `41,009 / 575 / 20,480` figures were not found in committed evidence and are
+  therefore not substituted. Remote termination remains unconfirmed where the
+  terminal is `run.interrupted`.
+- Codex Desktop UI, parallel tool calls, full opaque compaction,
+  provider-reported monetary cost, signing/notarization, installation, and live
+  cutover remain unqualified.
+
+## Audit checks and findings
+
+Focused checks run against the audited revision:
+
+- `scripts/verify.py development-guard`: 37 tests passed.
+- Model-library CLI/transport/use cases: 41 tests passed.
+- Run/repository/dispatch/replay: 83 tests passed.
+- OpenAI-compatible execution/events/mapping/streaming: 124 tests passed.
+- Migration preview: 36 tests passed with `TMPDIR=/private/tmp`. The first run
+  used the macOS `/tmp` symlink spelling and was rejected by the fixture-root
+  guard; the canonical-root rerun passed.
+- Architecture scan: 204 files checked, **11 errors**. This is a current B03
+  integration failure, not a passed gate.
+
+No Swift build, package build, contract generation, live provider request,
+installation, signing, migration, app launch, or protected-runtime action was
+performed. `scripts/generate_contracts.py --check` was not run because it writes
+generated bundles.
+
+Priority findings using the project-audit rubric:
+
+1. **Watch - the enforced architecture graph is currently red.** Evidence: 11
+   forbidden imports from engine/host/provider/plugin-runtime modules. Impact:
+   B03 and B17 cannot close and future integration can deepen boundary drift.
+   Confidence: high. Next module: implementation, followed by change review.
+2. **Watch - broad milestone success masks specific unfinished original scope.**
+   Evidence: Notebook lacks cancellable export/update proof; V2 lacks distribution
+   and full native parity; usage lacks pricing/refresh sources. Impact: B18-B23
+   and B25-B27 remain open despite working product paths. Confidence: high. Next
+   module: task creation, using [NEXT-TASKS.md](NEXT-TASKS.md).
+3. **Info - the handoff and committed coding-usage totals conflict.** Evidence:
+   the V2 guide at `548b24d` records the lower totals above. Impact: no behavior
+   verdict changes, but the larger totals cannot be cited as repository evidence.
+   Confidence: high. Next module: context survey only if the missing artifact is
+   later supplied.
+4. **Info - unrelated untracked work exists and was excluded.** It includes the
+   protocol fixture, job wire, provider execution guide, check scripts, and
+   `python/uv.lock`. Impact: none on this documentation commit; none is counted
+   as delivered. Confidence: high. Next module: none.
+
+## Next work
+
+The prioritized, bounded, parallelizable assignments are in
+[NEXT-TASKS.md](NEXT-TASKS.md). The first three are contract parity, architecture
+boundary restoration, and serving plugin jobs/lifecycle. No implementation was
+started by this audit.
