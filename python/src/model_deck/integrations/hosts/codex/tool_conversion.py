@@ -1,39 +1,75 @@
-"""Deterministic conversion between Codex tools and engine function tools."""
+"""Deterministic conversion between Codex and engine function tool schemas."""
+
 from __future__ import annotations
+
+from collections.abc import Mapping
 from typing import Any
 
+
 class ToolConversionError(ValueError):
-    pass
+    """Codex advertised a tool the serial function bridge cannot preserve."""
 
-def convert_tools(tools: Any) -> tuple[list[dict[str, Any]], dict[str, tuple[str|None, str]]]:
-    if tools is None: return [], {}
-    if type(tools) is not list: raise ToolConversionError("tools must be a list")
-    result=[]; aliases={}; seen=set()
+
+def convert_tools(tools: Any) -> tuple[list[dict[str, Any]], dict[str, tuple[str | None, str]]]:
+    if tools is None:
+        return [], {}
+    if not isinstance(tools, list):
+        raise ToolConversionError("tools must be a list")
+    converted: list[dict[str, Any]] = []
+    aliases: dict[str, tuple[str | None, str]] = {}
+    def append_function(function: dict[str, Any], namespace: str | None) -> None:
+        if namespace is not None and not isinstance(namespace, str):
+            raise ToolConversionError("function namespace is invalid")
+        name = function.get("name")
+        if not isinstance(name, str) or not name:
+            raise ToolConversionError("function name is required")
+        normalized_namespace = None if namespace in (None, "functions") else namespace
+        alias = name if normalized_namespace is None else f"{normalized_namespace}__{name}"
+        if len(alias) > 128:
+            raise ToolConversionError("flattened function name is too long")
+        if alias in aliases:
+            raise ToolConversionError("function tools must be unique")
+        input_schema = function.get("parameters", {})
+        if not isinstance(input_schema, dict):
+            raise ToolConversionError("function parameters must be an object")
+        aliases[alias] = (normalized_namespace, name)
+        engine_tool: dict[str, Any] = {
+            "name": alias,
+            "input_schema": input_schema,
+            "host_execution_required": True,
+        }
+        description = function.get("description")
+        if description is not None:
+            if not isinstance(description, str):
+                raise ToolConversionError("function description must be text")
+            engine_tool["description"] = description
+        converted.append(engine_tool)
+
     for tool in tools:
-        if type(tool) is not dict: raise ToolConversionError("tool must be an object")
-        kind=tool.get("type")
-        namespace=tool.get("namespace")
-        fn=tool.get("function") if kind == "namespace" else tool
-        if kind not in ("function", "namespace") or type(fn) is not dict:
+        if not isinstance(tool, dict):
+            raise ToolConversionError("tool must be an object")
+        kind = tool.get("type")
+        if kind == "function":
+            append_function(tool, tool.get("namespace"))
+            continue
+        if kind != "namespace":
             raise ToolConversionError("only function tools are supported")
-        name=fn.get("name")
-        if not isinstance(name,str) or not name: raise ToolConversionError("function name required")
-        if namespace is None: namespace=fn.get("namespace")
-        if namespace is not None and (not isinstance(namespace,str) or not namespace):
-            raise ToolConversionError("invalid namespace")
-        alias=name if namespace in (None,"functions") else f"{namespace}__{name}"
-        if alias in seen: raise ToolConversionError("duplicate function tool")
-        seen.add(alias); aliases[alias]=(None if namespace in (None,"functions") else namespace,name)
-        converted={"type":"function","name":alias}
-        for key in ("description","parameters","strict"):
-            if key in fn: converted[key]=fn[key]
-        result.append(converted)
-    return result, aliases
+        namespace = tool.get("name", tool.get("namespace"))
+        nested_tools = tool.get("tools")
+        if not isinstance(namespace, str) or not namespace or not isinstance(nested_tools, list):
+            raise ToolConversionError("function namespace is invalid")
+        for nested in nested_tools:
+            if not isinstance(nested, dict) or nested.get("type") != "function":
+                raise ToolConversionError("namespace tools must be functions")
+            append_function(nested, namespace)
+    return converted, aliases
 
-def restore_function_call(item: dict[str,Any], aliases: dict[str,tuple[str|None,str]]) -> dict[str,Any]:
-    if item.get("type") != "function_call": return item
-    name=item.get("name"); identity=aliases.get(name)
-    if identity is None: raise ToolConversionError("unknown function call")
-    ns, original=identity; out=dict(item); out["name"]=original
-    if ns: out["namespace"]=ns
-    return out
+
+def restore_tool_identity(alias: str, aliases: Mapping[str, tuple[str | None, str]]) -> tuple[str | None, str]:
+    identity = aliases.get(alias)
+    if identity is None:
+        raise ToolConversionError("engine requested an unknown function tool")
+    return identity
+
+
+__all__ = ["ToolConversionError", "convert_tools", "restore_tool_identity"]

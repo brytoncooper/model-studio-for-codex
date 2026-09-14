@@ -62,10 +62,17 @@ final class ModelDeckV2App: NSObject, NSApplicationDelegate {
                             credentialURL: connectionFiles.credential
                         )
                     )
+                    let usageService = EngineUsageService(
+                        rendezvous: descriptor,
+                        transport: UnixSocketEngineTransport(socketPath: descriptor.socketPath),
+                        credentialProvider: EngineFileCredentialProvider(credentialURL: connectionFiles.credential)
+                    )
                     try service.connect()
+                    try usageService.connect()
                     DispatchQueue.main.async { [weak self] in
                         guard self?.terminationRequested == false else { return }
                         self?.workspaceController.attach(service: service)
+                        self?.workspaceController.attach(usageService: usageService, bridgeSummary: connectionFiles.bridgeSummary)
                     }
                 } catch {
                     DispatchQueue.main.async { [weak self] in

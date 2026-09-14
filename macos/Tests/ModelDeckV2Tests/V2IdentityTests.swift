@@ -31,6 +31,12 @@ final class V2IdentityTests: XCTestCase {
         XCTAssertFalse(arguments.contains("--rendezvous"))
     }
 
+    func testEngineArgumentsOmitBridgeWhenProviderIsNotConfigured() {
+        let arguments = makeConfiguration().engineArguments
+        XCTAssertFalse(arguments.contains("--provider-config"))
+        XCTAssertFalse(arguments.contains("--enable-codex-bridge"))
+    }
+
     func testEngineEnvironmentIsExplicitAndSanitized() {
         let environment = makeConfiguration().engineEnvironment
 

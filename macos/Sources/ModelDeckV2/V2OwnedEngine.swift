@@ -25,6 +25,24 @@ enum V2OwnedEngineError: Error, CustomStringConvertible {
 struct V2EngineConnectionFiles {
     let rendezvous: URL
     let credential: URL
+    let bridgeSummary: V2BridgeSummary?
+}
+
+struct V2BridgeSummary: Codable, Equatable {
+    let schemaVersion: Int
+    let baseURL: String
+    let provider: String
+    let model: String
+    let billing: String
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case baseURL = "base_url"
+        case provider = "provider_id"
+        case model
+        case billing = "billing_description"
+        case tokenPath = "token_path"
+    }
+    let tokenPath: String
 }
 
 /// Mutable process handles are confined to the application's serial engine queue.
@@ -106,7 +124,13 @@ final class V2OwnedEngine: @unchecked Sendable {
 
     private func removeStaleConnectionFiles() throws {
         let fileManager = FileManager.default
-        for url in [configuration.paths.engineRendezvous, configuration.paths.operatorCredential] {
+        var urls = [configuration.paths.engineRendezvous, configuration.paths.operatorCredential]
+        if configuration.providerConfig != nil {
+            let engineState = configuration.paths.applicationState.appendingPathComponent("engine")
+            urls.append(engineState.appendingPathComponent("codex-bridge.json"))
+            urls.append(engineState.appendingPathComponent("codex-bridge-token"))
+        }
+        for url in urls {
             if fileManager.fileExists(atPath: url.path) {
                 try fileManager.removeItem(at: url)
             }
@@ -119,10 +143,12 @@ final class V2OwnedEngine: @unchecked Sendable {
             if !engine.isRunning {
                 throw V2OwnedEngineError.exitedDuringStartup(engine.terminationStatus)
             }
-            if connectionFilesAreReadable() {
+            let connection = connectionFilesAreReadable()
+            if connection.ready {
                 return V2EngineConnectionFiles(
                     rendezvous: configuration.paths.engineRendezvous,
-                    credential: configuration.paths.operatorCredential
+                    credential: configuration.paths.operatorCredential,
+                    bridgeSummary: connection.summary
                 )
             }
             Thread.sleep(forTimeInterval: 0.05)
@@ -130,7 +156,7 @@ final class V2OwnedEngine: @unchecked Sendable {
         throw V2OwnedEngineError.readinessTimedOut
     }
 
-    private func connectionFilesAreReadable() -> Bool {
+    private func connectionFilesAreReadable() -> (ready: Bool, summary: V2BridgeSummary?) {
         guard
             let descriptor = try? EngineRendezvousDescriptor.load(
                 from: configuration.paths.engineRendezvous
@@ -141,9 +167,16 @@ final class V2OwnedEngine: @unchecked Sendable {
                 encoding: .utf8
             )
         else {
-            return false
+            return (false, nil)
         }
-        return !credential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !credential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (false, nil) }
+        guard configuration.providerConfig != nil else { return (true, nil) }
+        guard let data = try? Data(contentsOf: configuration.paths.applicationState.appendingPathComponent("engine/codex-bridge.json")),
+              let summary = try? JSONDecoder().decode(V2BridgeSummary.self, from: data),
+              summary.schemaVersion == 1, summary.baseURL.hasPrefix("http://127.0.0.1:") && summary.baseURL.hasSuffix("/v1"),
+              !summary.provider.isEmpty, !summary.model.isEmpty, !summary.billing.isEmpty,
+              summary.tokenPath == configuration.paths.applicationState.appendingPathComponent("engine/codex-bridge-token").path else { return (false, nil) }
+        return (true, summary)
     }
 
     private func socketBelongsToV2(_ socketPath: String) -> Bool {

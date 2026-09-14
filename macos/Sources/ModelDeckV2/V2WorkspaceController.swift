@@ -13,8 +13,12 @@ final class V2WorkspaceController: NSViewController {
     private let statusLabel = NSTextField(wrappingLabelWithString: "Starting isolated engine…")
     private let panelContainer = NSView()
     private let placeholderLabel = NSTextField(wrappingLabelWithString: "Enable an extension to show its panels.")
+    private let codingLabel = NSTextField(wrappingLabelWithString: "Coding route unavailable")
+    private let usageLabel = NSTextField(wrappingLabelWithString: "Usage not loaded")
+    private let refreshUsageButton = NSButton()
 
     private var service: EngineExtensionPanelService?
+    private var usageService: EngineUsageService?
     private var extensions: [ExtensionDetail] = []
     private var panels: [ExtensionPanelContribution] = []
     private var availableOperationIDs: Set<String> = []
@@ -31,6 +35,14 @@ final class V2WorkspaceController: NSViewController {
         let heading = NSTextField(labelWithString: "Model Deck V2")
         heading.font = .systemFont(ofSize: 20, weight: .semibold)
         root.addArrangedSubview(heading)
+        codingLabel.textColor = .secondaryLabelColor
+        root.addArrangedSubview(codingLabel)
+        refreshUsageButton.title = "Refresh usage"
+        refreshUsageButton.target = self
+        refreshUsageButton.action = #selector(refreshUsageRequested)
+        let usageControls = NSStackView(views: [refreshUsageButton, usageLabel])
+        usageControls.spacing = 8
+        root.addArrangedSubview(usageControls)
 
         let extensionControls = NSStackView()
         extensionControls.orientation = .horizontal
@@ -81,6 +93,22 @@ final class V2WorkspaceController: NSViewController {
         self.service = service
         statusLabel.stringValue = "V2 engine connected."
         refreshWorkspace()
+    }
+
+    func attach(usageService: EngineUsageService, bridgeSummary: V2BridgeSummary?) {
+        self.usageService = usageService
+        codingLabel.stringValue = bridgeSummary.map { "Coding route: \($0.provider) / \($0.model) — \($0.billing)" } ?? "Coding route unavailable"
+        refreshUsageRequested()
+    }
+
+    @objc private func refreshUsageRequested() {
+        guard let usageService else { return }
+        usageLabel.stringValue = "Refreshing usage…"
+        runInBackground({ try usageService.query() }, success: { [weak self] records in
+            let totals = records.reduce(into: [String: Double]()) { $0[$1.unitKind, default: 0] += $1.units }
+            let parts = ["input_tokens", "output_tokens", "cached_tokens"].compactMap { key in totals[key].map { "\(key): \($0)" } }
+            self?.usageLabel.stringValue = parts.isEmpty ? "No completed usage records" : parts.joined(separator: " · ")
+        })
     }
 
     func showStartupFailure(_ error: Error) {

@@ -1,9 +1,9 @@
 # Model Deck V2
 
 `ModelDeckV2` is the isolated AppKit application for exercising installed
-extensions through the public engine API. It reuses `ModelDeckClient` and the
-generic `PanelRenderer`; it does not initialize the legacy settings, provider,
-router, or Codex integration code.
+extensions and one bounded Codex coding route through the public engine API.
+It reuses `ModelDeckClient` and the generic `PanelRenderer`; it does not
+initialize or modify the live Model Deck or Codex configuration.
 
 ## Build and launch
 
@@ -40,6 +40,78 @@ The engine receives a small explicit environment and the bundled engine source
 on `PYTHONPATH`. V2 installs no launch agent or background service and does not
 read or modify live Model Deck or Codex state.
 
+## Isolated Codex coding workflow
+
+The coding proof uses the actual Codex CLI, not Codex Desktop. The helper gives
+Codex separate `HOME`, `CODEX_HOME`, `XDG_CONFIG_HOME`, temporary storage,
+configuration, history, and local bridge credentials below the supplied V2
+state root. That configuration selects only V2's authenticated random-port
+loopback Responses bridge. Codex owns its tool loop, approvals, project writes,
+and conversation history; the engine owns sessions, runs, routing, provider
+execution, cancellation, and usage records.
+
+Create a non-secret provider profile from an existing authorized managed agent,
+build, and launch with disposable paths:
+
+```sh
+scripts/v2/prepare_coding_provider.py \
+  --managed-agent /absolute/path/to/managed-openrouter-agent.toml \
+  --output /tmp/model-deck-v2-provider.json
+
+scripts/v2/build.sh \
+  --python-executable /tmp/md-b18-venv/bin/python \
+  --output /tmp/model-deck-v2-coding-build
+
+open "/tmp/model-deck-v2-coding-build/Model Deck V2.app" --args \
+  --state-root /tmp/model-deck-v2-coding-state \
+  --provider-config /tmp/model-deck-v2-provider.json
+```
+
+After V2 reports the coding route, start a disposable project conversation and
+continue it using the stored isolated thread identifier:
+
+```sh
+scripts/v2/run_isolated_codex.py start \
+  --state-root /tmp/model-deck-v2-coding-state \
+  --project /absolute/path/to/disposable-project \
+  --codex-executable /opt/homebrew/bin/codex \
+  --prompt 'Read the fixture, fix the failing function, and run its existing test.'
+
+scripts/v2/run_isolated_codex.py resume \
+  --state-root /tmp/model-deck-v2-coding-state \
+  --project /absolute/path/to/disposable-project \
+  --codex-executable /opt/homebrew/bin/codex \
+  --prompt 'State the successful test command from the previous turn.'
+```
+
+Cancellation sends SIGINT to the isolated Codex process. The bridge detects the
+closed local response stream and asks the engine to cancel the exact run:
+
+```sh
+scripts/v2/run_isolated_codex.py cancel \
+  --state-root /tmp/model-deck-v2-coding-state \
+  --project /absolute/path/to/disposable-project \
+  --codex-executable /opt/homebrew/bin/codex \
+  --cancel-after-seconds 0.5 \
+  --prompt 'Do not use tools. Write a long explanation of integer addition.'
+```
+
+The selected proof route is OpenRouter's HTTP-compatible Responses endpoint and
+`deepseek/deepseek-v4.1-flash`. Charges consume OpenRouter API credits, not a
+ChatGPT subscription allowance. The profile stores only an opaque executable
+credential reference; secrets are resolved inside the engine and are never
+written into the generated profile.
+
+On 2026-09-13 the disposable coding run read its project, executed Codex shell
+tools, changed subtraction to addition, recovered from an unavailable `python`
+command, and passed `python3 -m unittest test_calculator.py`. A second turn used
+the same Codex thread and engine session. The completed coding run recorded
+32,408 input tokens, 326 output tokens, and 23,680 cached input tokens across
+its serial provider segments. Provider billing cost was not reported, so V2
+does not invent one. A separate cancelled run recorded one `run.cancelling`
+and one `run.cancelled`; the local stream was closed, while remote provider
+termination remains unconfirmed.
+
 ## Session Notebook walkthrough
 
 1. Package `examples/session-notebook` with `model_deck plugin pack`.
@@ -61,8 +133,11 @@ the editor with unvalidated state.
 
 This is an unsigned local development artifact. Its configured Python
 interpreter must remain available and contain the dependencies from
-`python/pyproject.toml`. V2 intentionally has no providers, credentials,
-marketplace, Codex integration, signing, distribution, or live-app cutover.
+`python/pyproject.toml`. The coding composition supports one configured
+OpenAI-compatible route and serial tool calls only; parallel tool-call responses
+are rejected rather than truncated. Codex Desktop UI integration, opaque
+reasoning/compaction qualification, provider-reported cost, marketplace,
+signing, distribution, bundled Python, and live-app cutover are not qualified.
 Normal quit drains and reaps the engine and extension workers. The final
 SIGKILL fallback is deliberately scoped to the known engine PID; a deliberately
 nonresponsive extension that survives closed stdio could require a future exact

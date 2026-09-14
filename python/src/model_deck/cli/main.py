@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import sys
+import threading
 import uuid
 from pathlib import Path
 
@@ -79,7 +80,75 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
         forward_kwargs["enable_external_extensions"] = True
         forward_kwargs["extension_state_root"] = extension_state_root
         forward_kwargs["extension_artifact_root"] = extension_artifact_root
+
+    profile = None
+    provider_config = getattr(args, "provider_config", None)
+    if provider_config is not None:
+        if not args.enable_application_state:
+            _stderr("engine serve: --provider-config requires --enable-application-state")
+            return 1
+        provider_config_path = Path(provider_config)
+        if not provider_config_path.is_absolute():
+            _stderr("engine serve: --provider-config must be absolute")
+            return 1
+        try:
+            from model_deck.integrations.providers.openai_compatible.configuration import (
+                OpenAICompatibleProfile,
+                compose_openai_compatible_profile,
+            )
+
+            profile = OpenAICompatibleProfile.load(provider_config_path)
+            provider_execution, provider_routes = compose_openai_compatible_profile(profile)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            _stderr("engine serve: provider configuration is unavailable")
+            return 1
+        forward_kwargs["provider_execution"] = provider_execution
+        forward_kwargs["provider_route_definitions"] = provider_routes
+
+    enable_codex_bridge = getattr(args, "enable_codex_bridge", False)
+    bridge_paths: tuple[Path, Path, Path] | None = None
+    if enable_codex_bridge:
+        if profile is None:
+            _stderr("engine serve: --enable-codex-bridge requires --provider-config")
+            return 1
+        raw_paths = (
+            getattr(args, "codex_bridge_descriptor", None),
+            getattr(args, "codex_bridge_token", None),
+            getattr(args, "codex_bridge_state", None),
+        )
+        if any(value is None for value in raw_paths):
+            _stderr("engine serve: Codex bridge descriptor, token, and state paths are required")
+            return 1
+        bridge_paths = tuple(Path(str(value)) for value in raw_paths)
+        if not all(path.is_absolute() for path in bridge_paths):
+            _stderr("engine serve: Codex bridge paths must be absolute")
+            return 1
+        engine_state_root = (Path(args.state_root) / "engine").resolve()
+        if any(path.resolve().parent != engine_state_root for path in bridge_paths):
+            _stderr("engine serve: Codex bridge paths must be directly under the engine state root")
+            return 1
+
     runtime = build_engine_server(**forward_kwargs)
+    if enable_codex_bridge and bridge_paths is not None:
+        from model_deck.integrations.hosts.codex.bridge import CodexResponsesBridge
+
+        descriptor_path, token_path, bridge_state_path = bridge_paths
+        bridge = CodexResponsesBridge(
+            rendezvous_path=runtime.rendezvous_path,
+            credential_path=runtime.enrollment.credential_path,
+            profile=profile,
+            state_path=bridge_state_path,
+            token_path=token_path,
+            descriptor_path=descriptor_path,
+        )
+        runtime.server.start()
+        try:
+            bridge.start()
+            threading.Event().wait(24 * 60 * 60)
+        finally:
+            bridge.stop()
+            runtime.server.stop()
+        return 0
     runtime.server.serve_forever()
     return 0
 
@@ -1263,6 +1332,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="absolute path holding isolated external-plugin artifacts (used with --enable-extensions)",
     )
+    serve_cmd.add_argument("--provider-config", default=None)
+    serve_cmd.add_argument("--enable-codex-bridge", action="store_true")
+    serve_cmd.add_argument("--codex-bridge-descriptor", default=None)
+    serve_cmd.add_argument("--codex-bridge-token", default=None)
+    serve_cmd.add_argument("--codex-bridge-state", default=None)
     serve_cmd.set_defaults(func=_cmd_engine_serve)
 
     models = sub.add_parser("models", help="model library")

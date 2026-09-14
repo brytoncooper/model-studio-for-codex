@@ -82,6 +82,7 @@ defines generation binding and the shared write barrier required for updates.
 | Cursor provider guide | [Cursor provider](../providers/cursor.md) |
 | Cursor process adapter: `CursorProcessRuntime` over injected process port, event/tool-alias/usage normalization wiring | [process runtime guide](../../python/src/model_deck/integrations/providers/cursor/PROCESS_RUNTIME.md) |
 | Codex input normalization: host history converted to provider-neutral engine messages | [input guide](../../python/src/model_deck/integrations/hosts/codex/INPUT_NORMALIZATION.md) |
+| Isolated Codex CLI Responses bridge and reproducible V2 coding/cancellation workflow | [V2 coding workflow](../../macos/Sources/ModelDeckV2/README.md#isolated-codex-coding-workflow) |
 | Provider request mapping: canonical runs to Responses and chat bodies | [mapping guide](../../python/src/model_deck/integrations/providers/openai_compatible/REQUEST_MAPPING.md) |
 | OpenAI-compatible streaming boundary: decodes stream bytes, checks run-event ordering; no HTTP/credentials/history | [streaming README](../../python/src/model_deck/integrations/providers/openai_compatible/README.md) |
 | OpenAI-compatible request translation: pure Responses-to-chat-completions translation | [translation guide](../../python/src/model_deck/integrations/providers/openai_compatible/TRANSLATION.md) |

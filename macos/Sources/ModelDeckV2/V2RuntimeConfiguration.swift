@@ -7,6 +7,8 @@ enum V2RuntimeConfigurationError: Error, CustomStringConvertible {
     case invalidRuntimeConfiguration
     case unsafeStatePath(String)
     case protectedStatePath(String)
+    case providerConfigMustBeAbsolute
+    case unsafeProviderConfig(String)
 
     var description: String {
         switch self {
@@ -22,6 +24,8 @@ enum V2RuntimeConfigurationError: Error, CustomStringConvertible {
             return "V2 state path must not be a symbolic link: \(path)"
         case .protectedStatePath(let path):
             return "V2 state path overlaps protected live state or a source checkout: \(path)"
+        case .providerConfigMustBeAbsolute: return "--provider-config must be an absolute path"
+        case .unsafeProviderConfig(let path): return "V2 provider config must be a nonsymlink regular file: \(path)"
         }
     }
 }
@@ -72,11 +76,13 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
     let pythonExecutable: URL
     let resourceRoot: URL
     let paths: V2RuntimePaths
+    let providerConfig: URL?
 
-    init(stateRoot: URL, pythonExecutable: URL, resourceRoot: URL) {
+    init(stateRoot: URL, pythonExecutable: URL, resourceRoot: URL, providerConfig: URL? = nil) {
         let root = stateRoot.standardizedFileURL
         self.pythonExecutable = pythonExecutable.standardizedFileURL
         self.resourceRoot = resourceRoot.standardizedFileURL.resolvingSymlinksInPath()
+        self.providerConfig = providerConfig?.standardizedFileURL
         self.paths = V2RuntimePaths(
             stateRoot: root,
             applicationState: root.appendingPathComponent("application-state", isDirectory: true),
@@ -99,14 +105,22 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
                 .appendingPathComponent("Library/Application Support", isDirectory: true)
                 .appendingPathComponent("Model Deck V2", isDirectory: true)
         }
-        guard arguments.count == 3, arguments[1] == "--state-root" else {
-            throw V2RuntimeConfigurationError.usage
+        var stateRoot: URL?
+        var provider: String?
+        var index = 1
+        while index < arguments.count {
+            guard index + 1 < arguments.count else { throw V2RuntimeConfigurationError.usage }
+            switch arguments[index] {
+            case "--state-root":
+                guard arguments[index + 1].hasPrefix("/") else { throw V2RuntimeConfigurationError.stateRootMustBeAbsolute }
+                stateRoot = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
+            case "--provider-config": provider = arguments[index + 1]
+            default: throw V2RuntimeConfigurationError.usage
+            }
+            index += 2
         }
-        let stateRoot = URL(fileURLWithPath: arguments[2], isDirectory: true)
-        guard arguments[2].hasPrefix("/") else {
-            throw V2RuntimeConfigurationError.stateRootMustBeAbsolute
-        }
-        return stateRoot
+        if let provider, !provider.hasPrefix("/") { throw V2RuntimeConfigurationError.providerConfigMustBeAbsolute }
+        return stateRoot ?? homeDirectory.appendingPathComponent("Library/Application Support/Model Deck V2", isDirectory: true)
     }
 
     static func load(arguments: [String], bundle: Bundle = .main) throws -> V2RuntimeConfiguration {
@@ -125,7 +139,8 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
         return V2RuntimeConfiguration(
             stateRoot: try stateRoot(arguments: arguments),
             pythonExecutable: URL(fileURLWithPath: pythonPath),
-            resourceRoot: resources
+            resourceRoot: resources,
+            providerConfig: arguments.enumerated().first(where: { $0.element == "--provider-config" }).flatMap { arguments.indices.contains($0.offset + 1) ? URL(fileURLWithPath: arguments[$0.offset + 1]) : nil }
         )
     }
 
@@ -134,6 +149,11 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) throws {
         try rejectSymlinkAliases(fileManager: fileManager)
+        if let providerConfig {
+            var regular = ObjCBool(false)
+            guard fileManager.fileExists(atPath: providerConfig.path, isDirectory: &regular), !regular.boolValue,
+                  (try? providerConfig.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { throw V2RuntimeConfigurationError.unsafeProviderConfig(providerConfig.path) }
+        }
 
         let home = homeDirectory.standardizedFileURL.resolvingSymlinksInPath()
         let applicationSupport = home.appendingPathComponent("Library/Application Support")
@@ -220,7 +240,7 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
     }
 
     var engineArguments: [String] {
-        [
+        var args = [
             "-B",
             "-m", "model_deck.cli.main",
             "engine", "serve",
@@ -233,6 +253,10 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
             "--extension-state-root", paths.extensionState.path,
             "--extension-artifact-root", paths.extensionArtifacts.path,
         ]
+        if let providerConfig {
+            args += ["--provider-config", providerConfig.path, "--enable-codex-bridge", "--codex-bridge-descriptor", paths.applicationState.appendingPathComponent("engine/codex-bridge.json").path, "--codex-bridge-token", paths.applicationState.appendingPathComponent("engine/codex-bridge-token").path, "--codex-bridge-state", paths.applicationState.appendingPathComponent("engine/codex-host-state.json").path]
+        }
+        return args
     }
 
     var engineEnvironment: [String: String] {
