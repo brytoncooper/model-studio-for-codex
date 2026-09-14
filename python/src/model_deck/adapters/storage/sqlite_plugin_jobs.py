@@ -26,6 +26,7 @@ from model_deck.engine.jobs.ports import (
     GetPublicCommand,
     JobCheckpointConflictError,
     JobCheckpointValidationError,
+    JobIdempotencyConflictError,
     JobNotFoundError,
     JobOriginMismatchError,
     JobOwner,
@@ -63,6 +64,13 @@ CREATE TABLE IF NOT EXISTS plugin_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_plugin_jobs_activation_state
     ON plugin_jobs(activation_id, state);
+CREATE TABLE IF NOT EXISTS plugin_job_cancel_receipts (
+    principal_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    accepted INTEGER NOT NULL,
+    PRIMARY KEY (principal_id, idempotency_key)
+);
 """
 
 CheckpointValidator = Callable[[str | None, Any], None]
@@ -334,15 +342,14 @@ class SQLitePluginJobRepository:
     ) -> bool:
         """Record a public cancel intent.
 
-        Returns True iff the request was accepted against an active job
-        (the durable ``cancel_requested`` flag is set or was already set on
-        a prior call). Returns False when the job is already terminal: the
-        caller did not need to ask because the outcome is settled. Origin
-        mismatch raises ``JobOriginMismatchError``; missing job raises
-        ``JobNotFoundError``.
+        The first request durably binds ``(caller, idempotency_key)`` to the
+        job and result in the same transaction as cancel intent. Exact replays
+        return that stored result even after the job becomes terminal. Reusing
+        the key for another job raises ``JobIdempotencyConflictError``.
         """
         self._require_text("job_id", command.job_id)
         self._require_text("caller_principal_id", command.caller_principal_id)
+        self._require_text("idempotency_key", command.idempotency_key)
         conn = self._connect()
         try:
             self._ensure_schema(conn)
@@ -356,24 +363,44 @@ class SQLitePluginJobRepository:
                     raise JobOriginMismatchError(
                         "caller is not the originating principal"
                     )
-                if row["state"] in {s.value for s in TERMINAL_JOB_STATES}:
+                receipt = conn.execute(
+                    "SELECT job_id, accepted FROM plugin_job_cancel_receipts"
+                    " WHERE principal_id = ? AND idempotency_key = ?",
+                    (command.caller_principal_id, command.idempotency_key),
+                ).fetchone()
+                if receipt is not None:
+                    if receipt["job_id"] != command.job_id:
+                        raise JobIdempotencyConflictError(
+                            "idempotency key already used for another job"
+                        )
                     conn.commit()
-                    return False
-                if int(row["cancel_requested"]) == 1:
-                    # Idempotent repeat: cancel intent already recorded.
-                    conn.commit()
-                    return True
+                    return bool(receipt["accepted"])
+                accepted = row["state"] not in {
+                    state.value for state in TERMINAL_JOB_STATES
+                }
+                if accepted:
+                    conn.execute(
+                        "UPDATE plugin_jobs SET cancel_requested = 1 WHERE job_id = ?"
+                        " AND state IN (?, ?)",
+                        (
+                            command.job_id,
+                            JobState.QUEUED.value,
+                            JobState.RUNNING.value,
+                        ),
+                    )
                 conn.execute(
-                    "UPDATE plugin_jobs SET cancel_requested = 1 WHERE job_id = ?"
-                    " AND state IN (?, ?)",
+                    "INSERT INTO plugin_job_cancel_receipts"
+                    " (principal_id, idempotency_key, job_id, accepted)"
+                    " VALUES (?, ?, ?, ?)",
                     (
+                        command.caller_principal_id,
+                        command.idempotency_key,
                         command.job_id,
-                        JobState.QUEUED.value,
-                        JobState.RUNNING.value,
+                        int(accepted),
                     ),
                 )
                 conn.commit()
-                return True
+                return accepted
             except Exception:
                 conn.rollback()
                 raise

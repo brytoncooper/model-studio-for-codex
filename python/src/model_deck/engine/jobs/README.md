@@ -13,6 +13,11 @@ claim that the worker has stopped. A worker confirms cancellation when its next
 marks its still-active jobs interrupted. Neither startup nor worker recovery
 automatically replays a job.
 
+Public cancellation idempotency is durable per originating principal. The first
+`(principal, idempotency_key)` binds to one job and acknowledgement in the same
+transaction as cancel intent. Exact replays return that stored result, including
+after terminalization; reuse for another job is a conflict.
+
 Creation persists the originating application principal as well as the owning
 plugin and activation. Public reads and cancellation require that exact
 principal, while worker mutations require the exact plugin activation and a

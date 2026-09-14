@@ -149,6 +149,7 @@ class RequestCancelCommand:
 class RequestCancelPublicCommand:
     job_id: str
     caller_principal_id: str
+    idempotency_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +226,10 @@ class JobOwnershipMismatchError(ValueError):
 
 class JobOriginMismatchError(PermissionError):
     """Public caller is not the originating principal."""
+
+
+class JobIdempotencyConflictError(ValueError):
+    """A public idempotency key was already bound to another request."""
 
 
 class JobStateConflictError(ValueError):

@@ -74,6 +74,8 @@ Public `engine.v1.jobs.get` and `engine.v1.jobs.cancel` live outside this worker
 broker. They are composed by the external host against the same repository and
 authorize the authenticated application principal against the origin captured
 at creation. `get` reports state/progress and an optional completed result;
-`cancel` durably requests cancellation but never confirms termination. Explicit
+`cancel` durably binds its principal-scoped idempotency key and requests
+cancellation but never confirms termination. Exact replays return their stored
+acknowledgement; reuse of a key for another job conflicts. Explicit
 resume and the runner remain out of scope, so this slice does not claim full
 B19.

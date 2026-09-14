@@ -18,6 +18,7 @@ from model_deck.engine.jobs.use_cases import (
     GetJobUseCase,
     JobsCallerMismatchError,
     JobsInvalidArgumentError,
+    JobsIdempotencyConflictError,
     JobsNotFoundError,
     JobsUnknownKeyError,
 )
@@ -132,6 +133,25 @@ def test_cancel_repeat_active_returns_accepted_true(tmp_path):
         {"job_id": record.job_id, "idempotency_key": "k2"}, caller_principal_id="alice"
     )
     assert again == {"accepted": True}
+
+
+def test_cancel_idempotency_key_cannot_be_reused_for_another_job(tmp_path):
+    repo = make_repo(tmp_path)
+    first = create_with_origin(repo, origin="alice")
+    second = create_with_origin(repo, origin="alice")
+    repo.claim(ClaimJobCommand(job_id=first.job_id, owner=OWNER))
+    repo.claim(ClaimJobCommand(job_id=second.job_id, owner=OWNER))
+    use_case = CancelJobUseCase(repo)
+    use_case.execute(
+        {"job_id": first.job_id, "idempotency_key": "same-key"},
+        caller_principal_id="alice",
+    )
+
+    with pytest.raises(JobsIdempotencyConflictError):
+        use_case.execute(
+            {"job_id": second.job_id, "idempotency_key": "same-key"},
+            caller_principal_id="alice",
+        )
 
 
 def test_cancel_terminal_returns_accepted_false(tmp_path):

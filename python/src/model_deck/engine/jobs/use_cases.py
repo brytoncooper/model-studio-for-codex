@@ -18,6 +18,7 @@ from typing import Any
 
 from .ports import (
     GetPublicCommand,
+    JobIdempotencyConflictError,
     JobNotFoundError,
     JobOriginMismatchError,
     JobPublicView,
@@ -45,6 +46,10 @@ class JobsUnknownKeyError(JobsUseCaseError):
 
 class JobsInvalidArgumentError(JobsUseCaseError):
     """Caller supplied a malformed job_id or idempotency_key."""
+
+
+class JobsIdempotencyConflictError(JobsUseCaseError):
+    """The caller reused an idempotency key for a different job."""
 
 
 class JobsNotFoundError(JobsUseCaseError):
@@ -159,7 +164,7 @@ class CancelJobUseCase:
         params = dict(params or {})
         _reject_unknown_keys(params, _ALLOWED_CANCEL_PARAMS)
         job_id = _validate_uuid("job_id", params.get("job_id"))
-        _validate_idempotency_key(params.get("idempotency_key"))
+        idempotency_key = _validate_idempotency_key(params.get("idempotency_key"))
         if not isinstance(caller_principal_id, str) or not caller_principal_id:
             raise JobsInvalidArgumentError("caller_principal_id required")
         try:
@@ -167,12 +172,15 @@ class CancelJobUseCase:
                 RequestCancelPublicCommand(
                     job_id=job_id,
                     caller_principal_id=caller_principal_id,
+                    idempotency_key=idempotency_key,
                 )
             )
         except JobNotFoundError:
             raise JobsNotFoundError("job not found")
         except JobOriginMismatchError as exc:
             raise JobsCallerMismatchError(str(exc))
+        except JobIdempotencyConflictError as exc:
+            raise JobsIdempotencyConflictError(str(exc))
         # False means the job was already terminal: the user's cancel did
         # not need to be recorded. Either way we return exactly the schema.
         return {"accepted": bool(accepted)}

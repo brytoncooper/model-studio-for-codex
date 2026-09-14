@@ -466,22 +466,45 @@ def test_request_cancel_public_idempotent_active_false_terminal(tmp_path):
     # First request against active job
     assert (
         repo.request_cancel_public(
-            RequestCancelPublicCommand(job_id=record.job_id, caller_principal_id="alice")
+            RequestCancelPublicCommand(
+                job_id=record.job_id,
+                caller_principal_id="alice",
+                idempotency_key="cancel-1",
+            )
         )
         is True
     )
     # Repeat is idempotent
     assert (
         repo.request_cancel_public(
-            RequestCancelPublicCommand(job_id=record.job_id, caller_principal_id="alice")
+            RequestCancelPublicCommand(
+                job_id=record.job_id,
+                caller_principal_id="alice",
+                idempotency_key="cancel-1",
+            )
         )
         is True
     )
-    # Once terminal, request returns False
+    # An exact replay returns its original result even after terminalization.
     repo.complete(CompleteJobCommand(job_id=record.job_id, owner=OWNER))
     assert (
         repo.request_cancel_public(
-            RequestCancelPublicCommand(job_id=record.job_id, caller_principal_id="alice")
+            RequestCancelPublicCommand(
+                job_id=record.job_id,
+                caller_principal_id="alice",
+                idempotency_key="cancel-1",
+            )
+        )
+        is True
+    )
+    # A new cancellation request observes the already-terminal state.
+    assert (
+        repo.request_cancel_public(
+            RequestCancelPublicCommand(
+                job_id=record.job_id,
+                caller_principal_id="alice",
+                idempotency_key="cancel-2",
+            )
         )
         is False
     )
