@@ -149,6 +149,34 @@ Current delivery checks:
   the original broad suite plus repository, SQLite, and shutdown modules passed
   230 tests. `scripts/architecture_check.py` scanned 213 files with no findings,
   and `scripts/generate_contracts.py --check` confirmed 200 synchronized schemas.
+
+Commands used for this closure:
+
+```sh
+PYTHONPATH=python:python/src:. /tmp/md-b18-venv/bin/python -m unittest -v \
+  tests.engine.test_repository_conformance
+PYTHONPATH=python:python/src:. /tmp/md-b18-venv/bin/python -m unittest -v \
+  tests.engine.test_provider_bootstrap tests.engine.test_bootstrap_v2_shutdown
+PYTHONPATH=python/src /tmp/md-b18-venv/bin/python -m unittest discover \
+  -s python/tests/provider_openai_compatible -p 'test_*.py'
+PYTHONPATH=python:python/src:. /tmp/md-b18-venv/bin/python -B -m unittest -v \
+  test_model_deck_mcp python.tests.engine.test_mcp_model_reads \
+  python.tests.engine.test_mcp_model_writes python.tests.engine.test_provider_bootstrap \
+  python.tests.engine.test_bootstrap_v2_shutdown \
+  python.tests.engine.test_repository_conformance \
+  python.tests.engine.test_sqlite_model_repository \
+  python.tests.engine.test_sqlite_connection_repository \
+  python.tests.engine.test_cli_v2_provider_bridge \
+  python.tests.engine.test_model_projection_invalidation \
+  python.tests.engine.test_projection_dependency_expansions \
+  python.tests.integrations.hosts.codex.test_projection_consumer \
+  python.tests.integrations.hosts.codex.test_projection_snapshots \
+  python.tests.integrations.hosts.codex.test_agent_materializer \
+  python.tests.integrations.hosts.codex.test_agent_renderer \
+  python.tests.integrations.hosts.codex.test_projection_full_path
+PYTHONPATH=python/src /tmp/md-b18-venv/bin/python scripts/architecture_check.py
+PYTHONPATH=python/src /tmp/md-b18-venv/bin/python scripts/generate_contracts.py --check
+```
 - The architecture scan moved from 204 files/11 errors to 205 files/zero errors
   and zero warnings; focused boundary behavior passed 59 tests plus 8 subtests.
 - Targeted native job observation passed 8 tests. The combined Swift run found
