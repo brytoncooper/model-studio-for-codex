@@ -21,6 +21,16 @@ open "/tmp/model-deck-v2-artifact/Model Deck V2.app" \
   --args --state-root /tmp/model-deck-v2-acceptance
 ```
 
+The builder validates the selected interpreter before compiling: Python 3.11+
+and the exact direct dependencies from `python/pyproject.toml` must import at
+their pinned versions, and the formats used by the bundled schemas must pass
+functional `jsonschema[format]` probes. The interpreter remains external. The app retains the
+dependency contract and checker at
+`Contents/Resources/python/{pyproject.toml,check_python_runtime.py}` so a moved
+artifact can be checked without the source checkout. See the
+[`scripts/v2` guide](../../../scripts/v2/README.md) for the relocation command
+and the clean-environment launch form.
+
 The app starts one engine child automatically and waits for that engine's
 rendezvous and credential files. Cmd-Q asks only that exact child to shut down,
 waits for its extension processes, and then exits the app.
@@ -227,8 +237,9 @@ guard. A successful update refreshes the workspace and reports the returned
 version; failures remain visible as `Error: ...`.
 
 This is an unsigned local development artifact. Its configured Python
-interpreter must remain available and contain the dependencies from
-`python/pyproject.toml`. The coding composition supports one configured
+interpreter must remain available and continue to pass the retained runtime
+check. Moving the app does not move or freeze that interpreter environment.
+The coding composition supports one configured
 OpenAI-compatible route and serial tool calls only; parallel tool-call responses
 are rejected rather than truncated. Codex Desktop UI integration,
 live-provider opaque reasoning/compaction qualification, provider-reported cost, marketplace,

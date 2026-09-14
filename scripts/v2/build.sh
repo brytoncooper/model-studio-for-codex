@@ -31,6 +31,17 @@ if [[ "$python_executable" != /* || ! -x "$python_executable" ]]; then
   print -u2 "--python-executable must be an executable absolute path"
   exit 2
 fi
+
+runtime_checker="$repository_root/scripts/v2/check_python_runtime.py"
+runtime_report=""
+if ! runtime_report=$("$python_executable" -I -B "$runtime_checker" "$repository_root/python/pyproject.toml" 2>&1); then
+  print -u2 "$runtime_report"
+  exit 2
+fi
+if [[ "$runtime_report" != model-deck-python-runtime-ok\ * ]]; then
+  print -u2 "Python runtime check failed: selected executable did not run the V2 runtime validator"
+  exit 2
+fi
 if [[ "$output_root" != /* ]]; then
   print -u2 "--output must be a fresh absolute directory"
   exit 2
@@ -79,6 +90,8 @@ chmod 755 "$application/Contents/MacOS/ModelDeckV2"
   --exclude='*.pyc' \
   "$repository_root/python/src/" \
   "$application/Contents/Resources/python/src/"
+/usr/bin/ditto "$runtime_checker" "$application/Contents/Resources/python/check_python_runtime.py"
+/usr/bin/ditto "$repository_root/python/pyproject.toml" "$application/Contents/Resources/python/pyproject.toml"
 
 for bundle_name in ModelDeck_ModelDeckContracts.bundle ModelDeck_ModelDeckPresentation.bundle; do
   bundle_source="$binary_root/$bundle_name"
@@ -106,4 +119,5 @@ runtime_plist="$application/Contents/Resources/config/runtime.plist"
 /usr/bin/plutil -insert python_executable -string "$python_executable" "$runtime_plist"
 
 print "Built $application"
+print "Validated external runtime: $runtime_report"
 print "Swift scratch retained at $scratch_root"

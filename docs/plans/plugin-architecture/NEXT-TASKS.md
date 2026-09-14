@@ -23,6 +23,12 @@ agent. Existing untracked files are not assumed available or accepted.
   real switched-boundary restart recovery are delivered. B20 remains open for
   permission/provenance presentation and its remaining original fault/job
   acceptance; B22 remains open for optional session-metadata linkage.
+- **Relocated V2 artifact advanced (2026-09-14):** a separately built and moved
+  V2 app completed native model create/rename, packaged Notebook editing/export,
+  normal quit/reopen persistence, and disable/unavailable/data-retention checks
+  with isolated state and exact process ownership. The builder now validates and
+  retains the external Python 3.11+ dependency contract. This is accepted
+  B04/B05/B25/B26 milestone evidence, not closure of the original workstreams.
 
 B16 refresh work is newly unblocked by the public job path. Do not repeat A1 or
 A2; continue the exact remaining requirements above rather than reopening their
@@ -121,6 +127,11 @@ the original slice.
 - **Parallelism:** Can run with every ready implementation assignment.
 - **Stop condition:** A failing assertion becomes a concrete implementation task;
   do not repair it inside this verification assignment.
+
+The relocated V2 milestone supplies an additional real Swift-client/engine
+create/rename/restart observation, but V1 remains open for the original
+legacy-compatible stage/helper inventory and the complete Models presenter
+state/race/search/selection/keyboard record.
 
 ### V2 - Connection/model repository conformance
 
@@ -410,6 +421,11 @@ reaches the same projection; absent paths retain the legacy rollback route.
   compatibility wrappers, and root documentation/catalog integration.
 - **Reuse:** Existing stager, V2 builder evidence, A5 MCP entrypoint, D2 migration,
   D3-D6 accepted components, and behavior matrix.
+- **Delivered partial evidence:** the V2 app bundles application Python sources,
+  Swift resources, and an external-runtime checker/contract; one moved copy ran
+  from an unrelated directory without checkout imports and preserved model and
+  Notebook state across normal quit/reopen. Continue from that builder instead
+  of creating another V2 packaging path.
 - **Dependencies:** A5 and D2-D6.
 - **Acceptance:** Clean isolated build; exact resources/modules; actual signatures
   and helper bytes; no bytecode mutation; legacy launch/token compatibility;
