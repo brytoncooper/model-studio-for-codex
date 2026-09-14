@@ -26,6 +26,18 @@ open "/tmp/model-deck-v2-artifact/Model Deck V2.app" \
   --provider-config /tmp/model-deck-v2-provider.json
 ```
 
+Cursor profile preparation additionally requires the pinned SDK interpreter,
+disposable project, and isolated SDK state paths:
+
+```sh
+scripts/v2/prepare_coding_provider.py \
+  --managed-agent /absolute/path/to/cursor-agent.toml \
+  --output /tmp/model-deck-v2-cursor.json \
+  --cursor-sdk-python /absolute/path/to/cursor-sdk/venv/bin/python \
+  --cursor-workspace /tmp/disposable-project \
+  --cursor-state-root /tmp/model-deck-v2-cursor-state
+```
+
 V2 owns only that state tree and its directly launched engine child. No launch
 agent or background service is installed. See the
 [V2 application guide](../../macos/Sources/ModelDeckV2/README.md) for the state

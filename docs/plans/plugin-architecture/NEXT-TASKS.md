@@ -192,6 +192,12 @@ the original slice.
 - **Acceptance:** Account/reasoning/Fast validation, tool callback identity,
   cancel/teardown, malformed/truncated terminal, parallel-session isolation, and
   active-run reuse pass without live Cursor calls.
+- **Delivered:** application-owned Cursor profile and V2 composition, pinned
+  interpreter verification, real Composer 2.5 tool/edit/test and follow-up
+  proof, locally accepted interruption, committed token usage, and exact broker
+  cleanup.
+- **Remaining:** move retained broker install/update mechanics behind the
+  package-owned root and add the original discriminative fake-SDK process gate.
 - **Non-goals:** New Cursor features, SDK installation changes, live requests, or
   continuation storage.
 - **Parallelism:** Can run with A1-A5 and V1-V2.

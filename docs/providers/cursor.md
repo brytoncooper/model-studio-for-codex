@@ -1,19 +1,39 @@
-# Cursor provider execution coordinator (B14 A)
+# Cursor provider execution and isolated V2 binding (B14)
+
+## V2 composition
+
+`CursorProfile` and `compose_cursor_profile` bind the existing coordinator and
+`CursorProcessRuntime` to the pinned Cursor SDK broker. The non-secret profile
+carries an application-owned credential command, selected `cursor/<sdk-model>`
+id, SDK Python path/version, and isolated project/state paths. Loading verifies
+that the interpreter contains `cursor-sdk==1.0.31`.
+
+The broker enables only request-supplied custom MCP tools. Cursor-native file,
+shell, web, settings, external MCP, and subagent features remain disabled, so
+Codex owns approvals and actual tool execution. Cancellation terminates only
+the owned broker process group and reports remote termination as unknown.
+Missing SDK usage or cost is omitted, not invented as zero.
 
 ## Ownership
 
-The Cursor adapter owns exactly these files and nothing else:
+The Cursor provider package owns its coordinator, process-runtime adapter,
+profile composition, tests, and this guide. Its current implementation files
+are:
 
 - `python/src/model_deck/integrations/providers/cursor/__init__.py`
+- `python/src/model_deck/integrations/providers/cursor/configuration.py`
 - `python/src/model_deck/integrations/providers/cursor/coordinator.py`
-- `python/tests/provider_cursor/__init__.py`
+- `python/src/model_deck/integrations/providers/cursor/process_runtime.py`
+- `python/src/model_deck/integrations/providers/cursor/PROCESS_RUNTIME.md`
+- `python/tests/provider_cursor/test_configuration.py`
 - `python/tests/provider_cursor/test_coordinator.py`
+- `python/tests/provider_cursor/test_process_runtime.py`
 - `docs/providers/cursor.md`
 
-It must not edit the legacy `cursor_agent.py`, B12 core, contracts,
-bootstrap, CLI, or any other provider package, test, or doc. It imports
-only the frozen public B12 run/routing port types it needs
-(`model_deck.engine.runs.ports`) plus stdlib.
+The application CLI composes that public package and the V2 build copies the
+retained compatibility broker into its isolated artifact. Vendor SDK details
+remain outside the engine, and the provider does not reach into another
+provider's private implementation or storage.
 
 ## Flow
 
@@ -97,10 +117,10 @@ tests and process teardown. A failing session close does not skip the
 remaining sessions; shutdown attempts each close and then raises the first
 error. Close is attempted exactly once even when the SDK close itself fails.
 
-No threads, sleeps, global singletons, service locators, SDK imports,
-credential material, Codex request/history/prompt conversion, or B10
-host conversion live in this adapter. Actual `CursorSdkProcess` binding
-and Codex host conversion are later work.
+No SDK import occurs in the engine interpreter. Credential material is resolved
+only when a run starts and is sent to the owned SDK broker over private stdin.
+The V2 Codex bridge supplies role-preserving conversation input and
+host-authorized tools.
 
 ## Tests
 
@@ -132,8 +152,10 @@ cd '/Users/brytoncooper/Documents/Model Deck Architecture' \
 
 ## Limits
 
-This adapter proves the execution-coordinator seam against a fake
-runtime only. It claims no live parity with the real Cursor SDK, no
-real process binding, no host conversion, and no end-to-end routing
-proof. Live qualification against the installed app stays separate
-future work.
+The isolated V2 route has live proof for Composer 2.5, tool-driven editing,
+checks, follow-up context, local cancellation, token usage, and owned-process
+cleanup. The compatibility broker is still packaged from the retained legacy
+root; moving its SDK install/update mechanics wholly behind the new package is
+remaining original B14 work. Provider-native continuation handles remain B15;
+V2 follow-up preserves context through Codex and starts a new SDK generation on
+the same route.

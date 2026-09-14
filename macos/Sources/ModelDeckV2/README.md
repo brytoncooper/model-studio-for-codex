@@ -67,6 +67,13 @@ open "/tmp/model-deck-v2-coding-build/Model Deck V2.app" --args \
   --provider-config /tmp/model-deck-v2-provider.json
 ```
 
+For a Cursor-managed agent, add `--cursor-sdk-python`,
+`--cursor-workspace`, and `--cursor-state-root`. The header identifies the
+`com.modeldeck.provider.cursor / cursor/<model>` route and Cursor IDE/Cloud
+Agent-pool billing before any request. `Refresh usage` displays only committed
+SDK input, output, and cached tokens; unavailable monetary cost is not shown as
+zero.
+
 After V2 reports the coding route, start a disposable project conversation and
 continue it using the stored isolated thread identifier:
 
@@ -96,22 +103,21 @@ scripts/v2/run_isolated_codex.py cancel \
   --prompt 'Do not use tools. Write a long explanation of integer addition.'
 ```
 
-The selected proof route is OpenRouter's HTTP-compatible Responses endpoint and
-`deepseek/deepseek-v4.1-flash`. Charges consume OpenRouter API credits, not a
-ChatGPT subscription allowance. The profile stores only an opaque executable
-credential reference; secrets are resolved inside the engine and are never
-written into the generated profile.
+The original proof route is OpenRouter's HTTP-compatible Responses endpoint and
+`deepseek/deepseek-v4.1-flash`. Cursor profiles instead use the isolated Cursor
+SDK broker with Codex-owned tools. OpenRouter charges consume API credits, not a
+ChatGPT subscription allowance. The profile stores only an executable credential
+command and opaque reference; secrets are resolved at run start and are never
+written into the profile.
 
-On 2026-09-13 the final reviewed build's disposable coding run read its project,
-executed Codex shell tools, changed subtraction to addition, and passed
-`python3 -m unittest test_calculator -v`. A second turn used
-the same Codex thread and engine session. The completed coding run recorded
-32,453 input tokens, 509 output tokens, and 12,800 cached input tokens across
-its serial provider segments. Provider billing cost was not reported, so V2
-does not invent one. Cancellation records one local cancellation transition and
-exactly one terminal outcome (`run.cancelled` when provider closure is observed,
-or `run.interrupted` when remote termination remains unconfirmed); no subsequent
-tool dispatch occurs.
+On 2026-09-14 an isolated Cursor Composer 2.5 run used Codex shell tools, changed
+subtraction to addition, and passed two `python3 -m unittest -v` checks. A
+follow-up on the same Codex thread recalled the exact bug and test count. V2
+displayed the committed totals: 151,956 input, 1,190 output, and 63,552 cached
+input tokens. The SDK did not report settled monetary cost, so V2 displayed no
+cost. A separate cancelled run recorded one local cancellation transition and
+one `run.interrupted` terminal outcome, with no tool dispatch; no broker process
+remained after cancellation or app quit.
 
 ## Session Notebook walkthrough
 

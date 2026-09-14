@@ -19,8 +19,9 @@ CursorProcessRuntime(
 )
 ```
 
-The compatibility root injects the existing `CursorSdkProcess` and existing
-payload helpers. Prepared payload is detached and forwarded unchanged, including
+`configuration.compose_cursor_profile` injects the profile-selected SDK broker,
+payload helper, and usage normalizer. The V2 application root supplies the
+retained compatibility broker script. Prepared payload is detached and forwarded unchanged, including
 model, API key, tools, message, reasoning, and service tier. Preparation supplies
 trusted missing context: instructions, host/thread metadata, credential scope,
 format/tool-choice settings and aliases. It must preserve encrypted-input and
@@ -76,7 +77,7 @@ PYTHONPATH=src python -B -m unittest tests.provider_cursor.test_coordinator test
 ```
 
 Run from `python/`. Tests use fake injected queues/processes plus one temporary
-SQLite engine integration; no SDK installation, subprocess, network, credentials,
-or live app is exercised. Root compatibility wiring and live qualification remain
-separate work. A hung injected cleanup can leave its daemon thread running; the
+SQLite engine integration. Separate isolated V2 qualification covers the real
+SDK subprocess, credentials, tools, continuation, cancellation, and usage. A
+hung injected cleanup can leave its daemon thread running; the
 adapter cannot prove termination beyond the injected process's contract.
