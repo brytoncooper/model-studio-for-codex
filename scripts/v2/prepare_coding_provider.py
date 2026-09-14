@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create one non-secret V2 OpenRouter profile from a managed Codex agent."""
+"""Create one non-secret V2 coding-provider profile from a managed Codex agent."""
 
 from __future__ import annotations
 
@@ -16,7 +16,10 @@ import uuid
 MANAGED_AGENT_MARKER = "# Managed by OpenRouter Settings native-agent registration v1"
 MANAGED_PROVIDER_ID = "openrouter-settings"
 V2_PROVIDER_ID = "com.modeldeck.openrouter"
+CURSOR_PROVIDER_ID = "com.modeldeck.provider.cursor"
 OPENROUTER_HOST = "openrouter.ai"
+CURSOR_HOST = "api.cursor.com"
+CURSOR_SDK_VERSION = "1.0.31"
 
 
 def _require_regular_file(path: Path, description: str) -> None:
@@ -66,6 +69,23 @@ def _openrouter_endpoint(provider: dict[str, object]) -> str:
     if provider.get("wire_api") != "responses" or provider.get("supports_websockets") is not False:
         raise ValueError("managed agent does not describe the supported HTTP-compatible route")
     return base_url.rstrip("/")
+
+
+def _cursor_endpoint(provider: dict[str, object]) -> None:
+    base_url = provider.get("base_url")
+    if not isinstance(base_url, str):
+        raise ValueError("managed agent endpoint is missing")
+    parsed = urllib.parse.urlsplit(base_url)
+    if (
+        parsed.scheme != "https"
+        or (parsed.hostname or "").casefold() != CURSOR_HOST
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or provider.get("wire_api") != "responses"
+        or provider.get("supports_websockets") is not False
+    ):
+        raise ValueError("managed agent does not describe the supported Cursor SDK route")
 
 
 def _credential_command(provider: dict[str, object]) -> dict[str, object]:
@@ -125,16 +145,68 @@ def _write_private_json(path: Path, document: dict[str, object]) -> None:
             temporary_path.unlink()
 
 
-def prepare_coding_provider(managed_agent: Path, output: Path) -> None:
+def prepare_coding_provider(
+    managed_agent: Path,
+    output: Path,
+    *,
+    cursor_sdk_python: Path | None = None,
+    cursor_workspace: Path | None = None,
+    cursor_state_root: Path | None = None,
+) -> None:
     document = _load_managed_agent(managed_agent)
     if output.is_symlink():
         raise ValueError("output profile must not be a symbolic link")
     model = document.get("model")
-    if not isinstance(model, str) or not model or model.casefold().startswith("cursor/"):
+    if not isinstance(model, str) or not model:
         raise ValueError("managed agent does not select the supported HTTP-compatible model")
     provider = _provider_definition(document)
-    base_url = _openrouter_endpoint(provider)
     credential = _credential_command(provider)
+    if model.casefold().startswith("cursor/"):
+        _cursor_endpoint(provider)
+        if model.count("/") != 1 or not model.removeprefix("cursor/"):
+            raise ValueError("managed agent Cursor model id is invalid")
+        if cursor_sdk_python is None or not cursor_sdk_python.is_absolute():
+            raise ValueError("Cursor SDK Python must be an absolute path")
+        if not cursor_sdk_python.is_file():
+            raise ValueError("Cursor SDK Python must be an executable file")
+        if not os.access(cursor_sdk_python, os.X_OK):
+            raise ValueError("Cursor SDK Python must be executable")
+        if (
+            cursor_workspace is None
+            or not cursor_workspace.is_absolute()
+            or cursor_workspace.is_symlink()
+            or not cursor_workspace.is_dir()
+        ):
+            raise ValueError("Cursor workspace must be an absolute non-symbolic-link directory")
+        if cursor_state_root is None or not cursor_state_root.is_absolute():
+            raise ValueError("Cursor state root must be an absolute path")
+        if cursor_state_root.is_symlink():
+            raise ValueError("Cursor state root must not be a symbolic link")
+        identity = f"cursor\n{model}\n{credential['args'][1]}"
+        profile = {
+            "schema_version": 1,
+            "provider_id": CURSOR_PROVIDER_ID,
+            "provider_name": "Cursor",
+            "connection_id": str(uuid.uuid5(uuid.NAMESPACE_URL, identity)),
+            "provider_model_id": model,
+            "display_name": model,
+            "endpoint_config_ref": _opaque_reference("cursor-endpoint", identity),
+            "credential_ref": _opaque_reference("cursor-credential", identity),
+            "capability_snapshot_ref": "ref:v2.cursor.serial-codex-tools",
+            "credential_command": credential,
+            "sdk_python": str(cursor_sdk_python),
+            "sdk_version": CURSOR_SDK_VERSION,
+            "workspace_path": str(cursor_workspace),
+            "state_root": str(cursor_state_root),
+            "billing_description": (
+                "Cursor SDK usage consumes the selected Cursor account's IDE/Cloud Agent "
+                "request pool; it is not ChatGPT or OpenRouter billing."
+            ),
+        }
+        _write_private_json(output.resolve(), profile)
+        return
+
+    base_url = _openrouter_endpoint(provider)
     identity = f"{base_url}\n{model}\n{credential['args'][1]}"
     connection_id = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
     profile = {
@@ -164,9 +236,18 @@ def main() -> int:
     )
     parser.add_argument("--managed-agent", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--cursor-sdk-python", type=Path)
+    parser.add_argument("--cursor-workspace", type=Path)
+    parser.add_argument("--cursor-state-root", type=Path)
     arguments = parser.parse_args()
     try:
-        prepare_coding_provider(arguments.managed_agent, arguments.output)
+        prepare_coding_provider(
+            arguments.managed_agent,
+            arguments.output,
+            cursor_sdk_python=arguments.cursor_sdk_python,
+            cursor_workspace=arguments.cursor_workspace,
+            cursor_state_root=arguments.cursor_state_root,
+        )
     except (OSError, UnicodeError, ValueError) as error:
         parser.error(str(error))
     return 0

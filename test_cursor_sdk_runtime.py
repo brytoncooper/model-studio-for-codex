@@ -13,6 +13,12 @@ import cursor_sdk_runtime as runtime
 
 
 class CursorRuntimeTests(unittest.TestCase):
+    def test_empty_tool_output_is_a_non_empty_mcp_result(self):
+        self.assertEqual(
+            runtime._tool_content(""),
+            {"content": [{"type": "text", "text": "Tool completed with no output."}]},
+        )
+
     def test_sdk_child_cannot_make_broker_control_pipe_nonblocking(self):
         program = '''
 import json, os, subprocess, sys

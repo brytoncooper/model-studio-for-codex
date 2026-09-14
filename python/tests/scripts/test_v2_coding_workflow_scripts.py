@@ -78,7 +78,7 @@ class PrepareCodingProviderTests(unittest.TestCase):
             self.assertNotIn("api_key", json.dumps(profile).casefold())
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
 
-    def test_cursor_managed_agent_is_rejected(self) -> None:
+    def test_cursor_managed_agent_becomes_isolated_sdk_profile(self) -> None:
         module = _load_script(PREPARE_SCRIPT, "prepare_coding_provider_cursor")
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -105,7 +105,60 @@ class PrepareCodingProviderTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(ValueError, "HTTP-compatible"):
+            sdk_python = root / "sdk-python"
+            sdk_python.write_text("#!/bin/sh\n", encoding="utf-8")
+            sdk_python.chmod(0o700)
+            workspace = root / "project"
+            workspace.mkdir()
+            state_root = root / "cursor-state"
+            output = root / "profile.json"
+
+            module.prepare_coding_provider(
+                managed_agent,
+                output,
+                cursor_sdk_python=sdk_python,
+                cursor_workspace=workspace,
+                cursor_state_root=state_root,
+            )
+
+            profile = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(profile["provider_id"], "com.modeldeck.provider.cursor")
+            self.assertEqual(profile["provider_model_id"], "cursor/default")
+            self.assertEqual(profile["sdk_version"], "1.0.31")
+            self.assertEqual(profile["sdk_python"], str(sdk_python))
+            self.assertEqual(profile["workspace_path"], str(workspace))
+            self.assertEqual(profile["state_root"], str(state_root))
+            self.assertIn("IDE/Cloud Agent", profile["billing_description"])
+            self.assertNotIn("api_key", json.dumps(profile).casefold())
+            self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
+
+    def test_cursor_profile_requires_isolated_runtime_paths(self) -> None:
+        module = _load_script(PREPARE_SCRIPT, "prepare_coding_provider_cursor_paths")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            managed_agent = root / "cursor.toml"
+            managed_agent.write_text(
+                "\n".join(
+                    [
+                        "# Managed by OpenRouter Settings native-agent registration v1",
+                        'model = "cursor/default"',
+                        'model_provider = "openrouter-settings"',
+                        "[model_providers.openrouter-settings]",
+                        'name = "Cursor"',
+                        'base_url = "https://api.cursor.com"',
+                        'wire_api = "responses"',
+                        "supports_websockets = false",
+                        "[model_providers.openrouter-settings.auth]",
+                        'command = "/usr/bin/printf"',
+                        'args = ["--token", "550e8400-e29b-41d4-a716-446655440000"]',
+                        "timeout_ms = 5000",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "SDK Python"):
                 module.prepare_coding_provider(managed_agent, root / "profile.json")
 
 

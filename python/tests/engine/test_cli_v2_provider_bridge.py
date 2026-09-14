@@ -125,11 +125,59 @@ class CliV2ProviderServeTests(unittest.TestCase):
         self.profile_cls.load.assert_called_once()
         loaded_path = self.profile_cls.load.call_args.args[0]
         self.assertEqual(Path(loaded_path), config)
-        self.compose_fn.assert_called_once_with(self.profile)
+        self.compose_fn.assert_called_once_with(
+            self.profile,
+            route_definition_factory=mock.ANY,
+        )
         kwargs = build_mock.call_args.kwargs
         self.assertIs(kwargs["provider_execution"], self.provider_execution)
         self.assertIs(kwargs["provider_route_definitions"], self.provider_routes)
         self.assertTrue(kwargs["enable_application_state"])
+
+    def test_cursor_profile_uses_cursor_sdk_composition(self) -> None:
+        state, artifact, socket_root, legacy = self._paths()
+        config = self._provider_config()
+        config.write_text(
+            json.dumps({"provider_id": "com.modeldeck.provider.cursor"}),
+            encoding="utf-8",
+        )
+        profile = mock.MagicMock(name="cursor_profile")
+        provider_execution = mock.MagicMock(name="cursor_execution")
+        provider_routes = {"com.modeldeck.provider.cursor": mock.MagicMock()}
+        runtime = mock.MagicMock()
+        runtime.server.serve_forever.side_effect = lambda: None
+        with (
+            mock.patch(
+                "model_deck.integrations.providers.cursor.configuration.CursorProfile.load",
+                return_value=profile,
+            ) as load_mock,
+            mock.patch(
+                "model_deck.integrations.providers.cursor.configuration.compose_cursor_profile",
+                return_value=(provider_execution, provider_routes),
+            ) as compose_mock,
+            mock.patch(
+                "model_deck.bootstrap.build_engine_server", return_value=runtime,
+            ) as build_mock,
+        ):
+            exit_code = cli_main.main(
+                _make_basic_args(
+                    state_root=state,
+                    artifact_root=artifact,
+                    socket_root=socket_root,
+                    legacy_agents_dir=legacy,
+                    extras=["--provider-config", str(config)],
+                )
+            )
+
+        self.assertEqual(exit_code, 0)
+        load_mock.assert_called_once_with(config)
+        compose_mock.assert_called_once_with(
+            profile,
+            broker_script=Path(__file__).resolve().parents[3] / "cursor_sdk_runtime.py",
+            route_definition_factory=mock.ANY,
+        )
+        self.assertIs(build_mock.call_args.kwargs["provider_execution"], provider_execution)
+        self.assertIs(build_mock.call_args.kwargs["provider_route_definitions"], provider_routes)
 
     def test_provider_config_must_be_absolute(self) -> None:
         state, artifact, socket_root, legacy = self._paths()

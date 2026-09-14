@@ -23,6 +23,7 @@ from model_deck.engine.runs.ports import (
     SubmitToolResultProviderOutcome,
     SubmitToolResultProviderResult,
     ToolDefinition,
+    RunOptions,
 )
 
 CURSOR_PROVIDER_ID = "com.modeldeck.provider.cursor"
@@ -365,6 +366,7 @@ class CursorStartRequest:
     input_messages: tuple[Any, ...] = ()
     tools: tuple[ToolDefinition, ...] = ()
     continuation_handle: str | None = None
+    options: RunOptions = RunOptions()
 
 
 @dataclass(frozen=True, slots=True)
@@ -743,6 +745,7 @@ class CursorExecutionCoordinator:
             ),
             tools=tuple(copy.deepcopy(tool) for tool in request.tools),
             continuation_handle=None,
+            options=copy.deepcopy(request.options),
         )
         handle = CursorProviderRunHandle(
             run_id=request.run_id, sink=sink, now=self._now

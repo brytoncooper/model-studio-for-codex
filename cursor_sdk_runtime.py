@@ -322,7 +322,8 @@ def _tool_content(output):
     if isinstance(output, dict) and isinstance(output.get("content"), list):
         output = output["content"]
     if not isinstance(output, list):
-        return {"content": [{"type": "text", "text": output if isinstance(output, str) else json.dumps(output)}]}
+        text = output if isinstance(output, str) else json.dumps(output)
+        return {"content": [{"type": "text", "text": text or "Tool completed with no output."}]}
     content = []
     for part in output:
         if isinstance(part, dict) and part.get("type") in {"input_text", "output_text", "text"}:

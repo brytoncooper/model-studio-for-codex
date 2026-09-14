@@ -27,3 +27,7 @@ __all__ = [
 from .process_runtime import CursorProcessPort, CursorProcessRuntime, PreparedCursorRun
 
 __all__ += ["CursorProcessPort", "CursorProcessRuntime", "PreparedCursorRun"]
+
+from .configuration import CursorProfile, compose_cursor_profile
+
+__all__ += ["CursorProfile", "compose_cursor_profile"]

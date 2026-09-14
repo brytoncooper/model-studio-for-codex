@@ -92,16 +92,41 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
             _stderr("engine serve: --provider-config must be absolute")
             return 1
         try:
-            from model_deck.integrations.providers.openai_compatible.configuration import (
-                OpenAICompatibleProfile,
-                compose_openai_compatible_profile,
-            )
             from model_deck.adapters.routing.registered import ProviderRouteDefinition
 
-            profile = OpenAICompatibleProfile.load(provider_config_path)
-            provider_execution, provider_routes = compose_openai_compatible_profile(
-                profile, route_definition_factory=ProviderRouteDefinition
-            )
+            profile_document = json.loads(provider_config_path.read_text(encoding="utf-8"))
+            if (
+                isinstance(profile_document, dict)
+                and profile_document.get("provider_id") == "com.modeldeck.provider.cursor"
+            ):
+                from model_deck.integrations.providers.cursor.configuration import (
+                    CursorProfile,
+                    compose_cursor_profile,
+                )
+
+                profile = CursorProfile.load(provider_config_path)
+                packaged_broker = (
+                    Path(__file__).resolve().parents[2] / "cursor_sdk_runtime.py"
+                )
+                source_broker = (
+                    Path(__file__).resolve().parents[4] / "cursor_sdk_runtime.py"
+                )
+                broker_script = packaged_broker if packaged_broker.is_file() else source_broker
+                provider_execution, provider_routes = compose_cursor_profile(
+                    profile,
+                    broker_script=broker_script,
+                    route_definition_factory=ProviderRouteDefinition,
+                )
+            else:
+                from model_deck.integrations.providers.openai_compatible.configuration import (
+                    OpenAICompatibleProfile,
+                    compose_openai_compatible_profile,
+                )
+
+                profile = OpenAICompatibleProfile.load(provider_config_path)
+                provider_execution, provider_routes = compose_openai_compatible_profile(
+                    profile, route_definition_factory=ProviderRouteDefinition
+                )
         except (OSError, RuntimeError, TypeError, ValueError):
             _stderr("engine serve: provider configuration is unavailable")
             return 1
