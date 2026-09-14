@@ -273,9 +273,14 @@ OpenAI-compatible route and serial tool calls only; parallel tool-call responses
 are rejected rather than truncated. Codex Desktop UI integration,
 live-provider opaque reasoning/compaction qualification, provider-reported cost, marketplace,
 signing, distribution, bundled Python, and live-app cutover are not qualified.
-Actual Codex Desktop attachment and model reload remain separately unqualified;
-B10's applicable fake-app-server acceptance verifies the isolated adapter and
-launch preparation, not live Codex Desktop behavior.
+An isolated Codex Desktop qualification was run on 2026-09-14. V2 registration
+and host projection reached `ready`, but the installed native app server's
+`model/list` did not include the projected OpenRouter model. Initial Desktop
+execution, continuation, and registration reload therefore remain unqualified,
+and V2 cannot yet replace the prototype for Desktop model access. B10's
+fake-app-server acceptance still verifies the isolated adapter and launch
+preparation; V2 must additionally compose that bridge into a real Desktop
+attachment. See the [qualification record](../../../docs/plans/plugin-architecture/CODEX-DESKTOP-QUALIFICATION-2026-09-14.md).
 Normal quit drains and reaps the engine and extension workers. The final
 SIGKILL fallback is deliberately scoped to the known engine PID; a deliberately
 nonresponsive extension that survives closed stdio could require a future exact

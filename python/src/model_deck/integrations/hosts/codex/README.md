@@ -68,8 +68,14 @@ per-process overrides, and host-bound subscription behavior.
 
 ## Limitations
 
-This acceptance does not launch, attach to, or reload Codex Desktop. It proves
-the independently testable adapter and preparation boundary. Actual Desktop
-discovery/attachment/model reload remains a separate, authorized live
-qualification and must not be inferred from fake-server, CLI, or projection
-file evidence.
+This acceptance does not itself launch, attach to, or reload Codex Desktop. It
+proves the independently testable adapter and preparation boundary.
+
+The isolated qualification on 2026-09-14 established the boundary observed in
+Codex Desktop 26.903.71938 with embedded Codex 0.153.4: V2 could register and
+project an OpenRouter model, but the native app server did not include it in
+`model/list`. Managed agent TOML is therefore not a primary Desktop
+model-catalog registration mechanism in that version. V2 does not yet compose
+this package's `AppServerBridge` into a Desktop attachment, so it cannot replace
+the prototype for Desktop model access. See the
+[qualification record](../../../../../../docs/plans/plugin-architecture/CODEX-DESKTOP-QUALIFICATION-2026-09-14.md).

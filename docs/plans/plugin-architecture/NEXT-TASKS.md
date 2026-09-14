@@ -333,10 +333,39 @@ reaches the same projection; absent paths retain the legacy rollback route.
   launching Codex or reading live state.
 - **Remaining:** None for B10's applicable fake-server acceptance. Live Codex
   Desktop attachment/reload is a separate authorized qualification boundary.
+  The [2026-09-14 isolated run](CODEX-DESKTOP-QUALIFICATION-2026-09-14.md)
+  proved that V2 agent projection alone does not add the configured model to
+  native Desktop `model/list`.
 - **Non-goals:** Live Codex, migration, provider execution, or native UI.
 - **Parallelism:** Can run with D3-D5 after A4 settles shared host contracts.
 - **Stop condition:** Any public host-contract expansion returns to the primary
   agent.
+
+### D1a - V2-owned Codex Desktop attachment — newly identified
+
+- **Outcome:** A V2-owned isolated launch/attachment composes the delivered
+  `AppServerBridge` so V2 catalog entries appear in native Desktop `model/list`
+  and selected turns route through V2 without displacing host-bound OpenAI
+  subscription models.
+- **Original workstreams covered:** Newly exposed platform-attachment gap in
+  B25; prerequisite evidence for B27. This is not a reopening of B10's
+  fake-server adapter acceptance.
+- **Ownership:** V2 Desktop launcher/attachment composition, packaged bridge
+  entrypoint, and real-host acceptance fixtures. Do not change provider or
+  application storage ownership.
+- **Evidence:** The [2026-09-14 isolated qualification](CODEX-DESKTOP-QUALIFICATION-2026-09-14.md)
+  proved that managed agent projection reached `ready` while the installed
+  native app server omitted the V2 model from `model/list`.
+- **Dependencies:** Delivered D1 adapter/bridge and current V2 public catalog,
+  router, and authenticated loopback contracts.
+- **Acceptance:** A clean staged artifact exposes the V2 model alongside
+  host-bound OpenAI models, completes an initial coding task and continuation,
+  reloads a model registered after launch, records the correct billing route,
+  and cleans up only exact owned processes in isolated state.
+- **Non-goals:** Installed-app replacement, live-state mutation, a second
+  provider architecture, or claiming an unsupported Codex discovery API.
+- **Stop condition:** A required Desktop contract is unavailable or the design
+  would bypass application-owned catalog/router ports.
 
 ### D2 - Removed: prototype migration
 
@@ -426,6 +455,8 @@ remains part of D7; plugin update recovery remains B20.
 - **Acceptance:** Every required page proves five states, generation races,
   main-actor access, settings round-trip/conflict/backup, keyboard/accessibility,
   geometry/focus/appearance/process-lifecycle parity without live AX.
+- **New prerequisite:** D1a owns the Desktop launcher/attachment gap exposed by
+  the isolated qualification; D6 consumes that accepted public host surface.
 - **Non-goals:** App installation, live host observation, visual redesign, or
   removal of legacy code before parity.
 - **Parallelism:** Page owners run in parallel after shared client schemas freeze.
@@ -465,8 +496,10 @@ remains part of D7; plugin update recovery remains B20.
 - **Ownership:** Primary agent and one operational verifier; exact target/state/
   snapshot/runbook files only.
 - **Reuse:** D7 artifact and checks, V2 recovery evidence, documented isolated coding and
-  Notebook scenarios, and preserved fallback environment.
-- **Dependencies:** D7 plus separate user authorization after impact disclosure.
+  Notebook scenarios, the [2026-09-14 Desktop model-discovery record](CODEX-DESKTOP-QUALIFICATION-2026-09-14.md),
+  and preserved fallback environment.
+- **Dependencies:** D1a, D7, plus separate user
+  authorization after impact disclosure.
 - **Acceptance:** Recorded real route/billing, streaming/tools/cancel/compaction,
   restart state, plugin update, helper identity, host/AX behavior, and recovery
   without losing new data.
