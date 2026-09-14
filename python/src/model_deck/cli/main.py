@@ -105,16 +105,8 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
                 )
 
                 profile = CursorProfile.load(provider_config_path)
-                packaged_broker = (
-                    Path(__file__).resolve().parents[2] / "cursor_sdk_runtime.py"
-                )
-                source_broker = (
-                    Path(__file__).resolve().parents[4] / "cursor_sdk_runtime.py"
-                )
-                broker_script = packaged_broker if packaged_broker.is_file() else source_broker
                 provider_execution, provider_routes = compose_cursor_profile(
                     profile,
-                    broker_script=broker_script,
                     route_definition_factory=ProviderRouteDefinition,
                 )
             else:

@@ -297,7 +297,7 @@ def _normalize_usage(
 class CursorSdkProcess:
     """One owned broker process using the profile-selected SDK interpreter."""
 
-    def __init__(self, profile: CursorProfile, broker_script: Path, payload: Mapping[str, Any]):
+    def __init__(self, profile: CursorProfile, payload: Mapping[str, Any]):
         environment = {
             key: value for key, value in os.environ.items()
             if key not in {"CURSOR_API_KEY", "CURSOR_SDK_LOG", "PYTHONPATH", "PYTHONHOME"}
@@ -306,7 +306,7 @@ class CursorSdkProcess:
         self._closed = threading.Event()
         self._write_lock = threading.Lock()
         self._process = subprocess.Popen(
-            [str(profile.sdk_python), str(broker_script), "--broker"],
+            [str(profile.sdk_python), str(Path(__file__).with_name("sdk_runtime.py")), "--broker"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -355,18 +355,21 @@ class CursorSdkProcess:
         if self._closed.is_set():
             return
         self._closed.set()
-        try:
-            os.killpg(self._process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            self._process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
+        if self._process.poll() is None:
             try:
-                os.killpg(self._process.pid, signal.SIGKILL)
+                os.killpg(self._process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
-            self._process.wait(timeout=3)
+            try:
+                self._process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(self._process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self._process.wait(timeout=3)
+        else:
+            self._process.wait()
         for stream in (self._process.stdin, self._process.stdout):
             if stream is not None:
                 try:
@@ -378,13 +381,13 @@ class CursorSdkProcess:
 def compose_cursor_profile(
     profile: CursorProfile,
     *,
-    broker_script: Path,
     route_definition_factory: Callable[..., Any],
 ) -> tuple[CursorExecutionCoordinator, dict[str, Any]]:
+    broker_script = Path(__file__).with_name("sdk_runtime.py")
     if not broker_script.is_absolute() or not broker_script.is_file():
         _reject("Cursor SDK broker is unavailable")
     runtime = CursorProcessRuntime(
-        process_factory=lambda payload: CursorSdkProcess(profile, broker_script, payload),
+        process_factory=lambda payload: CursorSdkProcess(profile, payload),
         prepare_payload=lambda request: _prepare(profile, request),
         normalize_usage=_normalize_usage,
     )

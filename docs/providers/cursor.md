@@ -24,16 +24,20 @@ are:
 - `python/src/model_deck/integrations/providers/cursor/configuration.py`
 - `python/src/model_deck/integrations/providers/cursor/coordinator.py`
 - `python/src/model_deck/integrations/providers/cursor/process_runtime.py`
+- `python/src/model_deck/integrations/providers/cursor/sdk_runtime.py`
 - `python/src/model_deck/integrations/providers/cursor/PROCESS_RUNTIME.md`
 - `python/tests/provider_cursor/test_configuration.py`
 - `python/tests/provider_cursor/test_coordinator.py`
+- `python/tests/provider_cursor/test_fake_sdk_process.py`
 - `python/tests/provider_cursor/test_process_runtime.py`
 - `docs/providers/cursor.md`
 
-The application CLI composes that public package and the V2 build copies the
-retained compatibility broker into its isolated artifact. Vendor SDK details
-remain outside the engine, and the provider does not reach into another
-provider's private implementation or storage.
+The application CLI composes that public package, and both legacy and V2 builds
+source the broker from `sdk_runtime.py`. The repository-root
+`cursor_sdk_runtime.py` is only a compatibility import and command entrypoint;
+it contains no installation, update, model-selection, or broker implementation.
+Vendor SDK details remain outside the engine, and the provider does not reach
+into another provider's private implementation or storage.
 
 ## Flow
 
@@ -46,8 +50,7 @@ mutation cannot affect the dispatched request. The tools tuple carries
 `ToolDefinition` advertisements (name, nested input schema,
 host-execution flag, optional description) detached to the runtime seam,
 distinct from emitted tool-call IDs. The route snapshot carries
-no continuation handle today, so the adapter leaves that field unset for
-the later real-SDK binding to fill.
+no continuation handle today, so the adapter leaves that field unset for B15.
 
 A start whose route snapshot carries a `provider_id` other than the
 cursor provider id is rejected before any registration or dispatch.
@@ -136,12 +139,28 @@ targeting one run, provider-id mismatch with no dispatch, nested
 NaN/Infinity rejection, per-kind payload shape tables, and
 concurrent terminal/close/tool-submit/cancel races.
 
+`python/tests/provider_cursor/test_fake_sdk_process.py` launches the real
+package broker with a deterministic fake `cursor-sdk==1.0.31` distribution. It
+uses no network or credentials and proves synthetic account routing,
+reasoning/Fast parameters, two callback/result suspensions on one active run,
+unsupported Fast refusal, abrupt-terminal failure, parallel process isolation,
+feature disabling, mid-callback cancellation, and exact owned-PID teardown.
+The retained installer tests continue to prove pinned-version status,
+exclusive installation, staged replacement, bridge verification, and rollback
+to the prior SDK directory on failure.
+
 Run:
 
 ```bash
 cd '/Users/brytoncooper/Documents/Model Deck Architecture/python' \
   && PYTHONPATH=src /opt/homebrew/bin/python3.12 \
   -W error::ResourceWarning -m unittest tests.provider_cursor.test_coordinator
+```
+
+```bash
+cd '/Users/brytoncooper/Documents/Model Deck Architecture' \
+  && PYTHONPATH=python:python/src /tmp/md-b18-venv/bin/python -B -m unittest \
+  python.tests.provider_cursor.test_fake_sdk_process
 ```
 
 ```bash
@@ -154,8 +173,8 @@ cd '/Users/brytoncooper/Documents/Model Deck Architecture' \
 
 The isolated V2 route has live proof for Composer 2.5, tool-driven editing,
 checks, follow-up context, local cancellation, token usage, and owned-process
-cleanup. The compatibility broker is still packaged from the retained legacy
-root; moving its SDK install/update mechanics wholly behind the new package is
-remaining original B14 work. Provider-native continuation handles remain B15;
-V2 follow-up preserves context through Codex and starts a new SDK generation on
-the same route.
+cleanup. The package-owned no-network gate supplies the original B14 fixture
+proof without repeating a live request. Local process cleanup cannot confirm
+remote Cursor termination, and unavailable SDK cost remains unknown.
+Provider-native continuation handles remain B15; V2 follow-up preserves context
+through Codex and starts a new SDK generation on the same route.

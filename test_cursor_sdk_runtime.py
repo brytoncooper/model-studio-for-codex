@@ -32,7 +32,7 @@ with runtime._isolated_control_input() as commands:
         result = subprocess.run([sys.executable, "-c", program],
             input='{"command":"start"}\n{"command":"tool_result"}\n',
             capture_output=True, text=True, timeout=10, check=True,
-            cwd=Path(runtime.__file__).parent)
+            cwd=Path(__file__).parent)
         self.assertEqual(json.loads(result.stdout), {"blocking": True, "inheritable": False,
             "commands": [{"command": "start"}, {"command": "tool_result"}]})
 
@@ -127,6 +127,20 @@ with runtime._isolated_control_input() as commands:
             result = runtime.status()
         self.assertFalse(result["installed"])
         self.assertEqual(result["required_version"], "1.0.31")
+
+    def test_package_runtime_preserves_the_legacy_support_location(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / "Library/Application Support/Codex OpenRouter"
+            legacy.mkdir(parents=True)
+            marker = legacy / "cursor-sdk"
+            marker.mkdir()
+
+            selected = runtime._support_directory(directory)
+
+            current = Path(directory) / "Library/Application Support/Model Deck"
+            self.assertEqual(selected, current)
+            self.assertTrue((current / "cursor-sdk").is_dir())
+            self.assertFalse(legacy.exists())
 
     def test_catalog_credentials_only_go_in_stdin(self):
         expected = {"ok": True, "models": [{"id": "cursor/model", "name": "Model"}], "message": "Loaded"}

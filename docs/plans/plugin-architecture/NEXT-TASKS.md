@@ -195,11 +195,13 @@ the original slice.
 - **Delivered:** application-owned Cursor profile and V2 composition, pinned
   interpreter verification, real Composer 2.5 tool/edit/test and follow-up
   proof, locally accepted interruption, committed token usage, and exact broker
-  cleanup.
-- **Remaining:** move retained broker install/update mechanics behind the
-  package-owned root and add the original discriminative fake-SDK process gate.
-- **Non-goals:** New Cursor features, SDK installation changes, live requests, or
-  continuation storage.
+  cleanup. The Cursor package now owns the broker and atomic SDK install/update
+  behavior; the no-network real-process gate covers account/reasoning/Fast,
+  callback identity/results, truncation, parallel isolation, active-run reuse,
+  feature isolation, cancellation, and teardown.
+- **Remaining:** None for B14.
+- **Non-goals:** New Cursor features, a live SDK installation, or provider-native
+  continuation storage (B15).
 - **Parallelism:** Can run with A1-A5 and V1-V2.
 - **Stop condition:** Any provider-port or host-context contract change returns
   to the primary agent.

@@ -173,7 +173,6 @@ class CliV2ProviderServeTests(unittest.TestCase):
         load_mock.assert_called_once_with(config)
         compose_mock.assert_called_once_with(
             profile,
-            broker_script=Path(__file__).resolve().parents[3] / "cursor_sdk_runtime.py",
             route_definition_factory=mock.ANY,
         )
         self.assertIs(build_mock.call_args.kwargs["provider_execution"], provider_execution)

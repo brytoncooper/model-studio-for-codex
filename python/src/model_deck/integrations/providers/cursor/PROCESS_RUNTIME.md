@@ -20,8 +20,9 @@ CursorProcessRuntime(
 ```
 
 `configuration.compose_cursor_profile` injects the profile-selected SDK broker,
-payload helper, and usage normalizer. The V2 application root supplies the
-retained compatibility broker script. Prepared payload is detached and forwarded unchanged, including
+payload helper, and usage normalizer. The broker and its atomic pinned-SDK
+installation/update behavior are owned by this package. Prepared payload is
+detached and forwarded unchanged, including
 model, API key, tools, message, reasoning, and service tier. Preparation supplies
 trusted missing context: instructions, host/thread metadata, credential scope,
 format/tool-choice settings and aliases. It must preserve encrypted-input and
@@ -70,14 +71,16 @@ received during rejected/failed forwarding raises a protocol error and leaves
 the tool outstanding. SDK tool payloads retain their wrapper for validation;
 published engine tool events use flat call_id/tool_name/arguments fields.
 
-## Checks and remaining work
+## Checks
 
 ```sh
-PYTHONPATH=src python -B -m unittest tests.provider_cursor.test_coordinator tests.provider_cursor.test_process_runtime
+PYTHONPATH=src python -B -m unittest tests.provider_cursor.test_coordinator tests.provider_cursor.test_process_runtime tests.provider_cursor.test_fake_sdk_process
 ```
 
-Run from `python/`. Tests use fake injected queues/processes plus one temporary
-SQLite engine integration. Separate isolated V2 qualification covers the real
-SDK subprocess, credentials, tools, continuation, cancellation, and usage. A
-hung injected cleanup can leave its daemon thread running; the
-adapter cannot prove termination beyond the injected process's contract.
+Run from `python/`. Tests use fake injected queues/processes, a real package
+broker subprocess backed by the no-network fake SDK, and one temporary SQLite
+engine integration. Separate isolated V2 qualification covers the real SDK
+subprocess, credentials, tools, Codex-thread follow-up, cancellation, and usage.
+A hung injected cleanup can leave its daemon thread running; the adapter cannot
+prove termination beyond the injected process's contract. Provider-native
+continuation remains B15.

@@ -62,12 +62,9 @@ class CursorConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             profile = self._profile(root)
-            broker = root / "broker.py"
-            broker.write_text("", encoding="utf-8")
 
             coordinator, routes = compose_cursor_profile(
                 profile,
-                broker_script=broker,
                 route_definition_factory=lambda **values: values,
             )
 
