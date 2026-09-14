@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/export.start.output.schema.json",
+  "type": "object",
+  "required": [
+    "job_id",
+    "state"
+  ],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "running"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

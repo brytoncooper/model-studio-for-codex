@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from uuid import uuid4
 
 from model_deck.adapters.transport.rendezvous import load_rendezvous_file
 from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
+from model_deck.adapters.platform.macos.extension_lease import ExtensionEngineLease
+from model_deck.adapters.platform.macos.instance_lock import FileInstanceLock
+from model_deck.adapters.storage.sqlite_extension_lifecycle import SQLiteExtensionLifecycleRepository
+from model_deck.adapters.storage.sqlite_plugin_jobs import SQLitePluginJobRepository
+from model_deck.adapters.storage.sqlite_versioned_plugin_data import SQLiteVersionedPluginDataStore
 from model_deck.bootstrap import build_engine_server
 from model_deck.engine.server import EngineServer
+from model_deck.engine.jobs import GetJobCommand, JobState
 from model_deck.plugins.authoring import pack_project_archive
-from model_deck.plugins.external_host import ExternalExtensionHost
+from model_deck.plugins.external_host import ExternalExtensionHost, HostDependencies
 from model_deck_contracts.paths import repo_root
 
 
@@ -111,7 +118,15 @@ class ExternalExtensionTransportTests(unittest.TestCase):
         filtered_operations = self._call(session, 51, "engine.v1.operations.list", {
             "plugin_id": "org.example.notebook",
         })["result"]["operations"]
-        self.assertEqual(len(filtered_operations), 6)
+        filtered_ids = {item["operation_id"] for item in filtered_operations}
+        self.assertTrue({
+            "org.example.notebook.notes.create",
+            "org.example.notebook.notes.list",
+            "org.example.notebook.notes.get",
+            "org.example.notebook.notes.update",
+            "org.example.notebook.notes.delete",
+            "org.example.notebook.export.start",
+        }.issubset(filtered_ids))
         self.assertTrue(all(
             item["operation_id"].startswith("org.example.notebook.")
             for item in filtered_operations
@@ -177,6 +192,83 @@ class ExternalExtensionTransportTests(unittest.TestCase):
         })["result"]["output"]
         self.assertEqual(after_conflict["body"], "Edited twice")
 
+        for index in range(40):
+            self._call(session, 100 + index, "engine.v1.operations.invoke", {
+                "operation": "org.example.notebook.notes.create",
+                "input": {
+                    "title": f"Export note {index}",
+                    "body": f"Durable export body {index}",
+                    "metadata": {},
+                },
+                "idempotency_key": f"export-note-{index}",
+            })["result"]
+
+        cancelled_export = self._call(
+            session,
+            200,
+            "engine.v1.operations.invoke",
+            {
+                "operation": "org.example.notebook.export.start",
+                "input": {},
+                "idempotency_key": "export-cancelled",
+            },
+        )["result"]
+        cancelled_job_id = cancelled_export["job_id"]
+        self.assertEqual(cancelled_export["output"]["job_id"], cancelled_job_id)
+        cancel_acknowledgement = self._call(
+            session,
+            201,
+            "engine.v1.jobs.cancel",
+            {
+                "job_id": cancelled_job_id,
+                "idempotency_key": "cancel-export",
+            },
+        )["result"]
+        self.assertTrue(cancel_acknowledgement["accepted"])
+        cancelled_snapshot = self._wait_for_job_terminal(
+            session, cancelled_job_id, request_id_start=210
+        )
+        self.assertEqual(cancelled_snapshot["state"], "cancelled")
+        self.assertNotIn("output", cancelled_snapshot)
+
+        completed_export = self._call(
+            session,
+            300,
+            "engine.v1.operations.invoke",
+            {
+                "operation": "org.example.notebook.export.start",
+                "input": {},
+                "idempotency_key": "export-completed",
+            },
+        )["result"]
+        completed_snapshot = self._wait_for_job_terminal(
+            session, completed_export["job_id"], request_id_start=310
+        )
+        self.assertEqual(completed_snapshot["state"], "completed")
+        self.assertEqual(completed_snapshot["progress"], 1.0)
+        self.assertEqual(completed_snapshot["output"]["media_type"], "text/markdown")
+        self.assertEqual(
+            completed_snapshot["output"]["suggested_filename"],
+            "session-notebook.md",
+        )
+        markdown = completed_snapshot["output"]["content"]
+        self.assertIn("# Session Notebook", markdown)
+        self.assertIn("## First", markdown)
+        self.assertIn("Edited twice", markdown)
+        self.assertIn("## Export note 39", markdown)
+
+        interrupted_export = self._call(
+            session,
+            400,
+            "engine.v1.operations.invoke",
+            {
+                "operation": "org.example.notebook.export.start",
+                "input": {},
+                "idempotency_key": "export-interrupted",
+            },
+        )["result"]
+        interrupted_job_id = interrupted_export["job_id"]
+
         current = self._call(session, 9, "engine.v1.extensions.get", {
             "extension_id": "org.example.notebook",
         })["result"]
@@ -193,9 +285,56 @@ class ExternalExtensionTransportTests(unittest.TestCase):
         after_disable = self._call(session, 12, "engine.v1.operations.list", {})["result"]["operations"]
         self.assertNotIn("org.example.notebook.notes.create", [item["operation_id"] for item in after_disable])
 
+        interrupted_snapshot = self._call(
+            session,
+            401,
+            "engine.v1.jobs.get",
+            {"job_id": interrupted_job_id},
+        )["result"]
+        self.assertEqual(interrupted_snapshot["state"], "interrupted")
+        self.assertNotIn("output", interrupted_snapshot)
+
         self._runtime.server.stop()
-        reopened = ExternalExtensionHost(extension_state, artifact_root=extension_artifacts)
+        reopened = ExternalExtensionHost(extension_state, artifact_root=extension_artifacts,
+            dependencies=HostDependencies(SQLiteExtensionLifecycleRepository,
+                lambda path: SQLitePluginJobRepository(path, checkpoint_validator=lambda _s, _v: None),
+                SQLiteVersionedPluginDataStore, FileInstanceLock, ExtensionEngineLease))
         reopened.close()
+        persisted_jobs = SQLitePluginJobRepository(
+            extension_state / "host.sqlite3",
+            checkpoint_validator=lambda _schema, _value: None,
+        )
+        self.assertEqual(
+            persisted_jobs.get(GetJobCommand(interrupted_job_id)).state,
+            JobState.INTERRUPTED,
+        )
+
+    def _wait_for_job_terminal(
+        self,
+        session,
+        job_id: str,
+        *,
+        request_id_start: int,
+    ) -> dict:
+        deadline = time.monotonic() + 5.0
+        request_id = request_id_start
+        while time.monotonic() < deadline:
+            snapshot = self._call(
+                session,
+                request_id,
+                "engine.v1.jobs.get",
+                {"job_id": job_id},
+            )["result"]
+            if snapshot["state"] in {
+                "completed",
+                "failed",
+                "cancelled",
+                "interrupted",
+            }:
+                return snapshot
+            request_id += 1
+            time.sleep(0.01)
+        self.fail(f"job {job_id} did not reach a terminal state")
 
     def test_external_extensions_are_opt_in_and_require_distinct_application_state(self) -> None:
         arguments = dict(

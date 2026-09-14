@@ -53,6 +53,7 @@ LIST_NOTES = "org.example.notebook.notes.list"
 UPDATE_NOTE = "org.example.notebook.notes.update"
 DELETE_NOTE = "org.example.notebook.notes.delete"
 PREVIEW_EXPORT = "org.example.notebook.export.preview"
+START_EXPORT = "org.example.notebook.export.start"
 
 STORAGE_GET = "plugin.v1.broker.storage.get"
 STORAGE_LIST = "plugin.v1.broker.storage.list"
@@ -96,6 +97,10 @@ OPERATION_SCHEMA_FILES = {
     PREVIEW_EXPORT: (
         "schemas/export.preview.input.schema.json",
         "schemas/export.preview.output.schema.json",
+    ),
+    START_EXPORT: (
+        "schemas/export.start.input.schema.json",
+        "schemas/export.start.output.schema.json",
     ),
 }
 
@@ -341,10 +346,12 @@ class RunningNotebook:
 class PackageContractTests(unittest.TestCase):
     def test_archive_manifest_schemas_panels_and_isolated_worker_are_valid(self) -> None:
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(manifest["permissions"], ["storage.own"])
+        self.assertEqual(
+            sorted(manifest["permissions"]),
+            sorted(["storage.own", "jobs.own"]),
+        )
         self.assertNotIn("session", json.dumps(manifest["permissions"]))
         self.assertNotIn("transcript", json.dumps(manifest["permissions"]))
-        self.assertNotIn("jobs.own", manifest["permissions"])
 
         declared_operations = {
             operation["id"]: operation
@@ -460,6 +467,11 @@ class PackageContractTests(unittest.TestCase):
             "schemas/export.preview.output.schema.json": {
                 "markdown": "# Session Notebook\n",
                 "note_count": 0,
+            },
+            "schemas/export.start.input.schema.json": {},
+            "schemas/export.start.output.schema.json": {
+                "job_id": "33333333-3333-4333-8333-333333333333",
+                "state": "running",
             },
         }
         self.assertEqual(set(schemas) - {"schemas/note.schema.json"}, set(representative_values))
@@ -695,6 +707,141 @@ class RealStorageBrokerTests(unittest.TestCase):
             all(method.startswith("plugin.v1.broker.storage.") for method, _ in notebook.broker_calls)
         )
 
+
+class ExportProgressOrderingTests(unittest.TestCase):
+    """Direct unit tests for the export worker thread.
+
+    These tests drive ``SessionNotebookWorker._run_export`` against a captured
+    broker call sequence to verify that ``progress(1.0)`` always precedes
+    ``complete`` — ordering a complete first would terminalize the job and
+    send the trailing progress call into the failure branch.
+    """
+
+    def setUp(self) -> None:
+        self.worker_module = _load_worker_module()
+
+    def _build_worker(
+        self,
+        captured: list[tuple[str, dict[str, Any]]],
+        *,
+        complete_raises: bool = False,
+        notes: list[dict[str, Any]] | None = None,
+    ) -> Any:
+        worker = self.worker_module.SessionNotebookWorker(
+            channel=self.worker_module.ProtocolChannel(),
+        )
+        # Avoid the worker actually invoking the channel; we stub storage
+        # directly so we only observe jobs.broker.* traffic.
+        notes = notes if notes is not None else [
+            {
+                "note_id": "22222222-2222-4222-8222-222222222222",
+                "title": "Alpha",
+                "body": "alpha body",
+                "metadata": {},
+            }
+        ]
+
+        def fake_call_jobs(method, params):
+            captured.append((method, dict(params)))
+            if method == self.worker_module.JOBS_COMPLETE and complete_raises:
+                raise self.worker_module.BrokerCallError("synthetic complete failure")
+            if method == self.worker_module.JOBS_CHECK_CANCELLED:
+                return {"cancelled": False}
+            if method == self.worker_module.JOBS_PROGRESS:
+                return {"recorded": True}
+            return {}
+
+        def fake_list_notes(invocation_handle):
+            return notes
+
+        def fake_load_note(note_id, invocation_handle):
+            return next(note for note in notes if note["note_id"] == note_id)
+
+        worker._call_jobs = fake_call_jobs  # type: ignore[assignment]
+        worker._list_notes = fake_list_notes  # type: ignore[assignment]
+        worker._load_note = fake_load_note  # type: ignore[assignment]
+        worker._allowed_broker_methods = frozenset(self.worker_module._JOBS_METHODS)
+        worker._state = "active"
+        worker._activation_id = "ordering-test"
+        return worker
+
+    def test_progress_one_zero_appears_before_complete_in_broker_sequence(self) -> None:
+        captured: list[tuple[str, dict[str, Any]]] = []
+        worker = self._build_worker(captured)
+
+        job_id = "11111111-1111-4111-8111-111111111111"
+        worker._run_export(job_id, "handle")
+
+        method_sequence = [method for method, _ in captured]
+        self.assertIn(self.worker_module.JOBS_PROGRESS, method_sequence)
+        self.assertIn(self.worker_module.JOBS_COMPLETE, method_sequence)
+
+        progress_positions = [
+            index for index, method in enumerate(method_sequence)
+            if method == self.worker_module.JOBS_PROGRESS
+        ]
+        complete_position = method_sequence.index(self.worker_module.JOBS_COMPLETE)
+
+        # Every progress call must precede complete; 1.0 in particular.
+        self.assertTrue(
+            all(position < complete_position for position in progress_positions),
+            f"progress calls after complete would terminalize the job: {method_sequence}",
+        )
+        terminal_progress = [
+            params["progress"] for method, params in captured
+            if method == self.worker_module.JOBS_PROGRESS
+        ]
+        self.assertEqual(terminal_progress[-1], 1.0)
+
+        method_sequence = [method for method, _ in captured]
+        self.assertIn(self.worker_module.JOBS_PROGRESS, method_sequence)
+        self.assertIn(self.worker_module.JOBS_COMPLETE, method_sequence)
+
+        progress_positions = [
+            index for index, method in enumerate(method_sequence)
+            if method == self.worker_module.JOBS_PROGRESS
+        ]
+        complete_position = method_sequence.index(self.worker_module.JOBS_COMPLETE)
+
+        # Every progress call must precede complete; 1.0 in particular.
+        self.assertTrue(
+            all(position < complete_position for position in progress_positions),
+            f"progress calls after complete would terminalize the job: {method_sequence}",
+        )
+        terminal_progress = [
+            params["progress"] for method, params in captured
+            if method == self.worker_module.JOBS_PROGRESS
+        ]
+        self.assertEqual(terminal_progress[-1], 1.0)
+
+    def test_complete_failure_does_not_emit_follow_up_progress(self) -> None:
+        """If ``jobs.complete`` raises, the worker must not then try progress(1.0)."""
+        captured: list[tuple[str, dict[str, Any]]] = []
+        worker = self._build_worker(captured, complete_raises=True)
+
+        job_id = "11111111-1111-4111-8111-111111111111"
+        worker._run_export(job_id, "handle")
+
+        # The captured sequence must show progress(1.0) immediately before
+        # complete, and complete must be the final successful call (fail may
+        # follow when complete raises).
+        method_sequence = [method for method, _ in captured]
+        self.assertEqual(
+            method_sequence[-1],
+            self.worker_module.JOBS_FAIL,
+            f"expected fail to follow complete failure, got {method_sequence}",
+        )
+        progress_positions = [
+            index for index, method in enumerate(method_sequence)
+            if method == self.worker_module.JOBS_PROGRESS
+        ]
+        complete_position = method_sequence.index(self.worker_module.JOBS_COMPLETE)
+        self.assertTrue(
+            all(position < complete_position for position in progress_positions),
+            "progress after complete would corrupt the terminal transition",
+        )
+        fail_position = method_sequence.index(self.worker_module.JOBS_FAIL)
+        self.assertGreater(fail_position, complete_position)
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,7 @@ LIST_NOTES = "org.example.notebook.notes.list"
 UPDATE_NOTE = "org.example.notebook.notes.update"
 DELETE_NOTE = "org.example.notebook.notes.delete"
 PREVIEW_EXPORT = "org.example.notebook.export.preview"
+START_EXPORT = "org.example.notebook.export.start"
 LIST_PANEL = "org.example.notebook.list"
 EDITOR_PANEL = "org.example.notebook.editor"
 
@@ -32,6 +33,17 @@ STORAGE_GET = "plugin.v1.broker.storage.get"
 STORAGE_LIST = "plugin.v1.broker.storage.list"
 STORAGE_PUT = "plugin.v1.broker.storage.put"
 STORAGE_DELETE = "plugin.v1.broker.storage.delete"
+
+JOBS_CREATE = "plugin.v1.broker.jobs.create"
+JOBS_PROGRESS = "plugin.v1.broker.jobs.progress"
+JOBS_COMPLETE = "plugin.v1.broker.jobs.complete"
+JOBS_FAIL = "plugin.v1.broker.jobs.fail"
+JOBS_CHECK_CANCELLED = "plugin.v1.broker.jobs.check_cancelled"
+_JOBS_METHODS = frozenset(
+    {JOBS_CREATE, JOBS_PROGRESS, JOBS_COMPLETE, JOBS_FAIL, JOBS_CHECK_CANCELLED}
+)
+EXPORT_SUGGESTED_FILENAME = "session-notebook.md"
+EXPORT_MEDIA_TYPE = "text/markdown"
 
 INVENTORY_HELLO = "plugin.v1.hello"
 INVENTORY_ACTIVATE = "plugin.v1.activate"
@@ -334,6 +346,11 @@ class SessionNotebookWorker:
         self._allowed_broker_methods: frozenset[str] = frozenset()
         self._stopped = False
         self._panel_revision = 0
+        # Per-job deterministic test barriers. Production never populates these;
+        # tests can install an Event for a known job_id to pause the export
+        # worker thread between progress points so cancel races can be observed.
+        self._export_barriers: dict[str, threading.Event] = {}
+        self._export_threads: dict[str, threading.Thread] = {}
 
     def serve(self) -> None:
         while not self._stopped:
@@ -491,9 +508,17 @@ class SessionNotebookWorker:
                 }
             }
         panel = self._panel_for(operation_id, output)
-        result = {"output": output}
+        result: dict[str, Any] = {"output": output}
         if panel is not None:
             result["panel"] = panel
+        # START_EXPORT returns a durable job_id that the host must expose
+        # generically at the top level of the invoke response so native UI
+        # can read it without parsing plugin-specific output. The lifecycle
+        # invoke result schema permits a top-level ``job_id`` field.
+        if operation_id == START_EXPORT:
+            job_id = output.get("job_id")
+            if type(job_id) is str and job_id:
+                result["job_id"] = job_id
         return result
 
     def _panel_for(
@@ -546,6 +571,15 @@ class SessionNotebookWorker:
                 "kind": "button",
                 "label": "Refresh notes",
                 "operation_id": LIST_NOTES,
+                "params": {},
+            }
+        )
+        children.append(
+            {
+                "id": "export_markdown",
+                "kind": "button",
+                "label": "Export Markdown",
+                "operation_id": START_EXPORT,
                 "params": {},
             }
         )
@@ -621,6 +655,9 @@ class SessionNotebookWorker:
                 "markdown": format_notes_as_markdown(notes),
                 "note_count": len(notes),
             }
+        if operation_id == START_EXPORT:
+            _require_exact_object(invocation_input, required=frozenset())
+            return self._start_export(invocation_handle)
         raise NotebookInputError()
 
     def _call_storage(
@@ -638,6 +675,150 @@ class SessionNotebookWorker:
             "invocation_handle": invocation_handle,
             "namespace": PLUGIN_ID,
         }
+
+    def _call_jobs(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method not in _JOBS_METHODS:
+            raise NotebookInputError()
+        if method not in self._allowed_broker_methods:
+            raise BrokerCallError()
+        return self._channel.call_broker(method, params)
+
+    def _start_export(self, invocation_handle: str) -> dict[str, Any]:
+        """Start an async Markdown export over the stored notes.
+
+        Synchronously creates a durable job via the jobs broker, then spawns
+        a worker thread that reports progress, polls cancel, and either
+        completes with the bounded Markdown envelope or exits when
+        ``jobs.check_cancelled`` confirms CANCELLED. The returned ``job_id``
+        is the durable public identifier used by ``engine.jobs.get`` /
+        ``engine.jobs.cancel``.
+        """
+        created = self._call_jobs(
+            JOBS_CREATE,
+            {
+                "invocation_handle": invocation_handle,
+                "operation_id": START_EXPORT,
+            },
+        )
+        job_id = created.get("job_id")
+        if type(job_id) is not str:
+            raise BrokerCallError()
+        try:
+            uuid.UUID(job_id)
+        except (ValueError, AttributeError, TypeError):
+            raise BrokerCallError()
+        thread = threading.Thread(
+            target=self._run_export,
+            args=(job_id, invocation_handle),
+            name=f"session-notebook-export-{job_id}",
+            daemon=True,
+        )
+        self._export_threads[job_id] = thread
+        thread.start()
+        return {"job_id": job_id, "state": "running"}
+
+    def _wait_for_test_barrier(self, job_id: str) -> None:
+        """Block on the per-job test barrier if one is installed.
+
+        Production never installs barriers; the dict is empty. Tests inject
+        ``threading.Event`` instances to pause the worker thread between
+        progress points so a cancel racing the export can be observed
+        deterministically.
+        """
+        barrier = self._export_barriers.get(job_id)
+        if barrier is not None:
+            barrier.wait()
+
+    def _report_progress(self, job_id: str, progress: float) -> None:
+        self._call_jobs(
+            JOBS_PROGRESS,
+            {"job_id": job_id, "progress": progress},
+        )
+
+    def _check_cancelled(self, job_id: str) -> bool:
+        result = self._call_jobs(JOBS_CHECK_CANCELLED, {"job_id": job_id})
+        return bool(result.get("cancelled"))
+
+    def _complete_export(
+        self,
+        job_id: str,
+        output: dict[str, Any] | None,
+    ) -> None:
+        if output is None:
+            self._call_jobs(JOBS_COMPLETE, {"job_id": job_id})
+        else:
+            self._call_jobs(JOBS_COMPLETE, {"job_id": job_id, "output": output})
+
+    def _run_export(self, job_id: str, invocation_handle: str) -> None:
+        """Worker thread: produce the Markdown envelope or exit on cancel.
+
+        Sequence:
+        1. report_progress(0.0); check_cancelled.
+        2. list stored notes (storage.list); check_cancelled.
+        3. For each note: load via storage.get; check_cancelled.
+        4. Build Markdown via ``format_notes_as_markdown``.
+        5. report_progress(1.0); check_cancelled.
+        6. jobs.complete(output_present=True, output=envelope).
+
+        Cancellation is durable: ``jobs.check_cancelled`` is the public
+        worker acknowledgement point. If it observes cancel_requested it
+        atomically terminalizes the job to CANCELLED, and the worker exits
+        without producing output. The deterministic test barrier is honored
+        at every progress checkpoint.
+        """
+        try:
+            self._report_progress(job_id, 0.0)
+            self._wait_for_test_barrier(job_id)
+            if self._check_cancelled(job_id):
+                return
+            listed_notes = self._list_notes(invocation_handle)
+            self._wait_for_test_barrier(job_id)
+            if self._check_cancelled(job_id):
+                return
+            notes: list[dict[str, Any]] = []
+            total = len(listed_notes)
+            for index, listed_note in enumerate(listed_notes):
+                notes.append(
+                    self._load_note(listed_note["note_id"], invocation_handle)
+                )
+                progress = 0.1 + (0.8 * (index + 1) / total)
+                self._report_progress(job_id, progress)
+                self._wait_for_test_barrier(job_id)
+                if self._check_cancelled(job_id):
+                    return
+            markdown = format_notes_as_markdown(notes)
+            envelope = {
+                "media_type": EXPORT_MEDIA_TYPE,
+                "suggested_filename": EXPORT_SUGGESTED_FILENAME,
+                "content": markdown,
+            }
+            # Order matters: progress(1.0) must run before complete because
+            # complete terminalizes the job and any subsequent broker call
+            # would fall through into the failure branch (terminal conflict).
+            self._report_progress(job_id, 1.0)
+            self._wait_for_test_barrier(job_id)
+            if self._check_cancelled(job_id):
+                return
+            self._complete_export(job_id, envelope)
+        except NotebookInputError:
+            self._fail_export(job_id, "invalid_argument")
+        except BrokerCallError:
+            self._fail_export(job_id, "plugin_unavailable")
+        except Exception:
+            self._fail_export(job_id, "internal")
+        finally:
+            self._export_threads.pop(job_id, None)
+            self._export_barriers.pop(job_id, None)
+
+    def _fail_export(self, job_id: str, code: str) -> None:
+        try:
+            self._call_jobs(
+                JOBS_FAIL,
+                {"job_id": job_id, "error": {"code": code, "retryable": False}},
+            )
+        except BrokerCallError:
+            pass
+
 
     def _create_note(
         self,

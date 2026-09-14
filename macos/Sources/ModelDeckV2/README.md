@@ -121,14 +121,43 @@ tool dispatch occurs.
 4. Enter a title and body, choose **Save note**, then edit and save repeatedly.
 5. Select the list panel and choose **Refresh notes** to see actual note rows.
 6. Open a row to load the current title, body, and revision into the editor.
-7. Quit and reopen V2 with the same state root to continue with the same data.
-8. Choose **Disable** to remove the extension's panels and operations. Enabling
+7. Choose **Export Markdown**. The generic job view shows the job identity,
+   state, and progress. **Request cancel** records intent; keep observing until
+   the worker reports the terminal `cancelled` state.
+8. Start another export and let it complete. The selectable result JSON contains
+   `media_type`, `suggested_filename`, and the exported Markdown `content`.
+9. Quit and reopen V2 with the same state root to continue with the same data.
+10. Choose **Disable** to remove the extension's panels and operations. Enabling
    it again restores access to the retained plugin-owned data.
 
 Panel IDs, operation IDs, fields, and action parameters remain opaque to the
 app. Returned panel documents are validated and update the current generic
 renderer; stale operation conflicts appear in the status line without replacing
 the editor with unvalidated state.
+
+## Generic jobs.get / jobs.cancel
+
+`EngineExtensionPanelService` exposes the typed `getJob(jobID:)` and
+`cancelJob(jobID:idempotencyKey:)` methods that wrap the frozen
+`engine.v1.jobs.get` and `engine.v1.jobs.cancel` RPCs. Both methods are
+plugin-agnostic: they never parse the persisted output envelope or map
+plugin-specific fields. The result is a `JobSnapshot` whose `output`
+field is the raw `JSONValue` (or `nil` when storage has no record for
+the job); an explicit JSON `null` is preserved as `.null`.
+
+When `invokeOperation` returns a non-`nil` `result.jobID`, `V2WorkspaceController`
+presents a `JobObservationViewController` child that:
+
+- shows "Running" or "Queued" status with a progress bar,
+- keeps the label "Cancel requested…" until a subsequent poll observes
+  a terminal state (`completed`, `failed`, `cancelled`, `interrupted`),
+- renders the canonical JSON envelope verbatim once the job is
+  terminal — no plugin-specific string formatting.
+
+`cancelJob` returns the server-side acknowledgement only; the controller
+must not claim termination until `getJob` reports a terminal state. The
+controller runs its own polling loop on a 0.4s timer; presentation tests apply
+deterministic job snapshots without adding production delays.
 
 ## Limitations
 

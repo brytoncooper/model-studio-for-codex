@@ -23,6 +23,8 @@ final class V2WorkspaceController: NSViewController {
     private var panels: [ExtensionPanelContribution] = []
     private var availableOperationIDs: Set<String> = []
     private var renderer: PanelRenderer?
+
+    private var jobObservers: [String: JobObservationViewController] = [:]
     private var preferredExtensionID: String?
 
     override func loadView() {
@@ -263,16 +265,61 @@ final class V2WorkspaceController: NSViewController {
                     operationID: intent.operationID,
                     input: .object(intent.params)
                 )
+                let document: PanelDocument
                 if let panel = result.panel {
-                    return try Self.decodePanel(panel)
+                    document = try Self.decodePanel(panel)
+                } else {
+                    document = try Self.decodePanel(service.fetchPanel(panelID: intent.panelID))
                 }
-                return try Self.decodePanel(service.fetchPanel(panelID: intent.panelID))
+                return (document, result.jobID)
             },
-            success: { [weak self] document in
-                self?.display(document: document)
-                self?.statusLabel.stringValue = "Action completed."
+            success: { [weak self] outcome in
+                guard let self else { return }
+                let (document, jobID) = outcome
+                self.display(document: document)
+                if let jobID {
+                    self.presentJobObservation(jobID: jobID)
+                    self.statusLabel.stringValue = "Action started async job \(jobID)."
+                } else {
+                    self.statusLabel.stringValue = "Action completed."
+                }
             }
         )
+    }
+
+    /// Presents a bounded observation child controller for ``jobID``. The
+    /// controller drives its own polling via ``engine.v1.jobs.get`` and
+    /// offers a single "Request cancel" button. We never parse plugin output
+    /// here — the child renders the canonical JSON envelope verbatim.
+    private func presentJobObservation(jobID: String) {
+        if let existing = jobObservers[jobID] {
+            view.window?.makeFirstResponder(existing.view)
+            return
+        }
+        guard let service else { return }
+        let controller = JobObservationViewController(
+            jobID: jobID,
+            service: service,
+            onDismiss: { [weak self] in self?.removeJobObserver(jobID: jobID) }
+        )
+        addChild(controller)
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        panelContainer.addSubview(controller.view)
+        NSLayoutConstraint.activate([
+            controller.view.leadingAnchor.constraint(equalTo: panelContainer.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: panelContainer.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: panelContainer.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: panelContainer.bottomAnchor),
+        ])
+        jobObservers[jobID] = controller
+        placeholderLabel.isHidden = true
+        controller.beginObservation()
+    }
+
+    private func removeJobObserver(jobID: String) {
+        guard let controller = jobObservers.removeValue(forKey: jobID) else { return }
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
     }
 
     private func display(document: PanelDocument) {

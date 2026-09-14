@@ -20,6 +20,13 @@
         "params": {}
       },
       {
+        "id": "export_markdown",
+        "kind": "button",
+        "label": "Export Markdown",
+        "operation_id": "org.example.notebook.export.start",
+        "params": {}
+      },
+      {
         "id": "note_id",
         "kind": "text_input",
         "value": "",

@@ -11,7 +11,8 @@
     "path": "plugin.py"
   },
   "permissions": [
-    "storage.own"
+    "storage.own",
+    "jobs.own"
   ],
   "contributes": {
     "operations": [
@@ -50,6 +51,12 @@
         "input_schema": "schemas/export.preview.input.schema.json",
         "output_schema": "schemas/export.preview.output.schema.json",
         "effect": "read"
+      },
+      {
+        "id": "org.example.notebook.export.start",
+        "input_schema": "schemas/export.start.input.schema.json",
+        "output_schema": "schemas/export.start.output.schema.json",
+        "effect": "write"
       }
     ],
     "panels": [

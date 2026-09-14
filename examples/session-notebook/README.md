@@ -3,8 +3,8 @@
 Session Notebook is an independently packaged, standard-library-only Python
 plugin. It stores user-authored notes through Model Deck's scoped storage
 broker and exposes generic operations for create, get, list, update, delete,
-and deterministic Markdown preview. The worker never imports Model Deck engine
-code and uses standard input/output as its only I/O channel.
+preview, and asynchronous Markdown export. The worker never imports Model Deck
+engine code and uses standard input/output as its only I/O channel.
 
 ## What this slice proves
 
@@ -20,10 +20,14 @@ code and uses standard input/output as its only I/O channel.
 - Stored note metadata remains ordinary JSON. Values such as `false`, `null`,
   empty strings, arrays, and nested objects are not coerced.
 - Starting a new activation over the same owned storage retains the notes.
+- Export runs as a durable application-owned job. It reports progress, checks
+  cancellation at real work boundaries, and persists a bounded JSON result
+  containing the completed Markdown.
 
-The manifest requests only `storage.own`. It requests no session metadata,
-transcript, content, network, credential, attachment, or job permission.
-Manual notes therefore work when the host has no session metadata capability.
+The manifest requests `storage.own` and `jobs.own`. It requests no session
+metadata, transcript, content, network, credential, attachment, or filesystem
+permission. Manual notes therefore work when the host has no session metadata
+capability.
 
 ## Operations
 
@@ -35,25 +39,42 @@ Manual notes therefore work when the host has no session metadata capability.
 | `org.example.notebook.notes.update` | write | `note_id`, `expected_revision`, full `title`, `body`, optional `metadata` |
 | `org.example.notebook.notes.delete` | write | `note_id`, `expected_revision` |
 | `org.example.notebook.export.preview` | read | empty object |
+| `org.example.notebook.export.start` | write | empty object |
 
 Notes use `notes/<uuid>` keys. Listing is deliberately capped at the frozen
 storage wire's 200-item limit because that wire has no cursor. Update first
 reads the note, then performs compare-and-swap; a deleted note is not silently
 recreated. Delete likewise verifies that the note exists before applying CAS.
 
-`export.preview` returns Markdown synchronously. It is a deterministic format
-proof, not the planned cancellable export job. The current host has no complete
-job wire, public job cancellation service, or export-result attachment seam.
+`export.preview` retains the small synchronous preview. `export.start` creates a
+durable job and immediately returns its UUID. The worker reads the actual stored
+notes, reports monotonic progress, checks cancellation between broker-backed
+work steps, and completes with this generic bounded result:
+
+```json
+{
+  "media_type": "text/markdown",
+  "suggested_filename": "session-notebook.md",
+  "content": "# Session Notebook\n..."
+}
+```
+
+The result is retrieved through public `engine.v1.jobs.get`; cancellation is
+requested through `engine.v1.jobs.cancel`. A successful cancel request is only
+an acknowledgement until a later read reports `cancelled`. No plugin-selected
+path or broad filesystem access is involved. Interrupted jobs are not replayed
+automatically, and explicit resume remains future B19 work.
 
 ## Panels
 
 `panels/notebook-list.json` and `panels/notebook-editor.json` are the initial
 `ui.panel.v1` documents. Notebook operations may return a newer validated panel
 document beside their ordinary output. Refresh returns real note rows with
-per-note Open actions. Create and Open return a populated editor; each successful
-Save returns another editor whose update action carries the note's new current
-revision, so the same note can be edited repeatedly. A stale revision returns a
-recoverable conflict and leaves the stored note unchanged.
+per-note Open actions plus the generic **Export Markdown** action. Create and
+Open return a populated editor; each successful Save returns another editor
+whose update action carries the note's new current revision, so the same note
+can be edited repeatedly. A stale revision returns a recoverable conflict and
+leaves the stored note unchanged.
 
 Installed resources are served through `engine.v1.ui.*`. Native clients decode
 both fetched and action-returned documents with the generic immutable decoder,
@@ -84,9 +105,10 @@ PYTHONPATH=python/src /tmp/md-b18-venv/bin/python -m unittest discover \
 ```
 
 The suite packages and validates this directory, validates every local schema
-and panel resource, launches `plugin.py` with Python isolated mode, and composes
-the real process runtime, authority, storage wire adapter, data broker, and
-temporary SQLite repository.
+and panel resource, launches `plugin.py` with Python isolated mode, and exercises
+the export worker's progress-before-terminal and cancellation checkpoints. The
+focused engine integration suites compose the real process runtime, authority,
+storage/job wire adapters, public job use cases, and temporary SQLite state.
 
 ## Isolated installed-plugin walkthrough
 
@@ -146,7 +168,9 @@ swift build --package-path macos --scratch-path "$DEMO_ROOT/swift-build" \
 ```
 
 Enter the id of a revision-1 note, change its title/body, and choose **Update
-fresh note**. Stop only the isolated engine with Control-C, rerun the same
+fresh note**. Select the list panel, choose **Export Markdown**, and use the
+generic job view to observe progress, request cancellation, and inspect a
+completed result. Stop only the isolated engine with Control-C, rerun the same
 `engine serve` command, and invoke `notes.get` to confirm the edit survived.
 Use `plugin get` to obtain the current revision before `plugin disable`; after
 disable, invoking a Notebook operation returns `plugin_unavailable` while the
@@ -157,8 +181,7 @@ owned SQLite note data is retained for a later re-enable.
 The commands above remain the low-level CLI and panel-demo walkthrough. The
 [Model Deck V2 application guide](../../macos/Sources/ModelDeckV2/README.md)
 documents the normal isolated app flow: app-owned engine startup, generic
-install and enable, dynamic list and repeated editing, clean quit, reopen, and
-disable with retained data. Neither path installs or replaces the shipping app.
-
-Cancellable export jobs and optional session metadata remain outside this
-example and must be added through their owning public contracts.
+install and enable, dynamic list and repeated editing, cancellable export with
+retrievable output, clean quit, reopen, and disable with retained data. Neither
+path installs or replaces the shipping app. Optional session metadata and
+package update/re-enable preservation remain future B22 work.
