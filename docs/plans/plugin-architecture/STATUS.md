@@ -16,13 +16,14 @@ narrow milestone does not close a broader workstream.
 
 ## Result
 
-- **Complete:** 8
-- **Implemented; verification remaining:** 3
-- **Integration or implementation remaining:** 16
+- **Complete:** 13
+- **Implemented; verification remaining:** 2
+- **Integration or implementation remaining:** 12
 - **Blocked:** 1
 - **Scope decision required:** 0
 
-The completed workstreams are B00, B01, B02, B03, B08, B12, B13, and B24. B24 is complete
+The completed workstreams are B00, B01, B02, B03, B06, B07, B08, B09,
+B12, B13, B14, B15, and B24. B24 is complete
 because its original deliverable was a feasibility investigation and decision,
 not a mandatory production sandbox. The decision is to ship trusted executable
 mode only unless a separately qualified restricted helper/profile is later
@@ -39,7 +40,7 @@ requested; no restricted-mode claim is made.
 | B04 | Swift module extraction with staged app parity | **Implemented; verification remaining** | [Swift package](../../../macos/Package.swift), [app target](../../../macos/Sources/ModelDeckApp/README.md), [stager](../../../scripts/package/README.md) | Run one isolated release stage proving compilation, expected executable/assets/resource bundles, original self-test mapping, and helper-byte/signature behavior. No installation or launch is required. | Prepared helper/vendor fixtures; B26 owns the aggregate package gate |
 | B05 | Models screen on typed engine client | **Implemented; verification remaining** | [client](../../../macos/Sources/ModelDeckClient/README.md), [presenter tests](../../../macos/Tests/ModelDeckPresentationTests/Models/ModelCatalogPresenterTests.swift), root app wiring | Record one Swift-client-to-Python-fixture run plus the loading/ready/empty/failure/unavailable, stale-generation, search/selection, and keyboard checks. | Isolated Swift/Python fixture |
 | B06 | MCP convergence on application use cases | **Complete** | [MCP adapter](../../../python/src/model_deck/integrations/clients/mcp/README.md), engine-backed add/remove/display-name/list tests, and staged stdio entrypoint proof against an authenticated isolated engine | None for original B06. Benchmark refresh remains B16 and legacy fallback remains selected when engine paths are absent. | None |
-| B07 | Revisioned connection/model transactions | **Implemented; verification remaining** | [connections](../../../python/src/model_deck/engine/connections/README.md), SQLite repositories, focused tests, and active-run removal proof through the public socket API | Run one shared fake/SQLite repository conformance contract. Removal now rejects new admission while the already-admitted deterministic run completes on its unchanged captured route. | None |
+| B07 | Revisioned connection/model transactions | **Complete** | The shared [repository conformance suite](../../../python/tests/engine/test_repository_conformance.py) runs the same lifecycle, stable-identity, revision-conflict, exact-replay/payload-conflict, detached-read, reference-only-record, and deterministic competing-update cases against behaviorally accurate fakes and SQLite. SQLite-only persistence/outbox/rollback coverage remains separate. The public socket test still proves removal rejects new admission while the already-admitted run completes on its captured route. | None | None |
 | B08 | Deterministic redacted legacy-import preview | **Complete** | [preview guide](../../../python/src/model_deck/integrations/hosts/codex/migration_preview/README.md), [preview tests](../../../python/tests/integrations/hosts/codex/test_migration_preview.py); all 36 deterministic-repeat, hash, collision, malformed/foreign/symlink, preservation, and secret-redaction cases passed with `TMPDIR=/private/tmp` | None; apply/rollback is B11. | None |
 | B09 | Conflict-aware host projection/outbox reconciliation | **Complete** | [projection composition](../../../python/src/model_deck/integrations/hosts/codex/projection_composition/README.md), bootstrap/dispatch coordinator, persisted status, and isolated full-path tests for add/rename/connection fanout/remove/restart/foreign conflict recovery | None for original B09. Live Codex launch/reload compatibility remains B10 and live migration/cutover remains B11. | None |
 | B10 | Codex host adapter and compatibility profile | **Implementation remaining** | [Codex bridge primitives](../../../python/src/model_deck/integrations/hosts/codex/bridge.py), legacy bridge/runtime tests | Extract and compose app-server discovery/mapping/launch preparation, compatibility tri-state and unknown-version refusal; prove projection, cancellation ownership, per-process overrides, and host-bound subscription behavior with a fake app-server. The V2 loopback Responses bridge is narrower evidence. | B09 projection composition |
@@ -99,6 +100,18 @@ requested; no restricted-mode claim is made.
   `41,009 / 575 / 20,480` figures were not found in committed evidence and are
   therefore not substituted. Remote termination remains unconfirmed where the
   terminal is `run.interrupted`.
+- B07 repository conformance passed six shared behavior methods against both
+  the behavioral fake and a temporary SQLite repository, plus one public-record
+  shape guard. The adjacent SQLite repository suites and the active-route
+  removal test remain the persistence, transaction/outbox, and admitted-run
+  evidence that a nonpersistent fake cannot represent.
+- The two reported provider-bootstrap failures were
+  `test_injected_provider_receives_admitted_route_tools_and_socket_callbacks`
+  and `test_cancel_and_restart_keep_application_recovery_and_caller_ownership`.
+  A later shutdown composition had incorrectly closed a caller-owned injected
+  `ProviderExecutionPort`; bootstrap now shuts down only the engine-owned
+  external extension host. The complete provider-bootstrap and shutdown slice
+  passed 13 tests after the repair.
 - B15's deterministic integrated fixture crosses the loopback Codex bridge,
   real engine/socket admission, OpenAI-compatible execution, private SQLite
   continuation, a provider-private tool call/result, streamed compaction and a
@@ -129,6 +142,13 @@ Current delivery checks:
 - The final durable cancellation-idempotency repair passed 41 focused job,
   SQLite, and real-socket tests; a principal/key now replays its stored result
   and conflicts if reused for another job.
+- From baseline revision `f97401b210b5a5c2d1a56c0e9624ef5c6804c67b`,
+  `tests.engine.test_repository_conformance` passed 7 methods; the provider
+  bootstrap/shutdown slice passed 13 tests; the OpenAI-compatible provider
+  discovery suite passed 197 tests; and the integrated Python command covering
+  the original broad suite plus repository, SQLite, and shutdown modules passed
+  230 tests. `scripts/architecture_check.py` scanned 213 files with no findings,
+  and `scripts/generate_contracts.py --check` confirmed 200 synchronized schemas.
 - The architecture scan moved from 204 files/11 errors to 205 files/zero errors
   and zero warnings; focused boundary behavior passed 59 tests plus 8 subtests.
 - Targeted native job observation passed 8 tests. The combined Swift run found

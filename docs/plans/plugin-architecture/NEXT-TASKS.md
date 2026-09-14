@@ -124,8 +124,16 @@ the original slice.
 
 ### V2 - Connection/model repository conformance
 
-- **Outcome:** Existing B07 behavior is either closed or reduced to a reproduced
-  defect.
+**Completed 2026-09-14.** Six shared behavioral methods now exercise the model
+and connection lifecycle, stable identity, revision conflicts, exact replay,
+changed-payload conflicts, detached reads, and deterministic competing updates
+against both behavioral fakes and temporary SQLite repositories. A seventh
+method guards the reference-only public record shapes. SQLite-only
+persistence/outbox/rollback tests remain separate, and the public socket
+removal scenario still proves a captured route completes while new admission
+fails. B07 is closed.
+
+- **Outcome:** Existing B07 behavior is closed by shared fake/SQLite conformance.
 - **Original workstreams covered:** B07.
 - **Ownership:** Shared conformance fixture and focused repository/run tests only.
 - **Reuse:** Existing fake repositories, SQLite repositories, idempotency cases,

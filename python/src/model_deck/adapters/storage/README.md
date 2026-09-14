@@ -73,6 +73,7 @@ From `python/`, using Python 3.11 or newer with the project dependencies install
 
 ```sh
 PYTHONPATH=src python -B -m unittest \
+    tests.engine.test_repository_conformance \
     tests.engine.test_sqlite_host_settings tests.engine.test_sqlite_extension_lifecycle \
     tests.engine.test_sqlite_model_repository tests.engine.test_sqlite_connection_repository \
     tests.engine.test_sqlite_session_run_repository tests.engine.test_sqlite_plugin_jobs \
