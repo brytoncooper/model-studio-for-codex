@@ -182,38 +182,17 @@ def _snapshot_provider_routes(routes: Mapping[str, ProviderRouteDefinition]) -> 
 
 def _compose_shutdown_callback(
     external_extension_host: object | None,
-    provider_execution: object | None,
 ) -> Callable[[], None] | None:
-    """Compose a single shutdown callback for the engine server.
+    """Return shutdown for the engine-owned extension host, when present.
 
-    Closes the external extension host (when present) and the injected
-    provider execution in that order. Either may be ``None`` or may lack
-    a ``close`` callable; missing steps are skipped silently. The first
-    error raised by either step is preserved and re-raised after both
-    steps have been attempted so callers see the same failure mode as the
-    existing single-source shutdown. The returned callable is a plain
-    function and is safe to invoke repeatedly.
+    Injected provider execution ports are borrowed from the caller and are
+    intentionally absent from this callback.
     """
-    parts: list[Callable[[], None]] = []
-    if external_extension_host is not None and callable(getattr(external_extension_host, "close", None)):
-        parts.append(external_extension_host.close)
-    if provider_execution is not None and callable(getattr(provider_execution, "close", None)):
-        parts.append(provider_execution.close)
-    if not parts:
+    if external_extension_host is None or not callable(
+        getattr(external_extension_host, "close", None)
+    ):
         return None
-
-    def _run() -> None:
-        first_error: BaseException | None = None
-        for close_fn in parts:
-            try:
-                close_fn()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
-        if first_error is not None:
-            raise first_error
-
-    return _run
+    return external_extension_host.close
 
 
 def build_engine_server(
@@ -523,7 +502,7 @@ def build_engine_server(
         rendezvous_payload_builder=rendezvous_payload_builder,
         rendezvous_publish=rendezvous_publish,
         startup_callback=startup_callback,
-        shutdown_callback=_compose_shutdown_callback(external_extension_host, provider_execution),
+        shutdown_callback=_compose_shutdown_callback(external_extension_host),
     )
     return EngineRuntime(
         server=server,
