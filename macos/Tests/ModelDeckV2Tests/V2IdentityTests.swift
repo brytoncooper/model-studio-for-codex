@@ -14,13 +14,18 @@ final class V2IdentityTests: XCTestCase {
         XCTAssertEqual(configuration.paths.applicationState.path, canonicalRoot.appendingPathComponent("application-state").path)
         XCTAssertEqual(configuration.paths.applicationArtifacts.path, canonicalRoot.appendingPathComponent("application-artifacts").path)
         XCTAssertEqual(configuration.paths.sockets.path, canonicalRoot.appendingPathComponent("sockets").path)
+        XCTAssertEqual(
+            configuration.paths.managedCodexAgents.path,
+            canonicalRoot.appendingPathComponent("codex-harness/codex-home/agents").path
+        )
         XCTAssertEqual(configuration.paths.extensionState.path, canonicalRoot.appendingPathComponent("extension-state").path)
         XCTAssertEqual(configuration.paths.extensionArtifacts.path, canonicalRoot.appendingPathComponent("extension-artifacts").path)
         XCTAssertEqual(Set(configuration.paths.directories.map(\.path)).count, configuration.paths.directories.count)
     }
 
     func testEngineArgumentsUseOnlyV2Paths() {
-        let arguments = makeConfiguration().engineArguments
+        let configuration = makeConfiguration()
+        let arguments = configuration.engineArguments
 
         XCTAssertEqual(Array(arguments.prefix(5)), ["-B", "-m", "model_deck.cli.main", "engine", "serve"])
         XCTAssertTrue(arguments.contains("--enable-application-state"))
@@ -28,6 +33,7 @@ final class V2IdentityTests: XCTestCase {
         let canonicalRoot = stateRoot
         XCTAssertTrue(arguments.contains(canonicalRoot.appendingPathComponent("application-state").path))
         XCTAssertTrue(arguments.contains(canonicalRoot.appendingPathComponent("extension-state").path))
+        XCTAssertTrue(arguments.contains(configuration.paths.managedCodexAgents.path))
         XCTAssertFalse(arguments.contains("--rendezvous"))
     }
 
@@ -35,6 +41,17 @@ final class V2IdentityTests: XCTestCase {
         let arguments = makeConfiguration().engineArguments
         XCTAssertFalse(arguments.contains("--provider-config"))
         XCTAssertFalse(arguments.contains("--enable-codex-bridge"))
+        XCTAssertFalse(arguments.contains("--enable-codex-projection"))
+    }
+
+    func testEngineArgumentsEnableProjectionWhenProviderIsConfigured() {
+        let configuration = V2RuntimeConfiguration(
+            stateRoot: stateRoot,
+            pythonExecutable: python,
+            resourceRoot: resources,
+            providerConfig: URL(fileURLWithPath: "/tmp/provider.json")
+        )
+        XCTAssertTrue(configuration.engineArguments.contains("--enable-codex-projection"))
     }
 
     func testEngineEnvironmentIsExplicitAndSanitized() {
@@ -140,6 +157,33 @@ final class V2IdentityTests: XCTestCase {
             try linkedConfiguration.validateStateRootSafety(homeDirectory: URL(fileURLWithPath: "/Users/example"))
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: realParent.appendingPathComponent("v2-state").path))
+    }
+
+    func testPrepareDirectoriesCreatesManagedCodexParentChain() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+        let configuration = V2RuntimeConfiguration(
+            stateRoot: temporaryRoot.appendingPathComponent("state", isDirectory: true),
+            pythonExecutable: python,
+            resourceRoot: resources
+        )
+
+        try configuration.validateStateRootSafety(
+            homeDirectory: URL(fileURLWithPath: "/Users/example")
+        )
+        try configuration.prepareDirectories()
+
+        var isDirectory = ObjCBool(false)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: configuration.paths.managedCodexAgents.path,
+                isDirectory: &isDirectory
+            )
+        )
+        XCTAssertTrue(isDirectory.boolValue)
     }
 
     private func makeConfiguration() -> V2RuntimeConfiguration {

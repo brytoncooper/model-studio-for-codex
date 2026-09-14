@@ -35,7 +35,7 @@ struct V2RuntimePaths: Equatable, Sendable {
     let applicationState: URL
     let applicationArtifacts: URL
     let sockets: URL
-    let emptyLegacyAgents: URL
+    let managedCodexAgents: URL
     let extensionState: URL
     let extensionArtifacts: URL
     let logs: URL
@@ -63,7 +63,7 @@ struct V2RuntimePaths: Equatable, Sendable {
             applicationState,
             applicationArtifacts,
             sockets,
-            emptyLegacyAgents,
+            managedCodexAgents,
             extensionState,
             extensionArtifacts,
             logs,
@@ -88,7 +88,10 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
             applicationState: root.appendingPathComponent("application-state", isDirectory: true),
             applicationArtifacts: root.appendingPathComponent("application-artifacts", isDirectory: true),
             sockets: root.appendingPathComponent("sockets", isDirectory: true),
-            emptyLegacyAgents: root.appendingPathComponent("legacy-agents-empty", isDirectory: true),
+            managedCodexAgents: root.appendingPathComponent(
+                "codex-harness/codex-home/agents",
+                isDirectory: true
+            ),
             extensionState: root.appendingPathComponent("extension-state", isDirectory: true),
             extensionArtifacts: root.appendingPathComponent("extension-artifacts", isDirectory: true),
             logs: root.appendingPathComponent("logs", isDirectory: true),
@@ -191,7 +194,7 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
             } else {
                 try fileManager.createDirectory(
                     at: directory,
-                    withIntermediateDirectories: false,
+                    withIntermediateDirectories: true,
                     attributes: [.posixPermissions: 0o700]
                 )
             }
@@ -247,14 +250,14 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
             "--state-root", paths.applicationState.path,
             "--artifact-root", paths.applicationArtifacts.path,
             "--socket-root", paths.sockets.path,
-            "--legacy-agents-dir", paths.emptyLegacyAgents.path,
+            "--legacy-agents-dir", paths.managedCodexAgents.path,
             "--enable-application-state",
             "--enable-extensions",
             "--extension-state-root", paths.extensionState.path,
             "--extension-artifact-root", paths.extensionArtifacts.path,
         ]
         if let providerConfig {
-            args += ["--provider-config", providerConfig.path, "--enable-codex-bridge", "--codex-bridge-descriptor", paths.applicationState.appendingPathComponent("engine/codex-bridge.json").path, "--codex-bridge-token", paths.applicationState.appendingPathComponent("engine/codex-bridge-token").path, "--codex-bridge-state", paths.applicationState.appendingPathComponent("engine/codex-host-state.json").path]
+            args += ["--provider-config", providerConfig.path, "--enable-codex-projection", "--enable-codex-bridge", "--codex-bridge-descriptor", paths.applicationState.appendingPathComponent("engine/codex-bridge.json").path, "--codex-bridge-token", paths.applicationState.appendingPathComponent("engine/codex-bridge-token").path, "--codex-bridge-state", paths.applicationState.appendingPathComponent("engine/codex-host-state.json").path]
         }
         return args
     }

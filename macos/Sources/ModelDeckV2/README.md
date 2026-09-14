@@ -40,6 +40,29 @@ The engine receives a small explicit environment and the bundled engine source
 on `PYTHONPATH`. V2 installs no launch agent or background service and does not
 read or modify live Model Deck or Codex state.
 
+## Isolated model management
+
+Launching with `--provider-config` enables the Model management controls and
+the Codex managed-agent projection. The configured connection can be added or
+revision-updated, and models can be registered, renamed, or removed through the
+typed native client. The app refreshes committed connection/model state and
+shows the engine's host projection status (`ready`, `pending`, or `failed`).
+
+The engine writes managed TOML only below
+`STATE_ROOT/codex-harness/codex-home/agents`. A rename changes the managed
+agent's human-facing description without changing its provider model identity
+or stable filename. Connection saves atomically re-drive only models owned by
+that connection. A foreign file at the target path is preserved and reports a
+failed projection; after the user removes or relocates that foreign file, a new
+public model revision retries delivery. Restart reconciliation is idempotent.
+
+For MCP qualification, start `model_deck_mcp.py` with the V2 engine's explicit
+`MODEL_DECK_ENGINE_RENDEZVOUS_PATH` and
+`MODEL_DECK_ENGINE_CREDENTIAL_PATH`. The stdio `add_model`,
+`set_display_name`, `remove_model`, and `list_added_models` tools then use the
+same engine operations as the native controls. Do not point these variables at
+the live app's files.
+
 ## Isolated Codex coding workflow
 
 The coding proof uses the actual Codex CLI, not Codex Desktop. The helper gives
@@ -210,6 +233,9 @@ OpenAI-compatible route and serial tool calls only; parallel tool-call responses
 are rejected rather than truncated. Codex Desktop UI integration,
 live-provider opaque reasoning/compaction qualification, provider-reported cost, marketplace,
 signing, distribution, bundled Python, and live-app cutover are not qualified.
+Actual Codex process reload/discovery remains a B10 qualification; this
+milestone verifies the isolated managed-agent files and engine status, not live
+Codex Desktop behavior.
 Normal quit drains and reaps the engine and extension workers. The final
 SIGKILL fallback is deliberately scoped to the known engine PID; a deliberately
 nonresponsive extension that survives closed stdio could require a future exact

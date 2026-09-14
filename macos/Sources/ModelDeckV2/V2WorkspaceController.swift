@@ -17,6 +17,7 @@ final class V2WorkspaceController: NSViewController {
     private let codingLabel = NSTextField(wrappingLabelWithString: "Coding route unavailable")
     private let usageLabel = NSTextField(wrappingLabelWithString: "Usage not loaded")
     private let refreshUsageButton = NSButton()
+    private let modelManagementController = ModelManagementViewController()
 
     private var service: EngineExtensionPanelService?
     private var usageService: EngineUsageService?
@@ -46,6 +47,9 @@ final class V2WorkspaceController: NSViewController {
         let usageControls = NSStackView(views: [refreshUsageButton, usageLabel])
         usageControls.spacing = 8
         root.addArrangedSubview(usageControls)
+
+        addChild(modelManagementController)
+        root.addArrangedSubview(modelManagementController.view)
 
         let extensionControls = NSStackView()
         extensionControls.orientation = .horizontal
@@ -106,6 +110,20 @@ final class V2WorkspaceController: NSViewController {
         self.usageService = usageService
         codingLabel.stringValue = bridgeSummary.map { "Coding route: \($0.provider) / \($0.model) — \($0.billing)" } ?? "Coding route unavailable"
         refreshUsageRequested()
+    }
+
+    func attachModelManagement(
+        connectionService: EngineConnectionService,
+        modelService: EngineModelRegistrationService,
+        projectionService: EngineHostProjectionStatusService,
+        configuredRoute: V2ConfiguredModelRoute?
+    ) {
+        modelManagementController.attach(
+            connectionService: connectionService,
+            modelService: modelService,
+            projectionService: projectionService,
+            configuredRoute: configuredRoute
+        )
     }
 
     @objc private func refreshUsageRequested() {

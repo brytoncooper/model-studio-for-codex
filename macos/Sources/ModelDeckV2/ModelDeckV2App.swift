@@ -67,12 +67,39 @@ final class ModelDeckV2App: NSObject, NSApplicationDelegate {
                         transport: UnixSocketEngineTransport(socketPath: descriptor.socketPath),
                         credentialProvider: EngineFileCredentialProvider(credentialURL: connectionFiles.credential)
                     )
+                    let connectionService = EngineConnectionService(
+                        rendezvous: descriptor,
+                        transport: UnixSocketEngineTransport(socketPath: descriptor.socketPath),
+                        credentialProvider: EngineFileCredentialProvider(credentialURL: connectionFiles.credential)
+                    )
+                    let modelService = EngineModelRegistrationService(
+                        rendezvous: descriptor,
+                        transport: UnixSocketEngineTransport(socketPath: descriptor.socketPath),
+                        credentialProvider: EngineFileCredentialProvider(credentialURL: connectionFiles.credential)
+                    )
+                    let projectionService = EngineHostProjectionStatusService(
+                        rendezvous: descriptor,
+                        transport: UnixSocketEngineTransport(socketPath: descriptor.socketPath),
+                        credentialProvider: EngineFileCredentialProvider(credentialURL: connectionFiles.credential)
+                    )
+                    let configuredRoute = try configuration.providerConfig.map {
+                        try V2ConfiguredModelRoute.load(from: $0)
+                    }
                     try service.connect()
                     try usageService.connect()
+                    try connectionService.connect()
+                    try modelService.connect()
+                    try projectionService.connect()
                     DispatchQueue.main.async { [weak self] in
                         guard self?.terminationRequested == false else { return }
                         self?.workspaceController.attach(service: service)
                         self?.workspaceController.attach(usageService: usageService, bridgeSummary: connectionFiles.bridgeSummary)
+                        self?.workspaceController.attachModelManagement(
+                            connectionService: connectionService,
+                            modelService: modelService,
+                            projectionService: projectionService,
+                            configuredRoute: configuredRoute
+                        )
                     }
                 } catch {
                     DispatchQueue.main.async { [weak self] in

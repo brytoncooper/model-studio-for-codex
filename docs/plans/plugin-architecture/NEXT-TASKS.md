@@ -142,6 +142,11 @@ the original slice.
 
 ### A4 - Projection composition and connection fanout
 
+**Completed 2026-09-14.** Bootstrap and dispatch now compose the existing
+consumer and durable stores. Isolated full-path acceptance covers connection
+fanout, conflict persistence/recovery, removal, and restart. Follow-on host
+compatibility belongs to B10.
+
 - **Outcome:** Committed model/connection mutations reconcile to managed fixture
   TOML with durable receipts and conflict-safe rollback.
 - **Original workstreams covered:** B09; unlocks B10 and B11.
@@ -160,6 +165,11 @@ the original slice.
   external edits returns to the primary agent.
 
 ### A5 - MCP mutation convergence
+
+**Completed 2026-09-14.** With explicit isolated engine paths, the actual
+stdio entrypoint routes registered reads plus add/remove/display-name mutations
+through authenticated engine operations. The staged source-independent fixture
+reaches the same projection; absent paths retain the legacy rollback route.
 
 - **Outcome:** MCP reads and available writes use application operations without
   duplicate storage authority.
