@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import stat
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -108,6 +110,28 @@ class PrepareCodingProviderTests(unittest.TestCase):
 
 
 class IsolatedCodexEnvironmentTests(unittest.TestCase):
+    def test_cancellation_timer_starts_after_codex_thread_is_ready(self) -> None:
+        module = _load_script(CODEX_SCRIPT, "run_isolated_codex_timer")
+        process = SimpleNamespace(
+            stdout=io.StringIO(
+                '\n'.join([
+                    '{"type":"thread.started","thread_id":"thread-1"}',
+                    '{"type":"turn.started"}',
+                ])
+                + '\n'
+            )
+        )
+        observed: list[str] = []
+
+        conversation_id = module._stream_codex_output(
+            process,
+            output=io.StringIO(),
+            on_thread_started=lambda: observed.append("ready"),
+        )
+
+        self.assertEqual(conversation_id, "thread-1")
+        self.assertEqual(observed, ["ready"])
+
     def test_environment_and_config_are_confined_to_acceptance_root(self) -> None:
         module = _load_script(CODEX_SCRIPT, "run_isolated_codex")
         with tempfile.TemporaryDirectory() as temporary_directory:

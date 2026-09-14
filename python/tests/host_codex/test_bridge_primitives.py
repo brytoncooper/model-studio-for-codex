@@ -4,6 +4,7 @@ import http.client
 import json
 import socket
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,35 @@ class BridgePrimitiveTests(unittest.TestCase):
         self.assertFalse(CodexResponsesBridge._client_disconnected(handler))
         client.close()
         self.assertTrue(CodexResponsesBridge._client_disconnected(handler))
+
+    def test_disconnect_watcher_cancels_before_any_engine_event(self) -> None:
+        server, client = socket.socketpair()
+        self.addCleanup(server.close)
+        handler = SimpleNamespace(connection=server)
+        engine = _FakeEngine()
+        bridge = object.__new__(CodexResponsesBridge)
+        bridge.engine = engine
+        stop = threading.Event()
+        watcher = threading.Thread(
+            target=bridge._cancel_when_client_disconnects,
+            args=(handler, "550e8400-e29b-41d4-a716-446655440099", stop),
+        )
+        watcher.start()
+
+        client.close()
+        watcher.join(timeout=1)
+
+        self.assertFalse(watcher.is_alive())
+        cancel_calls = [
+            params
+            for method, params in engine.calls
+            if method == "engine.v1.runs.cancel"
+        ]
+        self.assertEqual(len(cancel_calls), 1)
+        self.assertEqual(
+            cancel_calls[0]["run_id"],
+            "550e8400-e29b-41d4-a716-446655440099",
+        )
 
     def test_namespace_conversion_is_stable_and_restores_alias(self) -> None:
         tools, aliases = convert_tools([

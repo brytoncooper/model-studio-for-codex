@@ -102,15 +102,16 @@ ChatGPT subscription allowance. The profile stores only an opaque executable
 credential reference; secrets are resolved inside the engine and are never
 written into the generated profile.
 
-On 2026-09-13 the disposable coding run read its project, executed Codex shell
-tools, changed subtraction to addition, recovered from an unavailable `python`
-command, and passed `python3 -m unittest test_calculator.py`. A second turn used
+On 2026-09-13 the final reviewed build's disposable coding run read its project,
+executed Codex shell tools, changed subtraction to addition, and passed
+`python3 -m unittest test_calculator -v`. A second turn used
 the same Codex thread and engine session. The completed coding run recorded
-32,408 input tokens, 326 output tokens, and 23,680 cached input tokens across
+32,453 input tokens, 509 output tokens, and 12,800 cached input tokens across
 its serial provider segments. Provider billing cost was not reported, so V2
-does not invent one. A separate cancelled run recorded one `run.cancelling`
-and one `run.cancelled`; the local stream was closed, while remote provider
-termination remains unconfirmed.
+does not invent one. Cancellation records one local cancellation transition and
+exactly one terminal outcome (`run.cancelled` when provider closure is observed,
+or `run.interrupted` when remote termination remains unconfirmed); no subsequent
+tool dispatch occurs.
 
 ## Session Notebook walkthrough
 

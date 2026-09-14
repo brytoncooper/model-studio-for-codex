@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from typing import TextIO
 import urllib.parse
 
@@ -151,6 +152,7 @@ def _stream_codex_output(
     process: subprocess.Popen[str],
     *,
     output: TextIO,
+    on_thread_started: Callable[[], None] | None = None,
 ) -> str | None:
     conversation_id = None
     assert process.stdout is not None
@@ -165,6 +167,9 @@ def _stream_codex_output(
             candidate = event.get("thread_id")
             if isinstance(candidate, str) and candidate:
                 conversation_id = candidate
+                if on_thread_started is not None:
+                    on_thread_started()
+                    on_thread_started = None
     return conversation_id
 
 
@@ -233,11 +238,23 @@ def run_codex(
         text=True,
         encoding="utf-8",
     )
-    timer = None
-    if cancel_after_seconds is not None:
-        timer = _start_interrupt_timer(process, cancel_after_seconds)
+    timer: threading.Timer | None = None
+
+    def start_cancellation_timer() -> None:
+        nonlocal timer
+        if cancel_after_seconds is not None:
+            timer = _start_interrupt_timer(process, cancel_after_seconds)
+
     try:
-        conversation_id = _stream_codex_output(process, output=sys.stdout)
+        conversation_id = _stream_codex_output(
+            process,
+            output=sys.stdout,
+            on_thread_started=(
+                start_cancellation_timer
+                if cancel_after_seconds is not None
+                else None
+            ),
+        )
         return_code = process.wait()
     finally:
         if timer is not None:

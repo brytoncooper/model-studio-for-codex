@@ -325,13 +325,25 @@ class CodexResponsesBridge:
                 run_id = str(started.get("run", started)["run_id"])
             stage = "event-stream"
             response_started = True
-            self._stream(
-                handler,
-                run_id,
-                aliases,
-                thread_id=thread_id,
-                after_sequence=after_sequence,
+            disconnect_watch_stop = threading.Event()
+            disconnect_watcher = threading.Thread(
+                target=self._cancel_when_client_disconnects,
+                args=(handler, run_id, disconnect_watch_stop),
+                daemon=True,
             )
+            disconnect_watcher.start()
+            try:
+                self._stream(
+                    handler,
+                    run_id,
+                    aliases,
+                    thread_id=thread_id,
+                    after_sequence=after_sequence,
+                    disconnect_watch_stop=disconnect_watch_stop,
+                )
+            finally:
+                disconnect_watch_stop.set()
+                disconnect_watcher.join(timeout=0.2)
             if resumed_call_id is not None:
                 self._forget_pending(resumed_call_id)
         except (CodexInputNormalizationError, ToolConversionError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
@@ -376,6 +388,7 @@ class CodexResponsesBridge:
         *,
         thread_id: str,
         after_sequence: int | None,
+        disconnect_watch_stop: threading.Event,
     ) -> None:
         handler.send_response(200)
         handler.send_header("Content-Type", "text/event-stream")
@@ -400,6 +413,8 @@ class CodexResponsesBridge:
                         thread_id=thread_id,
                     )
             response_events, segment_done = translator.translate(engine_event)
+            if segment_done:
+                disconnect_watch_stop.set()
             for event in response_events:
                 self._write_event(handler, event)
             if segment_done:
@@ -463,6 +478,17 @@ class CodexResponsesBridge:
             self.engine.call("engine.v1.runs.cancel", {"run_id": run_id, "idempotency_key": f"codex-cancel-{run_id}"})
         except Exception:
             pass
+
+    def _cancel_when_client_disconnects(
+        self,
+        handler: BaseHTTPRequestHandler,
+        run_id: str,
+        stop: threading.Event,
+    ) -> None:
+        while not stop.wait(0.05):
+            if self._client_disconnected(handler):
+                self._cancel_once(run_id)
+                return
 
     @staticmethod
     def _read_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
