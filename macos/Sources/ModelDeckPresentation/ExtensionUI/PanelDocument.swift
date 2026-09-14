@@ -52,6 +52,11 @@ public enum PanelDocumentLimits {
     static let jsonValueStringMaxScalars = 1 << 20
     static let jsonValueArrayMaxItems = 4096
     static let jsonValueObjectMaxKeys = 1024
+
+    /// IEEE-754 safe integer maximum (2^53 - 1). Shared upper bound so the
+    /// value survives exact round-trip through JSON, JavaScript, JSON-RPC,
+    /// Swift Int, and Python int without coercion across every consumer.
+    static let revisionMax: Int = 9_007_199_254_740_991
 }
 
 /// Validated declarative panel tree.
@@ -659,25 +664,34 @@ private struct _Validator {
     }
 
     func decodeRevision(_ value: Any) throws -> Int {
+        // Decodes a JSON integer revision whose shared upper bound is
+        // IEEE-754 safe integer maximum (2^53 - 1). The bound is
+        // enforced exactly here without coercion: a value above the
+        // shared bound rejects as `.revisionOutOfRange` so a stale or
+        // out-of-range counter cannot survive in the native panel
+        // codec. The bound is owned by `PanelDocumentLimits.revisionMax`
+        // and mirrors `contracts/common/types.schema.json#/definitions/revision`.
         guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else {
             throw PanelDocumentError.invalidJSON
         }
         if let revision = n as? Int {
-            if revision < 0 {
+            if revision < 0 || revision > PanelDocumentLimits.revisionMax {
                 throw PanelDocumentError.revisionOutOfRange
             }
             return revision
         }
 
         let numericValue = n.doubleValue
-        if numericValue.isFinite,
-           numericValue.rounded(.towardZero) != numericValue {
+        if !numericValue.isFinite {
             throw PanelDocumentError.invalidJSON
         }
-        if numericValue.isFinite {
+        if numericValue.rounded(.towardZero) != numericValue {
+            throw PanelDocumentError.invalidJSON
+        }
+        if numericValue < 0 || numericValue > Double(PanelDocumentLimits.revisionMax) {
             throw PanelDocumentError.revisionOutOfRange
         }
-        throw PanelDocumentError.invalidJSON
+        return Int(numericValue)
     }
 
     func decodeState(_ value: Any) throws -> PanelState {

@@ -107,10 +107,11 @@ swift test --package-path macos --scratch-path /tmp/model-deck-panel-build \
 - 1 MiB raw payload ceiling.
 - 16 nesting levels, 256 nodes total, 64 children per stack.
 - 64 `params` keys, 64 `fieldBindings` keys per button.
-- Revisions are bounded to `0...Int.max` by the native snapshot type. The
-  shared schema currently has no equivalent maximum, so larger mathematical
-  integers are rejected as `revisionOutOfRange`; the broader contract/storage
-  alignment remains a separate tracked gap.
+- Revisions are bounded to `0...9_007_199_254_740_991` (IEEE-754 safe
+  integer maximum, 2^53 - 1). This matches the canonical `revision`
+  definition in `contracts/common/types.schema.json` and is enforced
+  identically across JSON, Python, and Swift without coercion. Larger
+  mathematical integers are rejected as `revisionOutOfRange`.
 - 64-deep `JSONValue` nesting with 1 MiB string scalars, 4 096 array
   items, 1 024 object keys.
 - No AppKit / SwiftUI / runtime use; pure Foundation + `ModelDeckContracts`.

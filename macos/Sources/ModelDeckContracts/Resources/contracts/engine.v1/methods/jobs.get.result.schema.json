@@ -23,6 +23,9 @@
       "type": "number",
       "minimum": 0,
       "maximum": 1
+    },
+    "output": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value"
     }
   },
   "required": [

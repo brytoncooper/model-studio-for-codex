@@ -231,5 +231,20 @@ class PanelTreeTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.validator.validate(panel)
 
+    def test_revision_max_boundary_accepted(self) -> None:
+        # IEEE-754 safe integer maximum (2^53 - 1). The shared bound lets
+        # the value survive exact round-trip across JSON, JavaScript,
+        # JSON-RPC, Swift Int, and Python int without coercion.
+        panel = {**_list_panel(), "revision": 9_007_199_254_740_991}
+        # No exception means the validator accepted the exact upper bound.
+        self.validator.validate(panel)
+
+    def test_revision_above_max_boundary_rejected(self) -> None:
+        # One above 2^53 - 1 must reject. The shared bound is exact, not
+        # silently clamped by any consumer.
+        panel = {**_list_panel(), "revision": 9_007_199_254_740_992}
+        with self.assertRaises(Exception):
+            self.validator.validate(panel)
+
 if __name__ == "__main__":
     unittest.main()

@@ -27,7 +27,7 @@ GATES = (
     "all-local",
 )
 
-IMPLEMENTED_GATES = frozenset({"development-guard"})
+IMPLEMENTED_GATES = frozenset({"development-guard", "contracts"})
 PENDING_GATES = tuple(g for g in GATES if g not in IMPLEMENTED_GATES and g != "all-local")
 
 EXIT_GUARD_FAILURE = 1
@@ -83,6 +83,31 @@ def run_development_guard(
     return completed.returncode
 
 
+def run_contracts(
+    root: Path,
+    *,
+    state_root: Path,
+    artifact_root: Path,
+    socket_root: Path | None,
+) -> int:
+    # Run the non-mutating contracts check inside an isolated subprocess
+    # environment. Always invokes `generate_contracts.py --check`; never
+    # propagates writes through this gate.
+    env = isolated_subprocess_env(
+        state_root=state_root,
+        artifact_root=artifact_root,
+        socket_root=socket_root,
+    )
+    command = [
+        sys.executable,
+        "-B",
+        "scripts/generate_contracts.py",
+        "--check",
+    ]
+    completed = subprocess.run(command, cwd=str(root), env=env, check=False)
+    return completed.returncode
+
+
 def run_all_local(
     root: Path,
     *,
@@ -124,6 +149,13 @@ def main(argv: list[str] | None = None) -> int:
     root = repository_root()
     if args.gate == "development-guard":
         return run_development_guard(
+            root,
+            state_root=state_root,
+            artifact_root=artifact_root,
+            socket_root=socket_root,
+        )
+    if args.gate == "contracts":
+        return run_contracts(
             root,
             state_root=state_root,
             artifact_root=artifact_root,

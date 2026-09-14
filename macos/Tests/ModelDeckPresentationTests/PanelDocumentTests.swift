@@ -382,6 +382,36 @@ final class PanelDocumentTests: XCTestCase {
         }
     }
 
+    func testDecode_revisionMaxBoundary_succeeds() throws {
+        // IEEE-754 safe integer maximum (2^53 - 1). The shared upper
+        // bound must be accepted exactly and without coercion in the
+        // native panel codec, mirroring
+        // `contracts/common/types.schema.json#/definitions/revision`.
+        let revision = 9_007_199_254_740_991
+        let payload = """
+        {
+          "panel_id": "example.x", "revision": \(revision), "title": "t", "state": "loading"
+        }
+        """.data(using: .utf8)!
+
+        let document = try PanelDocumentCodec.decode(payload)
+        XCTAssertEqual(document.revision, revision)
+    }
+
+    func testDecode_revisionAboveMaxBoundary_throwsRevisionOutOfRange() {
+        // One above 2^53 - 1 must reject as out-of-range. The native
+        // codec must not silently clamp to the bound.
+        let payload = """
+        {
+          "panel_id": "example.x", "revision": 9007199254740992, "title": "t", "state": "loading"
+        }
+        """.data(using: .utf8)!
+
+        XCTAssertThrowsError(try PanelDocumentCodec.decode(payload)) { error in
+            XCTAssertEqual(error as? PanelDocumentError, .revisionOutOfRange)
+        }
+    }
+
     // MARK: - Node-id and panel-id format
 
     func testDecode_invalidNodeIDFormat_throwsInvalidNodeIDFormat() {

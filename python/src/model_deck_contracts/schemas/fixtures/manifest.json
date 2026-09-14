@@ -127,6 +127,14 @@
     {
       "file": "runs_start_tool_definition.json",
       "schema": "contracts/engine.v1/methods/runs.start.params.schema.json"
+    },
+    {
+      "file": "revision_max_boundary.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/model_list_item_registered"
+    },
+    {
+      "file": "plugin_job_output_minimal.json",
+      "schema": "contracts/plugin.v1/broker/jobs.complete.params.schema.json"
     }
   ],
   "invalid": [
@@ -265,6 +273,14 @@
     {
       "file": "runs_start_empty_name.json",
       "schema": "contracts/engine.v1/methods/runs.start.params.schema.json"
+    },
+    {
+      "file": "revision_above_max_boundary.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/model_list_item_registered"
+    },
+    {
+      "file": "plugin_job_output_over_nested.json",
+      "schema": "contracts/plugin.v1/broker/jobs.complete.params.schema.json"
     }
   ]
 }

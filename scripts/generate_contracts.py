@@ -268,8 +268,7 @@ def sync_schema_bundle() -> None:
         shutil.copy2(inv_src, dest_root / "operations.inventory.json")
 
 def write_generated_manifest() -> None:
-    out_py = REPO_ROOT / "python" / "src" / "model_deck_contracts" / "_generated_inventory.json"
-    out_swift = REPO_ROOT / "macos" / "Sources" / "ModelDeckContracts" / "generated_inventory.json"
+    out_py, out_swift = generated_manifest_paths()
     inv = load_json(INVENTORY)
     text = json.dumps(inv, indent=2, sort_keys=True) + "\n"
     out_py.parent.mkdir(parents=True, exist_ok=True)
@@ -278,11 +277,218 @@ def write_generated_manifest() -> None:
     out_swift.write_text(text, encoding="utf-8")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true", default=True)
-    args = parser.parse_args()
-    errors = []
+def render_generated_manifest_bytes(inventory_path: Path) -> bytes:
+    """Return the exact bytes `write_generated_manifest` emits for the
+    given canonical inventory file. The bundle-parity check compares
+    each generated manifest against this rendered byte sequence so the
+    compare matches what the writer actually produces (sorted keys,
+    indent=2, trailing newline)."""
+    inv = load_json(inventory_path)
+    return (json.dumps(inv, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def bundle_roots() -> tuple[Path, Path, Path, Path, Path]:
+    """Canonical -> bundle relative roots used by sync and by check.
+
+    The intentionally generated resource set is exactly: every
+    `*.schema.json` under `contracts/`, every file under
+    `contracts/fixtures/`, the `contracts/operations.inventory.json`
+    file, and the generated Swift/Python manifest files written from
+    the inventory. Non-generated files such as `README.md` and the
+    `schema-subset.json` policy file remain in `contracts/` only.
+    """
+    py_root = REPO_ROOT / "python" / "src" / "model_deck_contracts" / "schemas"
+    swift_root = REPO_ROOT / "macos" / "Sources" / "ModelDeckContracts" / "Resources"
+    return (
+        REPO_ROOT / "contracts",
+        py_root / "contracts",
+        swift_root / "contracts",
+        py_root / "fixtures",
+        swift_root / "fixtures",
+    )
+
+
+def relative_bundle_path(absolute: Path, bundle_root: Path) -> str:
+    rel = absolute.relative_to(bundle_root)
+    return rel.as_posix()
+
+
+def generated_manifest_paths() -> tuple[Path, Path]:
+    """Return the absolute paths of the Python and Swift generated
+    inventory manifests. Extracted as a helper so tests can monkeypatch
+    it for isolated layouts."""
+    return (
+        REPO_ROOT / "python" / "src" / "model_deck_contracts" / "_generated_inventory.json",
+        REPO_ROOT / "macos" / "Sources" / "ModelDeckContracts" / "generated_inventory.json",
+    )
+
+
+def check_bundle_parity() -> list[str]:
+    """Byte-compare the intentionally generated resources between the
+    canonical tree and each packaged bundle.
+
+    Compares:
+      * every `*.schema.json` under `contracts/` against the same path
+        under each bundle's `contracts/` tree,
+      * every file under `contracts/fixtures/` against the same path
+        under each bundle's `fixtures/` tree,
+      * `contracts/operations.inventory.json` against each bundle copy,
+      * the Python `_generated_inventory.json` and Swift
+        `generated_inventory.json` against the rendered canonical
+        inventory (sorted, indent=2, trailing newline — the exact
+        bytes `write_generated_manifest` emits).
+
+    The intentionally generated resource set is exactly the schema
+    files, fixture files, the inventory, and the two generated
+    manifests. Non-generated files (README, schema-subset) only live
+    under `contracts/` and are NOT required under the bundles.
+
+    Stale extra files under the bundles' schema/fixture trees are
+    reported as parity errors so a stale leftover from a previous
+    write cannot silently survive a non-mutating check.
+
+    Returns a list of mismatch descriptions; empty means parity.
+    """
+    errors: list[str] = []
+    _, py_contracts, swift_contracts, py_fixtures, swift_fixtures = bundle_roots()
+
+    canonical_schemas = sorted(CONTRACTS.rglob("*.schema.json"))
+    canonical_schema_rels = {
+        canonical.relative_to(CONTRACTS).as_posix() for canonical in canonical_schemas
+    }
+    for canonical in canonical_schemas:
+        rel = canonical.relative_to(CONTRACTS).as_posix()
+        for bundle_contracts_root in (py_contracts, swift_contracts):
+            target = bundle_contracts_root / rel
+            label = "python" if bundle_contracts_root == py_contracts else "swift"
+            if not target.is_file():
+                errors.append(
+                    f"bundle parity: {label} bundle missing schema {rel}"
+                )
+                continue
+            if target.read_bytes() != canonical.read_bytes():
+                errors.append(
+                    f"bundle parity: {label} bundle schema content differs for {rel}"
+                )
+
+    fixtures_root = CONTRACTS / "fixtures"
+    canonical_fixture_rels: set[str] = set()
+    if fixtures_root.is_dir():
+        canonical_fixtures = sorted(
+            p for p in fixtures_root.rglob("*") if p.is_file()
+        )
+        canonical_fixture_rels = {
+            canonical.relative_to(fixtures_root).as_posix()
+            for canonical in canonical_fixtures
+        }
+        for canonical in canonical_fixtures:
+            rel = canonical.relative_to(fixtures_root).as_posix()
+            for bundle_fixtures_root in (py_fixtures, swift_fixtures):
+                target = bundle_fixtures_root / rel
+                label = "python" if bundle_fixtures_root == py_fixtures else "swift"
+                if not target.is_file():
+                    errors.append(
+                        f"bundle parity: {label} bundle missing fixture {rel}"
+                    )
+                    continue
+                if target.read_bytes() != canonical.read_bytes():
+                    errors.append(
+                        f"bundle parity: {label} bundle fixture content differs for {rel}"
+                    )
+
+    inv_canonical = CONTRACTS / "operations.inventory.json"
+    for bundle_contracts_root, label in (
+        (py_contracts, "python"),
+        (swift_contracts, "swift"),
+    ):
+        target = bundle_contracts_root / "operations.inventory.json"
+        if not target.is_file():
+            errors.append(
+                f"bundle parity: {label} bundle missing operations.inventory.json"
+            )
+            continue
+        if target.read_bytes() != inv_canonical.read_bytes():
+            errors.append(
+                f"bundle parity: {label} bundle operations.inventory.json differs"
+            )
+
+    inv_rendered = render_generated_manifest_bytes(inv_canonical)
+    py_gen, swift_gen = generated_manifest_paths()
+    if not py_gen.is_file():
+        errors.append("bundle parity: missing generated python manifest")
+    elif py_gen.read_bytes() != inv_rendered:
+        errors.append(
+            "bundle parity: python _generated_inventory.json differs from rendered canonical inventory"
+        )
+    if not swift_gen.is_file():
+        errors.append("bundle parity: missing generated swift manifest")
+    elif swift_gen.read_bytes() != inv_rendered:
+        errors.append(
+            "bundle parity: swift generated_inventory.json differs from rendered canonical inventory"
+        )
+
+    # Detect stale extra files in the bundle schemas/fixtures trees
+    # that are not part of the intentionally generated set. Compare
+    # relative-file sets so a non-mutating check cannot let a stale
+    # leftover from a previous write silently survive.
+    for bundle_contracts_root, label in (
+        (py_contracts, "python"),
+        (swift_contracts, "swift"),
+    ):
+        if not bundle_contracts_root.is_dir():
+            continue
+        actual = {
+            p.relative_to(bundle_contracts_root).as_posix()
+            for p in bundle_contracts_root.rglob("*.schema.json")
+        }
+        for rel in sorted(actual - canonical_schema_rels):
+            errors.append(
+                f"bundle parity: {label} bundle has stale schema {rel}"
+            )
+
+    for bundle_fixtures_root, label in (
+        (py_fixtures, "python"),
+        (swift_fixtures, "swift"),
+    ):
+        if not bundle_fixtures_root.is_dir():
+            continue
+        actual = {
+            p.relative_to(bundle_fixtures_root).as_posix()
+            for p in bundle_fixtures_root.rglob("*")
+            if p.is_file()
+        }
+        for rel in sorted(actual - canonical_fixture_rels):
+            errors.append(
+                f"bundle parity: {label} bundle has stale fixture {rel}"
+            )
+
+    return errors
+
+
+def run_check() -> int:
+    """Verify the contracts tree and prove bundle parity without writing."""
+    errors: list[str] = []
+    errors.extend(verify_inventory())
+    errors.extend(verify_all_schema_files())
+    errors.extend(check_bundle_parity())
+    schema_count = len(list(CONTRACTS.rglob("*.schema.json")))
+    if errors:
+        for e in errors:
+            print(e, file=sys.stderr)
+        print(
+            f"contracts check FAILED: {len(errors)} issue(s) across {schema_count} schemas",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"OK: contracts check passed; {schema_count} schemas and bundled copies in sync"
+    )
+    return 0
+
+
+def run_write() -> int:
+    """Intentionally propagate canonical contracts to packaged bundles."""
+    errors: list[str] = []
     errors.extend(verify_inventory())
     errors.extend(verify_all_schema_files())
     if errors:
@@ -291,8 +497,35 @@ def main() -> int:
         return 1
     sync_schema_bundle()
     write_generated_manifest()
-    print(f"OK: validated {len(list(CONTRACTS.rglob('*.schema.json')))} schema files")
+    schema_count = len(list(CONTRACTS.rglob("*.schema.json")))
+    print(
+        f"OK: propagated {schema_count} schemas, fixtures, and manifests to bundles"
+    )
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--check",
+        action="store_const",
+        dest="mode",
+        const="check",
+        help="verify and prove bundle parity without writing (default)",
+    )
+    mode.add_argument(
+        "--write",
+        action="store_const",
+        dest="mode",
+        const="write",
+        help="propagate canonical contracts into packaged bundles",
+    )
+    parser.set_defaults(mode="check")
+    args = parser.parse_args()
+    if args.mode == "write":
+        return run_write()
+    return run_check()
 
 
 if __name__ == "__main__":

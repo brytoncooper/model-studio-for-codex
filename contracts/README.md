@@ -28,6 +28,44 @@ Single source of truth for cross-process API vocabulary. JSON Schema files under
 - Wire transport: JSON-RPC 2.0 envelopes defined in `common/jsonrpc.schema.json`.
 
 
+## Generator: `--write` vs non-writing `--check`
+
+`scripts/generate_contracts.py` has two explicit modes:
+
+- `--write` — the intentional propagation path. Re-bundles every schema
+  and fixture under `contracts/` into both bundle trees
+  (`python/src/model_deck_contracts/schemas/...` and
+  `macos/Sources/ModelDeckContracts/Resources/...`) and rewrites the two
+  generated inventory manifests. Use this only when a canonical
+  schema, fixture, or `operations.inventory.json` change has been
+  intentionally accepted.
+- `--check` (default) — non-mutating. Verifies the inventory, walks every
+  schema for subset compliance, and **byte-compares** the intentionally
+  generated resource set against each bundle: every `*.schema.json`
+  under `contracts/`, every file under `contracts/fixtures/`, the
+  `operations.inventory.json` file, and both generated manifests. The
+  generated manifests are compared against the exact rendered bytes the
+  writer emits (`render_generated_manifest_bytes`: sorted keys,
+  `indent=2`, trailing newline). Stale extras in either bundle's
+  schema/fixture trees are reported. **No file is written.** Confirmed
+  with `git status --porcelain` showing zero owned-path changes after
+  a clean run.
+
+The contracts gate under `scripts/verify.py contracts` runs only
+`--check`. Wire-isolation for state/artifact/socket paths comes from
+the existing `development.guard.env.isolated_subprocess_env` helper.
+
+## Shared `revision` bound (0…2^53-1)
+
+The canonical `revision` definition (`contracts/common/types.schema.json`)
+is the IEEE-754 safe integer maximum: `0...9_007_199_254_740_991`
+(2^53 - 1). The bound is enforced identically in JSON, Python, and
+Swift without coercion. The native panel codec mirrors it as
+`PanelDocumentLimits.revisionMax`. Larger mathematical integers are
+rejected as `revisionOutOfRange` (panel) or as a schema validation
+error (canonical). This is the single shared cross-consumer bound; do
+not silently relax it.
+
 ## `engine.v1.hello` handshake (B02 auth seam)
 
 Local clients negotiate API version and optional required capabilities before authentication. There is no caller-supplied `role` field; the server assigns principal and grants after credential validation.
