@@ -227,6 +227,18 @@ public final class EngineExtensionPanelService: @unchecked Sendable {
         return result.extensionID
     }
 
+    public func updateExtension(extensionID: String, archivePath: String, expectedRevision: Int) throws -> String {
+        let result: UpdateResult = try withSerializedRequest {
+            try client.invokeValidated(
+                method: "engine.v1.extensions.update",
+                params: UpdateParams(extensionID: extensionID, archivePath: archivePath, expectedRevision: expectedRevision),
+                paramsSchemaRef: "contracts/engine.v1/methods/extensions.update.params.schema.json",
+                resultSchemaRef: "contracts/engine.v1/methods/extensions.update.result.schema.json"
+            )
+        }
+        return result.version
+    }
+
     public func setExtensionEnabled(extensionID: String, revision: Int, enabled: Bool) throws {
         let method = enabled ? "engine.v1.extensions.enable" : "engine.v1.extensions.disable"
         let operation = enabled ? "enable" : "disable"
@@ -356,6 +368,28 @@ private struct InstallResult: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case extensionID = "extension_id"
+    }
+}
+
+private struct UpdateParams: Encodable {
+    let extensionID: String
+    let archivePath: String
+    let idempotencyKey = UUID().uuidString.lowercased()
+    let expectedRevision: Int
+    enum CodingKeys: String, CodingKey {
+        case extensionID = "extension_id"
+        case archivePath = "archive_path"
+        case idempotencyKey = "idempotency_key"
+        case expectedRevision = "expected_revision"
+    }
+}
+
+private struct UpdateResult: Decodable {
+    let extensionID: String
+    let version: String
+    enum CodingKeys: String, CodingKey {
+        case extensionID = "extension_id"
+        case version
     }
 }
 

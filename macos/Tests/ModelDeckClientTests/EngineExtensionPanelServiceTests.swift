@@ -83,8 +83,9 @@ final class EngineExtensionPanelServiceTests: XCTestCase {
                 "extension_id": "org.example.notebook",
                 "version": "1.0.0",
             ]),
-            response(id: "md-6", result: ["enabled": true]),
-            response(id: "md-7", result: ["enabled": false]),
+            response(id: "md-6", result: ["extension_id": "org.example.notebook", "version": "2.0.0"]),
+            response(id: "md-7", result: ["enabled": true]),
+            response(id: "md-8", result: ["enabled": false]),
         ])
         let service = EngineExtensionPanelService(
             rendezvous: descriptor(),
@@ -97,6 +98,7 @@ final class EngineExtensionPanelServiceTests: XCTestCase {
         let detail = try service.extensionDetail(extensionID: "org.example.notebook")
         XCTAssertEqual(detail.revision, 1)
         XCTAssertEqual(try service.installExtension(archivePath: "/tmp/notebook.zip"), "org.example.notebook")
+        XCTAssertEqual(try service.updateExtension(extensionID: "org.example.notebook", archivePath: "/tmp/notebook-2.zip", expectedRevision: 1), "2.0.0")
         try service.setExtensionEnabled(extensionID: "org.example.notebook", revision: 1, enabled: true)
         try service.setExtensionEnabled(extensionID: "org.example.notebook", revision: 2, enabled: false)
 
@@ -104,14 +106,20 @@ final class EngineExtensionPanelServiceTests: XCTestCase {
         XCTAssertEqual(requests.map { $0["method"] as? String }, [
             "engine.v1.hello", "engine.v1.hello",
             "engine.v1.extensions.list", "engine.v1.extensions.get",
-            "engine.v1.extensions.install", "engine.v1.extensions.enable",
+            "engine.v1.extensions.install", "engine.v1.extensions.update",
+            "engine.v1.extensions.enable",
             "engine.v1.extensions.disable",
         ])
         let installParams = try XCTUnwrap(requests[4]["params"] as? [String: Any])
         XCTAssertEqual(installParams["archive_path"] as? String, "/tmp/notebook.zip")
         XCTAssertEqual(installParams["expected_revision"] as? Int, 0)
-        let enableParams = try XCTUnwrap(requests[5]["params"] as? [String: Any])
-        let disableParams = try XCTUnwrap(requests[6]["params"] as? [String: Any])
+        let updateParams = try XCTUnwrap(requests[5]["params"] as? [String: Any])
+        XCTAssertEqual(updateParams["extension_id"] as? String, "org.example.notebook")
+        XCTAssertEqual(updateParams["archive_path"] as? String, "/tmp/notebook-2.zip")
+        XCTAssertEqual(updateParams["expected_revision"] as? Int, 1)
+        XCTAssertNotNil(UUID(uuidString: updateParams["idempotency_key"] as? String ?? ""))
+        let enableParams = try XCTUnwrap(requests[6]["params"] as? [String: Any])
+        let disableParams = try XCTUnwrap(requests[7]["params"] as? [String: Any])
         XCTAssertEqual(enableParams["expected_revision"] as? Int, 1)
         XCTAssertEqual(disableParams["expected_revision"] as? Int, 2)
     }

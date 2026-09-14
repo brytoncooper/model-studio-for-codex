@@ -121,13 +121,19 @@ tool dispatch occurs.
 4. Enter a title and body, choose **Save note**, then edit and save repeatedly.
 5. Select the list panel and choose **Refresh notes** to see actual note rows.
 6. Open a row to load the current title, body, and revision into the editor.
-7. Choose **Export Markdown**. The generic job view shows the job identity,
+7. Select the installed extension, choose **Update…**, and select a valid newer
+   package. The status line reports the returned version, and the refreshed
+   panel proves which packaged executable is serving.
+8. Edit a retained note again, then choose **Export Markdown**. The generic job view shows the job identity,
    state, and progress. **Request cancel** records intent; keep observing until
    the worker reports the terminal `cancelled` state.
-8. Start another export and let it complete. The selectable result JSON contains
+9. Start another export and let it complete. The selectable result JSON contains
    `media_type`, `suggested_filename`, and the exported Markdown `content`.
-9. Quit and reopen V2 with the same state root to continue with the same data.
-10. Choose **Disable** to remove the extension's panels and operations. Enabling
+10. Select a valid package whose worker deliberately fails version validation.
+    V2 reports the lifecycle error; the prior version, notes, editor, and export
+    remain usable.
+11. Quit and reopen V2 with the same state root to continue with the same data.
+12. Choose **Disable** to remove the extension's panels and operations. Enabling
    it again restores access to the retained plugin-owned data.
 
 Panel IDs, operation IDs, fields, and action parameters remain opaque to the
@@ -160,6 +166,11 @@ controller runs its own polling loop on a 0.4s timer; presentation tests apply
 deterministic job snapshots without adding production delays.
 
 ## Limitations
+
+The generic extension controls support installing and updating a selected
+`.zip` package with the selected detail revision as the optimistic concurrency
+guard. A successful update refreshes the workspace and reports the returned
+version; failures remain visible as `Error: ...`.
 
 This is an unsigned local development artifact. Its configured Python
 interpreter must remain available and contain the dependencies from

@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 final class V2WorkspaceController: NSViewController {
     private let extensionPicker = NSPopUpButton()
     private let extensionStateButton = NSButton()
+    private let extensionUpdateButton = NSButton()
     private let panelPicker = NSPopUpButton()
     private let statusLabel = NSTextField(wrappingLabelWithString: "Starting isolated engine…")
     private let panelContainer = NSView()
@@ -54,6 +55,10 @@ final class V2WorkspaceController: NSViewController {
         extensionPicker.setContentHuggingPriority(.defaultLow, for: .horizontal)
         extensionControls.addArrangedSubview(extensionPicker)
         extensionControls.addArrangedSubview(makeButton("Install…", action: #selector(chooseExtensionArchive)))
+        extensionUpdateButton.title = "Update…"
+        extensionUpdateButton.target = self
+        extensionUpdateButton.action = #selector(chooseUpdateArchive)
+        extensionControls.addArrangedSubview(extensionUpdateButton)
         extensionControls.addArrangedSubview(makeButton("Refresh", action: #selector(refreshRequested)))
         extensionStateButton.target = self
         extensionStateButton.action = #selector(toggleSelectedExtension)
@@ -144,6 +149,19 @@ final class V2WorkspaceController: NSViewController {
         }
     }
 
+    @objc private func chooseUpdateArchive() {
+        guard selectedExtension != nil else { return }
+        let picker = NSOpenPanel()
+        picker.allowedContentTypes = [.zip]
+        picker.allowsMultipleSelection = false
+        picker.canChooseDirectories = false
+        picker.message = "Choose an updated Model Deck extension"
+        picker.begin { [weak self] response in
+            guard response == .OK, let archive = picker.url else { return }
+            self?.updateExtension(at: archive)
+        }
+    }
+
     @objc private func toggleSelectedExtension() {
         guard let service, let selectedExtension else { return }
         let shouldEnable = selectedExtension.status != "enabled"
@@ -183,7 +201,21 @@ final class V2WorkspaceController: NSViewController {
         )
     }
 
-    private func refreshWorkspace() {
+    private func updateExtension(at archive: URL) {
+        guard let service, let selectedExtension else { return }
+        let extensionID = selectedExtension.extensionID
+        let revision = selectedExtension.revision
+        statusLabel.stringValue = "Updating extension…"
+        runInBackground(
+            { try service.updateExtension(extensionID: extensionID, archivePath: archive.path, expectedRevision: revision) },
+            success: { [weak self] version in
+                self?.preferredExtensionID = extensionID
+                self?.refreshWorkspace(successMessage: "Extension updated to \(version).")
+            }
+        )
+    }
+
+    private func refreshWorkspace(successMessage: String? = nil) {
         guard let service else {
             updateControls()
             return
@@ -206,10 +238,12 @@ final class V2WorkspaceController: NSViewController {
                 self.panels = panels
                 self.availableOperationIDs = operationIDs
                 self.reloadExtensionPicker()
-                self.reloadPanelPicker()
-                self.statusLabel.stringValue = details.isEmpty
-                    ? "Install an extension to begin."
-                    : "Extensions refreshed."
+                self.reloadPanelPicker(successMessage: successMessage)
+                if panels.isEmpty {
+                    self.statusLabel.stringValue = successMessage ?? (details.isEmpty
+                        ? "Install an extension to begin."
+                        : "Extensions refreshed.")
+                }
             }
         )
     }
@@ -227,31 +261,34 @@ final class V2WorkspaceController: NSViewController {
         updateControls()
     }
 
-    private func reloadPanelPicker() {
+    private func reloadPanelPicker(successMessage: String? = nil) {
         let selectedPanelID = renderer?.document.panelID
         panelPicker.removeAllItems()
         panelPicker.addItems(withTitles: panels.map { $0.title ?? $0.panelID })
         if let selectedPanelID,
            let index = panels.firstIndex(where: { $0.panelID == selectedPanelID }) {
             panelPicker.selectItem(at: index)
-            loadPanel(panels[index])
+            loadPanel(panels[index], successMessage: successMessage)
         } else if let first = panels.first {
             panelPicker.selectItem(at: 0)
-            loadPanel(first)
+            loadPanel(first, successMessage: successMessage)
         } else {
             removeRenderer(message: "No enabled extension panels are available.")
         }
         updateControls()
     }
 
-    private func loadPanel(_ panel: ExtensionPanelContribution) {
+    private func loadPanel(
+        _ panel: ExtensionPanelContribution,
+        successMessage: String? = nil
+    ) {
         guard let service else { return }
         statusLabel.stringValue = "Loading \(panel.title ?? panel.panelID)…"
         runInBackground(
             { try Self.decodePanel(service.fetchPanel(panelID: panel.panelID)) },
             success: { [weak self] document in
                 self?.display(document: document)
-                self?.statusLabel.stringValue = "Panel loaded."
+                self?.statusLabel.stringValue = successMessage ?? "Panel loaded."
             }
         )
     }
@@ -376,6 +413,7 @@ final class V2WorkspaceController: NSViewController {
         panelPicker.isEnabled = connected && !panels.isEmpty
         extensionStateButton.isEnabled = connected && selectedExtension != nil
         extensionStateButton.title = selectedExtension?.status == "enabled" ? "Disable" : "Enable"
+        extensionUpdateButton.isEnabled = connected && selectedExtension != nil
     }
 
     private func makeButton(_ title: String, action: Selector) -> NSButton {
