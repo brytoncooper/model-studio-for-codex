@@ -1,9 +1,21 @@
+import hashlib
 import json
+import shutil
+import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from model_deck.engine.extensions.ports import ExtensionStatus, LifecycleReceipt
+from model_deck.engine.extensions.ports import (
+    ExecutableArtifact,
+    ExtensionStatus,
+    LifecycleAction,
+    LifecyclePhase,
+    LifecycleReceipt,
+    LifecycleRequest,
+)
+from model_deck.plugins.artifact_store import stage_archive
 from model_deck.adapters.platform.macos.extension_lease import ExtensionEngineLease
 from model_deck.adapters.platform.macos.instance_lock import FileInstanceLock
 from model_deck.adapters.storage.sqlite_extension_lifecycle import SQLiteExtensionLifecycleRepository
@@ -29,6 +41,47 @@ PRINCIPAL = "70000000-0000-4000-8000-000000000001"
 
 def test_external_extension_host_public_boundary_exists() -> None:
     assert ExternalExtensionHost is not None
+
+def test_inspect_is_pure_and_reports_archive_digest(tmp_path: Path) -> None:
+    project = Path(__file__).parents[3] / "examples" / "session-notebook"
+    archive = tmp_path / "notebook.zip"
+    pack_project_archive(project.resolve(), output_path=archive)
+    host = _host(tmp_path / "host")
+    try:
+        before = tuple(host.list_extensions())
+        result = host.inspect(archive)
+        assert result["manifest"]["id"] == "org.example.notebook"
+        assert result["provenance"]["sha256"] == hashlib.sha256(archive.read_bytes()).hexdigest()
+        assert tuple(host.list_extensions()) == before
+        assert not tuple((tmp_path / "host" / "artifacts").iterdir())
+    finally:
+        host.close()
+
+def test_update_does_not_expand_approved_scopes(tmp_path: Path) -> None:
+    source = Path(__file__).parents[3] / "examples" / "session-notebook"
+    project = tmp_path / "v2"
+    shutil.copytree(source, project)
+    manifest_path = project / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["version"] = "2.0.0"
+    manifest["permissions"] = ["storage.own", "jobs.own", "data.read"]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    plugin = project / "plugin.py"
+    plugin.write_text(plugin.read_text().replace('PLUGIN_VERSION = "1.0.0"', 'PLUGIN_VERSION = "2.0.0"', 1))
+    archive_a = tmp_path / "a.zip"
+    archive_b = tmp_path / "b.zip"
+    pack_project_archive(source.resolve(), output_path=archive_a)
+    pack_project_archive(project.resolve(), output_path=archive_b)
+    host = _host(tmp_path / "host")
+    try:
+        installed = host.install(archive_a, principal=PRINCIPAL, idempotency_key="install")
+        enabled = host.enable("org.example.notebook", principal=PRINCIPAL, idempotency_key="enable", expected_revision=installed.record.revision)
+        updated = host.update("org.example.notebook", archive_b, principal=PRINCIPAL, idempotency_key="update", expected_revision=enabled.record.revision)
+        assert updated.record.selected.approved_scopes == ("storage.own", "jobs.own")
+        result = host.invoke("org.example.notebook.notes.list", {}, principal=PRINCIPAL, idempotency_key="list")
+        assert "notes" in result
+    finally:
+        host.close()
 
 
 def test_artifact_root_canonicalizes_symlinked_ancestor(tmp_path: Path) -> None:

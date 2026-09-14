@@ -1,16 +1,34 @@
 # External extension host
 
-`ExternalExtensionHost` is composed only by the outer application bootstrap.
-Its constructor requires a `HostDependencies` bundle containing the lifecycle,
-job, data-store, lock, and lease factories. This keeps concrete platform and
-storage adapters outside the plugin-runtime layer; callers should use
-`model_deck.bootstrap.build_engine_server` or provide the same factories from
-their own composition root.
+`ExternalExtensionHost` is composed by the outer bootstrap through
+`HostDependencies`, keeping platform and storage adapters outside this layer.
+It owns private SQLite lifecycle, catalog, authority, job, data, and
+invocation-idempotency records plus an immutable digest-addressed artifact
+store.
 
-This package is the smallest composition root for generic packed process extensions. It owns a private state root containing the SQLite lifecycle, catalog, authority, job, versioned-data, and invocation-idempotency records. The immutable artifact store may use a distinct absolute `artifact_root`; by default it is `artifacts/` inside the state root.
+It inspects, installs, updates, enables, disables, removes, and invokes packed
+Python extensions. Discovery resolves the lifecycle-selected artifact. Broker
+methods and invocation authority derive only from selected `approved_scopes`;
+manifest permissions alone never grant access. Updates retain only the
+intersection of old approved and newly requested scopes. Disable/remove retain
+data and artifact records.
 
-`ExternalExtensionHost` installs validated archives, enables and disables them through `ExtensionLifecycleService`, exposes only enabled operation/panel contributions, and invokes through the lifecycle's `ServingActivation`. Python artifacts launch from their staged digest directory with `-I -B`; broker methods come only from approved manifest permissions.
+Startup recovers pending lifecycle operations under the exclusive lease before
+re-admitting settled enabled records. It first revokes any durable identity
+from the prior engine epoch, so recovery can register a fresh non-serving
+candidate without reviving an old token. `RESOLUTION_REQUIRED` remains pending
+and non-serving. Pending invocations and jobs are never replayed automatically;
+data conflicts require explicit resolution.
 
-Data is retained on disable. Reconstructing a host on the same root re-admits enabled records into a fresh process/activation identity. A completed invocation key replays its stored output; changed input conflicts, and a pending key fails closed without executing again.
+Focused verification:
 
-The current boundary supports Python process entrypoints and `storage.own`. It does not recover pending lifecycle or invocation work automatically, update an installed extension to a new artifact, or implement non-process runtimes.
+```sh
+PYTHONPATH=python:python/src /tmp/md-b18-venv/bin/python -B -m pytest -q \
+  python/tests/plugins/test_external_extension_host.py \
+  python/tests/engine/test_notebook_update_acceptance.py \
+  python/tests/engine/test_notebook_update_interruption.py
+```
+
+The current boundary supports local Python process entrypoints. It does not
+provide a permission-renewal/presentation UI, automatic replay of interrupted
+plugin work, or non-process runtimes.

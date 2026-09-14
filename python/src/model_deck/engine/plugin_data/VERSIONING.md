@@ -86,6 +86,15 @@ after durable restoration intent. Writable admission still requires
 `activate_selected(..., enabled=True)` for the exact restored selection under the
 shared barrier, so thaw alone cannot resurrect an old activation token.
 
+The external-host acceptance now exercises this contract with packaged Notebook
+versions. A successful update copies the frozen dataset into the candidate
+generation, retains entry revisions through serving admission and restart, and
+exports the retained content. A later candidate-startup failure restores the
+selected working generation, which remains readable and writable. The
+switched-boundary recovery case also proves that a prior-engine authority row is
+revoked before a fresh activation identity admits the durable selected
+generation.
+
 ## Implementation proof still required
 
 The SQLite owner must prove the freeze/write race, same-operation freeze replay,

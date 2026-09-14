@@ -827,7 +827,11 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
     else:
         params = {}
 
-    idempotency_key = str(uuid.uuid4()) if args.idempotency_key is None else str(args.idempotency_key)
+    idempotency_key = (
+        str(uuid.uuid4())
+        if args.idempotency_key is None
+        else str(args.idempotency_key)
+    )
     if not idempotency_key or len(idempotency_key) > _GENERIC_INVOKE_IDEMPOTENCY_KEY_LENGTH + 64:
         # The bundled contract caps the key at 128 chars; reject early without
         # sending anything to the engine. UUID4 is exactly 36 chars.
@@ -1040,6 +1044,74 @@ def _cmd_plugin_install(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_plugin_inspect(args: argparse.Namespace) -> int:
+    archive_path = Path(args.archive)
+    if not archive_path.is_absolute():
+        _stderr("plugin inspect requires an absolute archive path")
+        return 1
+    params = {"archive_path": str(archive_path)}
+    schema_error = _validate_params_against_schema(
+        params, "contracts/engine.v1/methods/extensions.inspect.params.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    exit_code, result = _authenticated_engine_call(
+        rendezvous_path=Path(args.rendezvous),
+        credential_path=Path(args.credential),
+        method="engine.v1.extensions.inspect",
+        params=params,
+        request_id="plugin-inspect",
+    )
+    if exit_code != 0:
+        return exit_code
+    schema_error = _validate_result_against_schema(
+        result, "contracts/engine.v1/methods/extensions.inspect.result.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    _print_result(result)
+    return 0
+
+
+def _cmd_plugin_update(args: argparse.Namespace) -> int:
+    archive_path = Path(args.archive)
+    if not archive_path.is_absolute():
+        _stderr("plugin update requires an absolute archive path")
+        return 1
+    idempotency_key = str(uuid.uuid4()) if args.idempotency_key is None else str(args.idempotency_key)
+    params = {
+        "extension_id": str(args.extension_id),
+        "archive_path": str(archive_path),
+        "idempotency_key": idempotency_key,
+        "expected_revision": int(args.expected_revision),
+    }
+    schema_error = _validate_params_against_schema(
+        params, "contracts/engine.v1/methods/extensions.update.params.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    exit_code, result = _authenticated_engine_call(
+        rendezvous_path=Path(args.rendezvous),
+        credential_path=Path(args.credential),
+        method="engine.v1.extensions.update",
+        params=params,
+        request_id="plugin-update",
+    )
+    if exit_code != 0:
+        return exit_code
+    schema_error = _validate_result_against_schema(
+        result, "contracts/engine.v1/methods/extensions.update.result.schema.json",
+    )
+    if schema_error is not None:
+        _stderr(schema_error)
+        return 1
+    _print_result(result)
+    return 0
+
+
 def _cmd_plugin_enable(args: argparse.Namespace) -> int:
     return _lifecycle_command(
         args,
@@ -1056,15 +1128,28 @@ def _cmd_plugin_disable(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_plugin_remove(args: argparse.Namespace) -> int:
+    return _lifecycle_command(
+        args,
+        method_name="extensions.remove",
+        request_id="plugin-remove",
+    )
+
+
 def _lifecycle_command(
     args: argparse.Namespace, *, method_name: str, request_id: str,
 ) -> int:
-    """Shared body for ``plugin enable`` and ``plugin disable``.
+    """Run a lifecycle command with the shared mutation parameters.
 
-    Both call sites accept the same params ``{extension_id,
-    expected_revision, idempotency_key}`` and return ``{enabled}``.
+    Enable, disable, and remove accept the same params ``{extension_id,
+    expected_revision, idempotency_key}``; each method keeps its own frozen
+    result schema.
     """
-    idempotency_key = str(uuid.uuid4()) if args.idempotency_key is None else str(args.idempotency_key)
+    idempotency_key = (
+        str(uuid.uuid4())
+        if args.idempotency_key is None
+        else str(args.idempotency_key)
+    )
     params = {
         "extension_id": str(args.extension_id),
         "expected_revision": int(args.expected_revision),
@@ -1404,6 +1489,45 @@ def main(argv: list[str] | None = None) -> int:
     )
     plugin_install_cmd.set_defaults(func=_cmd_plugin_install)
 
+    plugin_inspect_cmd = plugin_sub.add_parser(
+        "inspect",
+        help="inspect a packed plugin archive without installing it",
+    )
+    plugin_inspect_cmd.add_argument(
+        "archive",
+        help="absolute path to a packed plugin archive",
+    )
+    plugin_inspect_cmd.add_argument("--rendezvous", required=True)
+    plugin_inspect_cmd.add_argument("--credential", required=True)
+    plugin_inspect_cmd.set_defaults(func=_cmd_plugin_inspect)
+
+    plugin_update_cmd = plugin_sub.add_parser(
+        "update",
+        help="update an installed plugin from a packed archive",
+    )
+    plugin_update_cmd.add_argument(
+        "archive",
+        help="absolute path to a packed plugin archive",
+    )
+    plugin_update_cmd.add_argument(
+        "--extension-id", required=True,
+        help="reverse-domain extension id (e.g. org.example.plugin)",
+    )
+    plugin_update_cmd.add_argument("--rendezvous", required=True)
+    plugin_update_cmd.add_argument("--credential", required=True)
+    plugin_update_cmd.add_argument(
+        "--idempotency-key",
+        default=None,
+        help="optional 1-128 character idempotency key (UUID4 generated when omitted)",
+    )
+    plugin_update_cmd.add_argument(
+        "--expected-revision",
+        type=int,
+        required=True,
+        help="current installed-extension revision",
+    )
+    plugin_update_cmd.set_defaults(func=_cmd_plugin_update)
+
     plugin_enable_cmd = plugin_sub.add_parser(
         "enable", help="enable an installed plugin",
     )
@@ -1447,6 +1571,28 @@ def main(argv: list[str] | None = None) -> int:
         help="expected revision (default 0)",
     )
     plugin_disable_cmd.set_defaults(func=_cmd_plugin_disable)
+
+    plugin_remove_cmd = plugin_sub.add_parser(
+        "remove", help="remove an installed plugin",
+    )
+    plugin_remove_cmd.add_argument(
+        "--extension-id", required=True,
+        help="reverse-domain extension id (e.g. org.example.plugin)",
+    )
+    plugin_remove_cmd.add_argument("--rendezvous", required=True)
+    plugin_remove_cmd.add_argument("--credential", required=True)
+    plugin_remove_cmd.add_argument(
+        "--idempotency-key",
+        default=None,
+        help="optional 1-128 character idempotency key (UUID4 generated when omitted)",
+    )
+    plugin_remove_cmd.add_argument(
+        "--expected-revision",
+        type=int,
+        required=True,
+        help="current installed-extension revision",
+    )
+    plugin_remove_cmd.set_defaults(func=_cmd_plugin_remove)
 
     plugin_get_cmd = plugin_sub.add_parser(
         "get", help="read a single installed plugin's record",

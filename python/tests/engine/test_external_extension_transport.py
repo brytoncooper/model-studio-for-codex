@@ -92,6 +92,12 @@ class ExternalExtensionTransportTests(unittest.TestCase):
         self._runtime.server.start()
         session = self._authenticated_session()
 
+        inspected = self._call(session, 20, "engine.v1.extensions.inspect", {
+            "archive_path": str(archive),
+        })["result"]
+        self.assertEqual(inspected["manifest"]["id"], "org.example.notebook")
+        self.assertEqual(len(inspected["provenance"]["sha256"]), 64)
+
         installed = self._call(session, 2, "engine.v1.extensions.install", {
             "archive_path": str(archive), "idempotency_key": "install", "expected_revision": 0,
         })["result"]
@@ -293,6 +299,20 @@ class ExternalExtensionTransportTests(unittest.TestCase):
         )["result"]
         self.assertEqual(interrupted_snapshot["state"], "interrupted")
         self.assertNotIn("output", interrupted_snapshot)
+
+        disabled_record = self._call(session, 402, "engine.v1.extensions.get", {
+            "extension_id": "org.example.notebook",
+        })["result"]
+        removed = self._call(session, 403, "engine.v1.extensions.remove", {
+            "extension_id": "org.example.notebook",
+            "expected_revision": disabled_record["revision"],
+            "idempotency_key": "remove",
+        })["result"]
+        self.assertEqual(removed, {"removed": True})
+        self.assertEqual(
+            self._call(session, 404, "engine.v1.extensions.list", {})["result"],
+            {"extensions": []},
+        )
 
         self._runtime.server.stop()
         reopened = ExternalExtensionHost(extension_state, artifact_root=extension_artifacts,

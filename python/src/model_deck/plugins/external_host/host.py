@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import secrets
 import sqlite3
 import sys
 import threading
 import uuid
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,6 +23,7 @@ from model_deck.engine.extensions.ports import (
     ExtensionStatus,
     LifecycleAction,
     LifecycleOperation,
+    LifecyclePhase,
     LifecycleReceipt,
     LifecycleRequest,
 )
@@ -45,6 +48,7 @@ from model_deck.plugins.schema_bundle import PluginSchemaBundle
 from model_deck_contracts.validator import validate_schema_ref
 
 _STORED_INVOKE_RESULT_KEY = "__model_deck_invoke_result_v1__"
+_LIFECYCLE_RECOVERY_PAGE_SIZE = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,14 +115,12 @@ class _Resolver:
         self._host = host
 
     def resolve(self, executable: ExecutableArtifact) -> ResolvedArtifactLaunch:
-        manifest = self._host._manifest(executable.extension_id)
-        if manifest["artifact_id"] != executable.artifact_id:
-            raise HostConflictError("catalog artifact mismatch")
+        manifest = self._host._manifest(executable.extension_id, executable.artifact_id)
         artifact = Path(manifest["artifact_path"])
         entrypoint = manifest["document"]["entrypoint"]
         if entrypoint["runtime"] != "python":
             raise HostConflictError("unsupported extension runtime")
-        permissions = manifest["document"]["permissions"]
+        permissions = self._host._approved_scopes(executable)
         allowed: list[str] = []
         if "storage.own" in permissions:
             allowed.extend(_BROKER_METHODS)
@@ -239,7 +241,7 @@ class ExternalExtensionHost:
             repository=self._repository, data_lifecycle=self._data,
             activation_lifecycle=self._activation, engine_lease=self._lease,
         )
-        self._recover_enabled()
+        self._recover_lifecycle_and_enabled_extensions()
 
     def close(self) -> None:
         for record in self.list_extensions():
@@ -275,10 +277,68 @@ class ExternalExtensionHost:
             candidate=artifact,
         )
 
+    def inspect(self, archive_path: Path | str) -> dict[str, Any]:
+        data = Path(archive_path).read_bytes()
+        report = validate_project_archive(data)
+        if not report.ok:
+            raise HostConflictError("archive validation failed")
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+        except (KeyError, ValueError, zipfile.BadZipFile):
+            raise HostConflictError("archive validation failed") from None
+        return {
+            "manifest": manifest,
+            "provenance": {"sha256": hashlib.sha256(data).hexdigest()},
+        }
+
+    def update(
+        self,
+        extension_id: str,
+        archive_path: Path | str,
+        *,
+        principal: str,
+        idempotency_key: str,
+        expected_revision: int,
+    ) -> LifecycleReceipt | LifecycleOperation:
+        data = Path(archive_path).read_bytes()
+        report = validate_project_archive(data)
+        if not report.ok or report.manifest.identity.manifest_id != extension_id:
+            raise HostConflictError("archive validation failed or manifest ID mismatch")
+        staged = stage_archive(data, store_root=self._artifact_root)
+        document = json.loads((Path(staged.artifact_path) / "manifest.json").read_text())
+        self._persist_manifest(
+            extension_id,
+            staged.artifact_id,
+            staged.artifact_path,
+            document,
+            activate_current=False,
+        )
+        artifact = ExecutableArtifact(staged.artifact_id, extension_id,
+                                      report.manifest.identity.version,
+                                      tuple(report.manifest.contributions.permissions))
+        return self._execute(
+            LifecycleAction.UPDATE,
+            extension_id,
+            principal,
+            idempotency_key,
+            expected_revision,
+            candidate=artifact,
+        )
+
+    def remove(self, extension_id: str, *, principal: str, idempotency_key: str,
+               expected_revision: int):
+        return self._execute(LifecycleAction.REMOVE, extension_id, principal,
+                             idempotency_key, expected_revision)
+
     def enable(self, extension_id: str, *, principal: str, idempotency_key: str,
                expected_revision: int) -> LifecycleReceipt | LifecycleOperation:
         record = self.get_extension(extension_id)
-        permissions = tuple(self._manifest(extension_id)["document"].get("permissions", ()))
+        manifest = self._manifest(
+            extension_id,
+            record.selected.executable.artifact_id,
+        )
+        permissions = tuple(manifest["document"].get("permissions", ()))
         enabled = self._execute(LifecycleAction.ENABLE, extension_id, principal,
                                 idempotency_key, expected_revision)
         if (
@@ -322,7 +382,7 @@ class ExternalExtensionHost:
         for record in self.list_extensions():
             if record.status is not ExtensionStatus.ENABLED:
                 continue
-            document = self._manifest(record.extension_id)["document"]
+            document = self._manifest(record.extension_id, record.selected.executable.artifact_id)["document"]
             result.extend({"extension_id": record.extension_id, **item} for item in document["contributes"].get("operations", ()))
         return tuple(result)
 
@@ -331,13 +391,14 @@ class ExternalExtensionHost:
         for record in self.list_extensions():
             if record.status is ExtensionStatus.ENABLED:
                 result.extend({"extension_id": record.extension_id, **item}
-                              for item in self._manifest(record.extension_id)["document"]["contributes"].get("panels", ()))
+                              for item in self._manifest(record.extension_id, record.selected.executable.artifact_id)["document"]["contributes"].get("panels", ()))
         return tuple(result)
 
     def panel_get(self, panel_id: str) -> dict[str, Any]:
         for descriptor in self.ui_contributions():
             if descriptor["id"] == panel_id:
-                manifest = self._manifest(descriptor["extension_id"])
+                record = self.get_extension(descriptor["extension_id"])
+                manifest = self._manifest(descriptor["extension_id"], record.selected.executable.artifact_id)
                 panel = json.loads((Path(manifest["artifact_path"]) / descriptor["schema"]).read_text())
                 validate_schema_ref("contracts/ui.panel.v1/tree.schema.json", panel)
                 return panel
@@ -354,7 +415,8 @@ class ExternalExtensionHost:
         if descriptor is None:
             raise HostNotServingError(operation_id)
         extension_id = descriptor["extension_id"]
-        manifest = self._manifest(extension_id)
+        record = self.get_extension(extension_id)
+        manifest = self._manifest(extension_id, record.selected.executable.artifact_id)
         schemas = {path.relative_to(manifest["artifact_path"]).as_posix(): path.read_bytes()
                    for path in Path(manifest["artifact_path"]).rglob("*.schema.json")}
         bundle = PluginSchemaBundle.from_resources(schemas)
@@ -379,7 +441,7 @@ class ExternalExtensionHost:
             if declared_effect == "write"
             else frozenset({declared_effect})
         )
-        grants = frozenset(self._manifest(extension_id)["document"].get("permissions", ()))
+        grants = frozenset(self.get_extension(extension_id).selected.approved_scopes)
         self._origins[principal] = OriginState(principal, self._engine_id, self._audience,
                                               frozenset({"read", "write"}), grants, grants, deadline, 0)
         self._operations[operation_id] = OperationAuthority(operation_id, effects, grants, grants)
@@ -437,13 +499,51 @@ class ExternalExtensionHost:
                                    self._digest(semantic), key, candidate, tuple(approved_scopes))
         return self._lifecycle.execute(request)
 
-    def _recover_enabled(self) -> None:
-        for record in self.list_extensions():
-            if record.status is ExtensionStatus.ENABLED:
+    def _recover_lifecycle_and_enabled_extensions(self) -> None:
+        records = self.list_extensions()
+        for record in records:
+            prior_identity = self._authority.identity_for(record.selected)
+            if prior_identity is not None:
+                self._authority.revoke(prior_identity)
+
+        pending = self._all_pending_operations()
+        recovered: set[str] = set()
+        blocked = {operation.request.extension_id for operation in pending}
+        for operation in pending:
+            if operation.phase is LifecyclePhase.RESOLUTION_REQUIRED:
+                continue
+            result = self._lifecycle.recover_operation(operation)
+            if isinstance(result, LifecycleReceipt) and result.record is not None:
+                recovered.add(result.record.extension_id)
+
+        for record in records:
+            if (
+                record.status is ExtensionStatus.ENABLED
+                and record.extension_id not in blocked
+                and record.extension_id not in recovered
+            ):
                 operation_id = str(uuid.uuid4())
                 validated = self._activation.validate(operation_id, record.selected)
-                self._activation.admit(operation_id, record, validated,
-                                       expected_data_revision=validated.validated_data_revision)
+                self._activation.admit(
+                    operation_id,
+                    record,
+                    validated,
+                    expected_data_revision=validated.validated_data_revision,
+                )
+
+    def _all_pending_operations(self) -> tuple[LifecycleOperation, ...]:
+        pending: list[LifecycleOperation] = []
+        after_operation_id: str | None = None
+        while True:
+            page = self._lifecycle.list_pending(
+                after_operation_id=after_operation_id,
+                limit=_LIFECYCLE_RECOVERY_PAGE_SIZE,
+            )
+            pending.extend(page)
+            if len(page) < _LIFECYCLE_RECOVERY_PAGE_SIZE:
+                break
+            after_operation_id = page[-1].request.operation_id
+        return tuple(pending)
 
     @staticmethod
     def _digest(value: Any) -> str:
@@ -452,22 +552,69 @@ class ExternalExtensionHost:
     def _ensure_catalog(self) -> None:
         with self._connect() as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS external_host_catalog (extension_id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL, artifact_path TEXT NOT NULL, manifest_json TEXT NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS external_host_artifacts (artifact_id TEXT PRIMARY KEY, extension_id TEXT NOT NULL, artifact_path TEXT NOT NULL, manifest_json TEXT NOT NULL)")
             connection.execute("CREATE TABLE IF NOT EXISTS external_host_invocations (principal TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_digest TEXT NOT NULL, state TEXT NOT NULL, output_json TEXT, PRIMARY KEY(principal,idempotency_key))")
+            connection.execute("INSERT OR IGNORE INTO external_host_artifacts SELECT artifact_id,extension_id,artifact_path,manifest_json FROM external_host_catalog")
 
-    def _persist_manifest(self, extension_id, artifact_id, artifact_path, document) -> None:
+    def _persist_manifest(self, extension_id, artifact_id, artifact_path, document, *, activate_current=True) -> None:
         encoded = json.dumps(document, sort_keys=True, separators=(",", ":"))
         with self._connect() as connection:
-            prior = connection.execute("SELECT artifact_id, manifest_json FROM external_host_catalog WHERE extension_id=?", (extension_id,)).fetchone()
-            if prior is not None and (prior[0] != artifact_id or prior[1] != encoded):
-                raise HostConflictError("extension already has a different catalog artifact")
-            connection.execute("INSERT OR IGNORE INTO external_host_catalog VALUES (?,?,?,?)", (extension_id, artifact_id, artifact_path, encoded))
+            prior = connection.execute("SELECT manifest_json FROM external_host_artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+            if prior is not None and prior[0] != encoded:
+                raise HostConflictError("artifact identity collision")
+            connection.execute("INSERT OR IGNORE INTO external_host_artifacts VALUES (?,?,?,?)", (artifact_id, extension_id, artifact_path, encoded))
+            if activate_current:
+                connection.execute("INSERT OR REPLACE INTO external_host_catalog VALUES (?,?,?,?)", (extension_id, artifact_id, artifact_path, encoded))
 
-    def _manifest(self, extension_id: str) -> dict[str, Any]:
+    def _manifest(self, extension_id: str, artifact_id: str | None = None) -> dict[str, Any]:
         with self._connect() as connection:
-            row = connection.execute("SELECT artifact_id,artifact_path,manifest_json FROM external_host_catalog WHERE extension_id=?", (extension_id,)).fetchone()
+            if artifact_id is None:
+                row = connection.execute("SELECT artifact_id,artifact_path,manifest_json FROM external_host_catalog WHERE extension_id=?", (extension_id,)).fetchone()
+            else:
+                row = connection.execute("SELECT artifact_id,artifact_path,manifest_json FROM external_host_artifacts WHERE extension_id=? AND artifact_id=?", (extension_id, artifact_id)).fetchone()
         if row is None:
             raise KeyError(extension_id)
         return {"artifact_id": row[0], "artifact_path": row[1], "document": json.loads(row[2])}
+
+    def _approved_scopes(self, executable: ExecutableArtifact) -> tuple[str, ...]:
+        for operation in self._all_pending_operations():
+            candidate = operation.candidate
+            if (
+                candidate is not None
+                and candidate.executable.artifact_id == executable.artifact_id
+            ):
+                return candidate.approved_scopes
+
+            request = operation.request
+            previous = operation.previous
+            if previous is None:
+                continue
+            previous_artifact_id = previous.selected.executable.artifact_id
+            if (
+                request.action is LifecycleAction.CHANGE_GRANTS
+                and previous_artifact_id == executable.artifact_id
+            ):
+                return request.approved_scopes
+            if (
+                request.action is LifecycleAction.ENABLE
+                and previous_artifact_id == executable.artifact_id
+            ):
+                return previous.selected.approved_scopes
+            if (
+                request.action is LifecycleAction.UPDATE
+                and request.candidate is not None
+                and request.candidate.artifact_id == executable.artifact_id
+            ):
+                requested = frozenset(request.candidate.requested_scopes)
+                return tuple(
+                    scope
+                    for scope in previous.selected.approved_scopes
+                    if scope in requested
+                )
+        record = self._repository.get(executable.extension_id)
+        if record is not None and record.selected.executable.artifact_id == executable.artifact_id:
+            return record.selected.approved_scopes
+        raise HostConflictError("artifact is not selected")
 
     def _claim_invocation(self, principal, key, digest):
         with self._connect() as connection:

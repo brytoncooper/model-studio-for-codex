@@ -29,6 +29,7 @@ INSTALL = "30000000-0000-4000-8000-000000000001"
 ENABLE = "30000000-0000-4000-8000-000000000002"
 DISABLE = "30000000-0000-4000-8000-000000000003"
 UPDATE = "30000000-0000-4000-8000-000000000004"
+PRINCIPAL = "operator"
 
 
 def _artifact(version: str, digest: str) -> ExecutableArtifact:
@@ -271,10 +272,18 @@ class ProcessExtensionActivationLifecycleTests(unittest.TestCase):
         serving = self.adapter.serving(PLUGIN_ID)
         assert serving is not None
         owner = JobOwner(PLUGIN_ID, serving.identity.activation_id)
-        job = self.jobs.create(CreateJobCommand(owner, "invocation-a", "org.example.export"))
+        job = self.jobs.create(CreateJobCommand(
+            owner,
+            "invocation-a",
+            "org.example.export",
+            PRINCIPAL,
+        ))
         other_owner = JobOwner(PLUGIN_ID, str(uuid.uuid4()))
         other = self.jobs.create(CreateJobCommand(
-            other_owner, "invocation-b", "org.example.other",
+            other_owner,
+            "invocation-b",
+            "org.example.other",
+            PRINCIPAL,
         ))
 
         self.adapter.quiesce(DISABLE, record, deadline_ms=1000)
@@ -367,7 +376,9 @@ class ProcessExtensionActivationLifecycleTests(unittest.TestCase):
         self.authority.states[identity.activation_id] = "serving"
         job = self.jobs.create(CreateJobCommand(
             JobOwner(PLUGIN_ID, identity.activation_id),
-            "prior-invocation", "org.example.prior",
+            "prior-invocation",
+            "org.example.prior",
+            PRINCIPAL,
         ))
         enabled = replace(self.installed_record, status=ExtensionStatus.ENABLED)
 

@@ -694,5 +694,132 @@ class EngineServeExtensionsOptInTests(unittest.TestCase):
         build_mock.assert_not_called()
 
 
+
+
+
+# ---------------------------------------------------------------------------
+# plugin inspect / update / remove (public lifecycle)
+# ---------------------------------------------------------------------------
+
+
+class PluginInspectTests(CliLifecycleTestBase):
+    def test_inspect_sends_extensions_inspect_with_archive_path(self):
+        archive = self.workdir / "fixture.mdpack"
+        archive.write_bytes(b"fake-archive-bytes")
+        manifest = {
+            "manifest_version": 1,
+            "id": "org.example.cli",
+            "version": "1.0.0",
+            "plugin_api": {"major": 1, "minimum_minor": 0},
+            "entrypoint": {"path": "plugin.py", "runtime": "python"},
+        }
+        replies = [
+            _hello1_reply(),
+            _hello2_reply(),
+            {"result": {"manifest": manifest, "provenance": {"sha256": "0" * 64}}},
+        ]
+        standin, session = _mock_client_with_replies(replies)
+        argv = [
+            "plugin", "inspect", str(archive),
+            "--rendezvous", str(self.rendezvous),
+            "--credential", str(self.credential),
+        ]
+        with mock.patch("model_deck.cli.main.UnixSocketEngineClient", standin):
+            exit_code, stdout, stderr = _run_cli(argv)
+        self.assertEqual(exit_code, 0, msg=stderr)
+        self.assertEqual(len(session.frames), 3)
+        inspect_frame = session.frames[2]
+        self.assertEqual(inspect_frame["method"], "engine.v1.extensions.inspect")
+        self.assertEqual(inspect_frame["params"], {"archive_path": str(archive)})
+        self.assertEqual(json.loads(stdout)["manifest"]["id"], "org.example.cli")
+
+    def test_inspect_rejects_relative_archive_path_before_connecting(self):
+        argv = [
+            "plugin", "inspect", "relative/fixture.mdpack",
+            "--rendezvous", str(self.rendezvous),
+            "--credential", str(self.credential),
+        ]
+        with mock.patch("model_deck.cli.main.UnixSocketEngineClient") as client_cls:
+            exit_code, stdout, stderr = _run_cli(argv)
+            client_cls.assert_not_called()
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("absolute archive path", stderr)
+
+
+class PluginUpdateTests(CliLifecycleTestBase):
+    def test_update_sends_extensions_update_with_all_params(self):
+        archive = self.workdir / "fixture.mdpack"
+        archive.write_bytes(b"fake-archive-bytes")
+        replies = [
+            _hello1_reply(),
+            _hello2_reply(),
+            {"result": {"extension_id": "org.example.cli", "version": "1.1.0"}},
+        ]
+        standin, session = _mock_client_with_replies(replies)
+        argv = [
+            "plugin", "update", str(archive),
+            "--extension-id", "org.example.cli",
+            "--rendezvous", str(self.rendezvous),
+            "--credential", str(self.credential),
+            "--expected-revision", "4",
+            "--idempotency-key", "deterministic-update-key",
+        ]
+        with mock.patch("model_deck.cli.main.UnixSocketEngineClient", standin):
+            exit_code, stdout, stderr = _run_cli(argv)
+        self.assertEqual(exit_code, 0, msg=stderr)
+        update_frame = session.frames[2]
+        self.assertEqual(update_frame["method"], "engine.v1.extensions.update")
+        params = update_frame["params"]
+        self.assertEqual(params["extension_id"], "org.example.cli")
+        self.assertEqual(params["archive_path"], str(archive))
+        self.assertEqual(params["idempotency_key"], "deterministic-update-key")
+        self.assertEqual(params["expected_revision"], 4)
+        self.assertEqual(json.loads(stdout), {"extension_id": "org.example.cli", "version": "1.1.0"})
+
+    def test_update_rejects_relative_archive_path_before_connecting(self):
+        argv = [
+            "plugin", "update", "relative/fixture.mdpack",
+            "--extension-id", "org.example.cli",
+            "--expected-revision", "1",
+            "--rendezvous", str(self.rendezvous),
+            "--credential", str(self.credential),
+        ]
+        with mock.patch("model_deck.cli.main.UnixSocketEngineClient") as client_cls:
+            exit_code, stdout, stderr = _run_cli(argv)
+            client_cls.assert_not_called()
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("absolute archive path", stderr)
+
+
+class PluginRemoveTests(CliLifecycleTestBase):
+    def test_remove_sends_extensions_remove_and_maps_to_removed_true(self):
+        replies = [
+            _hello1_reply(),
+            _hello2_reply(),
+            {"result": {"removed": True}},
+        ]
+        standin, session = _mock_client_with_replies(replies)
+        argv = [
+            "plugin", "remove",
+            "--extension-id", "org.example.cli",
+            "--rendezvous", str(self.rendezvous),
+            "--credential", str(self.credential),
+            "--expected-revision", "7",
+            "--idempotency-key", "deterministic-remove-key",
+        ]
+        with mock.patch("model_deck.cli.main.UnixSocketEngineClient", standin):
+            exit_code, stdout, stderr = _run_cli(argv)
+        self.assertEqual(exit_code, 0, msg=stderr)
+        remove_frame = session.frames[2]
+        self.assertEqual(remove_frame["method"], "engine.v1.extensions.remove")
+        params = remove_frame["params"]
+        self.assertEqual(params["extension_id"], "org.example.cli")
+        self.assertEqual(params["idempotency_key"], "deterministic-remove-key")
+        self.assertEqual(params["expected_revision"], 7)
+        self.assertEqual(json.loads(stdout), {"removed": True})
+
+
 if __name__ == "__main__":
     unittest.main()

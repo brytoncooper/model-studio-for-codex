@@ -161,6 +161,9 @@ _EXTERNAL_EXTENSION_METHODS = frozenset(
         "engine.v1.extensions.disable",
         "engine.v1.extensions.get",
         "engine.v1.extensions.list",
+        "engine.v1.extensions.inspect",
+        "engine.v1.extensions.update",
+        "engine.v1.extensions.remove",
         "engine.v1.operations.invoke",
         "engine.v1.ui.contributions.list",
         "engine.v1.ui.panel.get",
@@ -348,6 +351,9 @@ _OPERATION_CATALOG: tuple[dict[str, str], ...] = (
             ("extensions.disable", "write"),
             ("extensions.get", "read"),
             ("extensions.list", "read"),
+            ("extensions.inspect", "read"),
+            ("extensions.update", "write"),
+            ("extensions.remove", "write"),
             ("operations.invoke", "write"),
             ("ui.contributions.list", "read"),
             ("ui.panel.get", "read"),
@@ -1290,7 +1296,7 @@ class EngineDispatch:
                     or receipt.record is None
                     or receipt.outcome is not ReceiptOutcome.APPLIED
                 ):
-                    raise HostConflictError("lifecycle operation did not settle")
+                    raise ExtensionHostConflictError("lifecycle operation did not settle")
                 result = {
                     "extension_id": receipt.record.extension_id,
                     "version": receipt.record.selected.executable.version,
@@ -1308,7 +1314,7 @@ class EngineDispatch:
                     or receipt.record is None
                     or receipt.outcome is not ReceiptOutcome.APPLIED
                 ):
-                    raise HostConflictError("lifecycle operation did not settle")
+                    raise ExtensionHostConflictError("lifecycle operation did not settle")
                 result = {"enabled": receipt.record.status is ExtensionStatus.ENABLED}
             elif method_name == "extensions.get":
                 record = host.get_extension(params["extension_id"])
@@ -1323,6 +1329,48 @@ class EngineDispatch:
                         if record.status is not ExtensionStatus.REMOVED
                     ]
                 }
+            elif method_name == "extensions.inspect":
+                payload = host.inspect(params["archive_path"])
+                if not isinstance(payload, dict):
+                    raise ExtensionHostConflictError("inspect payload was not an object")
+                result = {
+                    key: payload[key]
+                    for key in ("manifest", "provenance")
+                    if key in payload
+                }
+            elif method_name == "extensions.update":
+                receipt = host.update(
+                    params["extension_id"],
+                    params["archive_path"],
+                    principal=principal,
+                    idempotency_key=params["idempotency_key"],
+                    expected_revision=params["expected_revision"],
+                )
+                if (
+                    not isinstance(receipt, LifecycleReceipt)
+                    or receipt.record is None
+                    or receipt.outcome is not ReceiptOutcome.APPLIED
+                ):
+                    raise ExtensionHostConflictError("lifecycle operation did not settle")
+                result = {
+                    "extension_id": receipt.record.extension_id,
+                    "version": receipt.record.selected.executable.version,
+                }
+            elif method_name == "extensions.remove":
+                receipt = host.remove(
+                    params["extension_id"],
+                    principal=principal,
+                    idempotency_key=params["idempotency_key"],
+                    expected_revision=params["expected_revision"],
+                )
+                if (
+                    not isinstance(receipt, LifecycleReceipt)
+                    or receipt.record is None
+                    or receipt.outcome is not ReceiptOutcome.APPLIED
+                    or receipt.record.status is not ExtensionStatus.REMOVED
+                ):
+                    raise ExtensionHostConflictError("lifecycle operation did not settle")
+                result = {"removed": True}
             elif method_name == "operations.invoke":
                 envelope = host.invoke_result(
                     params["operation"],

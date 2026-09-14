@@ -184,4 +184,32 @@ documents the normal isolated app flow: app-owned engine startup, generic
 install and enable, dynamic list and repeated editing, cancellable export with
 retrievable output, clean quit, reopen, and disable with retained data. Neither
 path installs or replaces the shipping app. Optional session metadata and
-package update/re-enable preservation remain future B22 work.
+public grants renewal/presentation remain future work.
+
+## Packaged update acceptance
+
+Run the focused lifecycle acceptance with:
+
+```sh
+PYTHONPATH=python:python/src /tmp/md-b18-venv/bin/python -B -m pytest -q python/tests/engine/test_notebook_update_acceptance.py
+```
+
+The acceptance covers packaged A-to-B updates, note/revision and export
+preservation, restart persistence, and failed-worker rollback. The separate
+host acceptance proves that newly requested permissions do not silently expand
+existing approvals:
+
+```sh
+PYTHONPATH=python:python/src /tmp/md-b18-venv/bin/python -B -m pytest -q \
+  python/tests/plugins/test_external_extension_host.py
+```
+
+The switched-boundary subprocess case proves restart recovery with a fresh
+activation identity and exact idempotent receipt replay:
+
+```sh
+PYTHONPATH=python:python/src /tmp/md-b18-venv/bin/python -B -m pytest -q \
+  python/tests/engine/test_notebook_update_interruption.py
+```
+
+Permission renewal and its presentation UI remain outstanding work.
