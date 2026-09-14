@@ -83,6 +83,8 @@ from model_deck.engine.host_settings.ports import (
     SettingsVersionMismatchError,
 )
 from model_deck.engine.host_settings.service import HostSettingsService
+from model_deck.engine.hosts.ports import HostIntegrationPort
+from model_deck.engine.hosts.service import HostOperationsService
 from model_deck.engine.kernel_composition import KernelComposition, KernelInputError, KernelInvocationError
 from model_deck.kernel import CompositionError, GrantDeniedError
 from model_deck.engine.extensions.ports import (
@@ -176,6 +178,12 @@ _EXTERNAL_EXTENSION_METHODS = frozenset(
 _HOST_PROJECTION_METHODS = frozenset(
     {
         "engine.v1.hosts.projection_status",
+    }
+)
+_HOST_OPERATIONS_METHODS = frozenset(
+    {
+        "engine.v1.hosts.list",
+        "engine.v1.hosts.prepare",
     }
 )
 _JOB_METHODS = frozenset({"engine.v1.jobs.get", "engine.v1.jobs.cancel"})
@@ -347,6 +355,18 @@ _OPERATION_CATALOG: tuple[dict[str, str], ...] = (
         "output_schema_id": "contracts/engine.v1/methods/hosts.settings.save.result.schema.json",
         "effect": "write",
     },
+    {
+        "operation_id": "engine.v1.hosts.list",
+        "input_schema_id": "contracts/engine.v1/methods/hosts.list.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/hosts.list.result.schema.json",
+        "effect": "read",
+    },
+    {
+        "operation_id": "engine.v1.hosts.prepare",
+        "input_schema_id": "contracts/engine.v1/methods/hosts.prepare.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/hosts.prepare.result.schema.json",
+        "effect": "write",
+    },
     *(
         {
             "operation_id": f"engine.v1.{name}",
@@ -451,6 +471,7 @@ class EngineDispatch:
         event_replay: RunEventReplayPort | None = None,
         host_settings: HostSettingsService | None = None,
         host_settings_caller: CallerContext | None = None,
+        host_integration: HostIntegrationPort | None = None,
         kernel_composition: KernelComposition | None = None,
         response_preflight: Callable[[dict[str, Any]], Any] | None = None,
         usage_query: ReconciledUsageQueryUseCase | None = None,
@@ -476,6 +497,7 @@ class EngineDispatch:
         self._event_replay = event_replay
         self._host_settings = host_settings
         self._host_settings_caller = host_settings_caller
+        self._host_integration = host_integration
         self._kernel_composition = kernel_composition
         self._response_preflight = response_preflight
         self._usage_query = usage_query
@@ -546,6 +568,8 @@ class EngineDispatch:
                 methods.update(_JOB_METHODS)
         if self._projection_coordinator is not None:
             methods.update(_HOST_PROJECTION_METHODS)
+        if self._host_integration is not None:
+            methods.update(_HOST_OPERATIONS_METHODS)
         return frozenset(methods)
 
     def drain_notifications(self, connection_id: int) -> tuple[dict[str, Any], ...]:
@@ -704,6 +728,10 @@ class EngineDispatch:
             return self._hosts_settings(frame.get("id"), params, connection_id, "save")
         if method == "engine.v1.hosts.projection_status":
             return self._hosts_projection_status(frame.get("id"), params)
+        if method == "engine.v1.hosts.list":
+            return self._hosts_list(frame.get("id"), params)
+        if method == "engine.v1.hosts.prepare":
+            return self._hosts_prepare(frame.get("id"), params)
         if method in _EXTERNAL_EXTENSION_METHODS:
             return self._external_extension(frame.get("id"), method, params, connection_id)
         if method in _JOB_METHODS:
@@ -1759,6 +1787,51 @@ class EngineDispatch:
             )
         except SchemaValidationError as exc:
             return self._error(request_id, -32603, str(exc))
+        return self._success(request_id, result)
+
+    def _hosts_list(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        integration = self._host_integration
+        if integration is None:
+            return self._domain_error(
+                request_id, "unsupported_capability", "host integration not configured"
+            )
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/hosts.list.params.schema.json",
+                dict(params),
+            )
+        except SchemaValidationError as exc:
+            return self._domain_error(request_id, "invalid_argument", str(exc))
+        service = HostOperationsService(integration)
+        try:
+            result = service.list_hosts_envelope()
+        except HostOperationsService.ListError as exc:
+            return self._domain_error(request_id, exc.code, str(exc))
+        return self._success(request_id, result)
+
+    def _hosts_prepare(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        integration = self._host_integration
+        if integration is None:
+            return self._domain_error(
+                request_id, "unsupported_capability", "host integration not configured"
+            )
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/hosts.prepare.params.schema.json",
+                dict(params),
+            )
+        except SchemaValidationError as exc:
+            return self._domain_error(request_id, "invalid_argument", str(exc))
+        host_id = params.get("host_id")
+        if not isinstance(host_id, str):
+            return self._domain_error(
+                request_id, "invalid_argument", "host_id must be a string"
+            )
+        service = HostOperationsService(integration)
+        try:
+            result = service.prepare_envelope(host_id)
+        except HostOperationsService.PrepareError as exc:
+            return self._domain_error(request_id, exc.code, str(exc))
         return self._success(request_id, result)
 
     def _success(self, request_id: Any, result: dict[str, Any]) -> dict[str, Any]:

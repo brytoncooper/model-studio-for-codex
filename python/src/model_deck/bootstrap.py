@@ -37,6 +37,7 @@ from model_deck.engine.model_library.use_cases import (
 from model_deck.engine.server import EngineServer
 from model_deck.engine.host_settings.ports import CallerContext, READ_GRANT, WRITE_GRANT, SettingsDocumentPort
 from model_deck.engine.host_settings.service import HostSettingsService
+from model_deck.engine.hosts import HostIntegrationPort
 from model_deck.adapters.events.live_replay import LiveRunEventReplay
 from model_deck.adapters.providers.deterministic import (
     DETERMINISTIC_PROVIDER_ID,
@@ -208,6 +209,7 @@ def build_engine_server(
     enable_fixture_runs: bool = False,
     host_settings_document: SettingsDocumentPort | None = None,
     host_settings_caller: CallerContext | None = None,
+    host_integration: HostIntegrationPort | None = None,
     kernel_composition: KernelComposition | None = None,
     provider_execution: ProviderExecutionPort | None = None,
     provider_route_definitions: Mapping[str, ProviderRouteDefinition] | None = None,
@@ -312,6 +314,7 @@ def build_engine_server(
     usage_query = None
     host_settings = None
     external_extension_host = None
+    projection_coordinator = None
     if host_settings_document is not None and host_settings_caller is not None:
         settings_database = paths.state_root() / "engine" / "host-settings.sqlite3"
         host_settings = HostSettingsService(
@@ -327,7 +330,6 @@ def build_engine_server(
         application_database_path.parent.mkdir(parents=True, exist_ok=True)
         sqlite_models = SQLiteModelRepository(application_database_path)
         sqlite_connections = SQLiteConnectionRepository(application_database_path)
-        projection_coordinator = None
         if projection_root is not None and projection_resolver is not None:
             projection_coordinator = CodexProjectionCoordinator.build(
                 projection_root=projection_root,
@@ -451,6 +453,7 @@ def build_engine_server(
         event_replay=event_replay,
         host_settings=host_settings,
         host_settings_caller=host_settings_caller,
+        host_integration=host_integration,
         kernel_composition=kernel_composition,
         response_preflight=encode_frame,
         usage_query=usage_query,
