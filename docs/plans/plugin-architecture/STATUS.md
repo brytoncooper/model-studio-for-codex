@@ -1,9 +1,9 @@
 # B00-B27 completion audit
 
-The bounded B01/B03/B19/B22 delivery round was integrated 2026-09-13 through
-local revision `a504e75` on `refactor/plugin-architecture`, starting from the
-independently audited and pushed revision `5a09eee`. Final push state is verified
-outside this self-referential document after its commit. The preserved
+The bounded B01/B03/B19/B22 delivery round was integrated 2026-09-13, and the
+B20/B22 package-update milestone was integrated 2026-09-14 on
+`refactor/plugin-architecture`. Final push state is verified outside this
+self-referential document after its commit. The preserved
 `backup/pre-atomic-hih5xei2` ref remained at
 `7660280cc61757b69fb58e8c15bfc67b691b819d`.
 
@@ -52,9 +52,9 @@ requested; no restricted-mode claim is made.
 | B17 | Kernel registration and built-in composition | **Integration remaining** | [kernel](../../../docs/kernel.md), [composition](../../../python/src/model_deck/engine/kernel_composition.py), authenticated generic invocation tests; the former engine-to-plugin-runtime edge is removed behind the application gateway | Migrate static built-ins and specialized provider ports to descriptors, enforce required capabilities at real startup, and prove a minimal vendor-free composition. | None for boundary repair |
 | B18 | Supervised external plugin/provider protocol | **Implementation remaining** | Process runtime/invocation channels, [provider proxy](../../../python/src/model_deck/plugins/provider_proxy/README.md), archived deterministic-provider integration | Add heartbeat, crash backoff/restart-loop and dependency-failure supervision; finish resource/slow-reader/owned-descendant guarantees, credential-scope/model-library-selection proof, shared built-in/external conformance, and explicit resume support. | B17 composition and B19 brokers |
 | B19 | Brokered plugin data, jobs, and events | **Implementation remaining** | Serving external plugins receive storage/job brokers; public `jobs.get`/`jobs.cancel`, owner/activation persistence, bounded result retrieval, terminal exclusivity, cancellation acknowledgement, worker-loss interruption, and restart non-replay pass through the real socket/SQLite path | Add safe explicit resume/runner behavior, event-subscription revocation, confused-deputy/content-grant coverage, and the remaining supervisor lifecycle guarantees. The delivered path intentionally does not replay interrupted work. | B18 serving supervisor |
-| B20 | External package lifecycle | **Implementation remaining** | [external host](../../../python/src/model_deck/plugins/external_host/README.md), activation/data composition, public install/enable/disable used by V2 | Implement inspect/update/remove, permission/provenance presentation, staged non-serving validation, grant-renewal rules, in-flight job outcomes, and failed-update/rollback guarantees. Current host explicitly lacks update and pending-work recovery. | B18-B19 |
+| B20 | External package lifecycle | **Implementation remaining** | [external host](../../../python/src/model_deck/plugins/external_host/README.md), public CLI/socket inspect/install/enable/disable/update/remove, generic V2 update control, immutable side-by-side artifacts, selected-artifact discovery, non-serving validation, failed-candidate rollback, and real switched-boundary restart recovery | Add trusted-executable/provenance and grant-renewal presentation, explicit operator consent for added permissions, and the remaining original in-flight-job, freeze-race, failed-token, and post-activation data-resolution acceptance. Updates currently fail closed to the intersection of prior approvals and newly requested scopes. | B18-B19 |
 | B21 | Declarative extension UI and lifecycle management | **Implementation remaining** | [generic panel decoder/renderer](../../../macos/Sources/ModelDeckPresentation/ExtensionUI/README.md), [V2 app](../../../macos/Sources/ModelDeckV2/README.md) | Add the complete Extensions management experience (install/enable/crash/update/grants), accessibility/focus and all five panel states, and a second unrelated panel proof. Notebook already proves generic list/editor/action rendering. | B20 lifecycle for management states |
-| B22 | Independently packaged Session Notebook | **Implementation remaining** | [Notebook](../../../examples/session-notebook/README.md) now exports actual stored notes through its real job broker; V2 generically observes progress/cancel intent and retrieves bounded Markdown output. Deterministic cancellation and worker-loss/non-replay acceptance pass. | Add optional session-metadata linkage and prove package update plus re-enable preservation. Export completion alone does not close those original requirements. | B20 update; B19 resume remains separate |
+| B22 | Independently packaged Session Notebook | **Implementation remaining** | [Notebook](../../../examples/session-notebook/README.md) CRUD/editor/export plus packaged A-to-B update, retained metadata and revisions, post-update edits, failed-C fallback, restart persistence, and isolated native V2 editing/export are proven. Earlier disable/re-enable retention and deterministic cancellation/non-replay evidence remain valid. | Add the original optional session-metadata link. Public permission-renewal presentation remains a B20/B21 dependency; general job resume remains separate B19 work. | B20/B21 permission presentation for the broader management experience |
 | B23 | Author SDK/tooling and second-language proof | **Implementation remaining** | Public generic invoke and committed validate/pack commands; [authoring guide](../../../python/src/model_deck/plugins/authoring/README.md) | Deliver independent Python SDK/wheel, init/dev/test workflow and fresh-project walkthrough; commit and prove the JavaScript negotiate/invoke/cancel/disable fixture. Existing untracked protocol-fixture work is not audited delivery. | B18/B20 stable lifecycle; B22 acceptance example |
 | B24 | Decide optional restricted execution feasibility | **Complete** | [feasibility decision](../../../docs/architecture/restricted-execution-feasibility.md) | Complete only for the feasibility/ship-scope decision: trusted mode ships and restricted mode is not claimed. A future restricted-mode request would require the currently unsatisfied signed helper/profile, runtime qualification, sibling-file/socket/credential/network/subprocess denial, and descendant-inheritance evidence. | None |
 | B25 | Native presenters and platform attachment parity | **Integration remaining** | Extracted model/usage/settings/platform components, [V2 app](../../../macos/Sources/ModelDeckV2/README.md) | Complete overview/connections/registration/usage/host-launch public-operation wiring; finish the Codex settings editor; prove all five states, generation/main-actor/geometry/focus/appearance/process-lifecycle parity; remove legacy orchestration only afterward. | B10, B15, B16, B21 |
@@ -76,6 +76,21 @@ requested; no restricted-mode claim is made.
   expected Markdown. The manual cancel click lost the fast completion race;
   terminal cancellation is therefore supported by the deterministic
   broker/runtime acceptance test, not claimed from that UI click.
+- The 2026-09-14 B20/B22 milestone adds public inspect/update/remove, immutable
+  version lookup, fail-closed grant intersection, and startup recovery of the
+  real lifecycle journal. Packaged Notebook A-to-B acceptance preserves note
+  metadata/revisions, post-update writes, export output, and restart state. A
+  valid archive with a deliberately mismatched worker version fails after
+  staging without displacing B. A subprocess interruption at durable
+  `SWITCHED` proves prior-engine authority revocation, fresh candidate identity,
+  selected B data preservation, settlement, and exact request replay.
+- An isolated unsigned V2 build under `/tmp/model-deck-b20.6PAKf0` visibly
+  installed/enabled A, loaded two synthetic notes, saved native edits, updated
+  to B with a `1.1.0` panel marker, exported both notes, reported failing C,
+  edited again through B, and reopened B with the final edit. The second build
+  also kept the successful version result visible after panel refresh. Both
+  isolated app/engine process trees were stopped; no live installation or
+  provider request occurred.
 - `37378de` and `548b24d` establish a real isolated Codex CLI workflow through
   the V2 loopback bridge and composed OpenAI-compatible provider: tools, project
   mutation, passing test, same-thread continuation, usage, and disconnect-driven

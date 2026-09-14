@@ -17,7 +17,12 @@ agent. Existing untracked files are not assumed available or accepted.
   behavior still belong to B19.
 - **B22 export advanced (`779a8da`):** Notebook exports actual stored notes and
   V2 observes/retrieves the generic result. Optional session metadata and
-  update/re-enable preservation remain.
+  update/re-enable preservation remained at that checkpoint.
+- **A8/B22 update advanced (2026-09-14):** public inspect/update/remove, generic
+  native update, packaged Notebook preservation, failed-candidate fallback, and
+  real switched-boundary restart recovery are delivered. B20 remains open for
+  permission/provenance presentation and its remaining original fault/job
+  acceptance; B22 remains open for optional session-metadata linkage.
 
 B16 refresh work is newly unblocked by the public job path. Do not repeat A1 or
 A2; continue the exact remaining requirements above rather than reopening their
@@ -213,7 +218,7 @@ the original slice.
 - **Stop condition:** A required provider/plugin protocol change or new process
   authority returns to the primary agent.
 
-### A8 - Package update/remove lifecycle
+### A8 - Package update/remove lifecycle — advanced 2026-09-14
 
 - **Outcome:** Public inspect/update/remove completes the existing
   install/enable/disable lifecycle without grant or plugin-data loss.
@@ -228,6 +233,16 @@ the original slice.
   failed update retains prior executable/data/grants; permission expansion
   requires renewed consent; in-flight jobs get explicit outcomes; remove retains
   data; restart completes or rolls back pending transitions safely.
+- **Delivered evidence:** The public socket and CLI expose inspect/update/remove;
+  immutable artifacts are resolved by the selected lifecycle record; Notebook
+  A-to-B update, late candidate-startup failure, remove, fail-closed permission
+  intersection, and durable `SWITCHED` restart recovery pass through real
+  subprocesses and persistent SQLite stores. V2 supplies a generic update action
+  with visible success/failure state.
+- **Still required before closing B20:** trusted-executable/provenance and
+  permission-renewal presentation with explicit operator consent, plus the
+  remaining original in-flight-job, freeze-race, failed-token, and
+  post-activation data-resolution acceptance at the composed boundary.
 - **Non-goals:** Marketplace/network install, data deletion UX, native management
   UI, sandboxing, or live installation.
 - **Parallelism:** Record/transaction tests can run with A7 until process handoff.
