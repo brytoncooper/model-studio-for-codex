@@ -73,6 +73,35 @@ For MCP qualification, start `model_deck_mcp.py` with the V2 engine's explicit
 same engine operations as the native controls. Do not point these variables at
 the live app's files.
 
+## Codex host adapter fixture
+
+The Codex host package now extracts app-server mapping and runtime discovery
+behind application-owned ports. An injected `CodexHostAdapter` enables the
+frozen `engine.v1.hosts.list` and `engine.v1.hosts.prepare` operations; launch
+preparation is pure and preserves only per-process configuration overrides.
+The existing model catalog/provider router are injected into the extracted
+`AppServerBridge`, so model projection and provider execution remain owned by
+their existing systems. Host-bound `gpt-*` subscription requests remain in
+Codex host context rather than entering the generic HTTP provider adapter.
+
+Reproduce the isolated B10 acceptance without launching Codex or reading live
+state:
+
+```sh
+PYTHONPATH=python/src /tmp/md-b18-venv/bin/python -B -m unittest \
+  python/tests/engine/test_host_operations.py \
+  python/tests/engine/test_host_bootstrap.py \
+  python/tests/integrations/hosts/codex/test_host_adapter.py \
+  python/tests/integrations/hosts/codex/test_runtime.py \
+  python/tests/integrations/hosts/codex/test_app_server.py \
+  test_provider_bridge.py test_codex_runtime.py -q
+```
+
+This fixture proves supported, unknown, unsupported, and already-running
+behavior; public socket composition; method/event/catalog parity; cancellation
+and approval ownership; and per-process overrides. It does not prove live
+Codex Desktop attachment or model reload.
+
 ## Isolated Codex coding workflow
 
 The coding proof uses the actual Codex CLI, not Codex Desktop. The helper gives
@@ -244,9 +273,9 @@ OpenAI-compatible route and serial tool calls only; parallel tool-call responses
 are rejected rather than truncated. Codex Desktop UI integration,
 live-provider opaque reasoning/compaction qualification, provider-reported cost, marketplace,
 signing, distribution, bundled Python, and live-app cutover are not qualified.
-Actual Codex process reload/discovery remains a B10 qualification; this
-milestone verifies the isolated managed-agent files and engine status, not live
-Codex Desktop behavior.
+Actual Codex Desktop attachment and model reload remain separately unqualified;
+B10's applicable fake-app-server acceptance verifies the isolated adapter and
+launch preparation, not live Codex Desktop behavior.
 Normal quit drains and reaps the engine and extension workers. The final
 SIGKILL fallback is deliberately scoped to the known engine PID; a deliberately
 nonresponsive extension that survives closed stdio could require a future exact

@@ -65,6 +65,7 @@ conflict/recovery, and the staged MCP entrypoint.
 - The resolver is deliberately bound to the one provider profile supplied by
   isolated V2. A committed connection whose opaque references no longer match
   that profile fails projection instead of guessing metadata.
-- Host reload/discovery in an actual Codex process remains B10. These tests
-  verify the exact isolated `CODEX_HOME/agents` materialization contract without
-  launching or modifying live Codex.
+- Host reload in an actual Codex Desktop process remains live qualification.
+  B10's isolated adapter tests cover discovery and pure launch preparation;
+  these projection tests verify the exact isolated `CODEX_HOME/agents`
+  materialization contract without launching or modifying live Codex.

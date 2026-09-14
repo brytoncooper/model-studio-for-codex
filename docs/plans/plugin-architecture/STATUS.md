@@ -20,15 +20,15 @@ narrow milestone does not close a broader workstream.
 
 ## Result
 
-- **Complete:** 15
+- **Complete:** 16
 - **Implemented; verification remaining:** 0
-- **Integration or implementation remaining:** 11
+- **Integration or implementation remaining:** 10
 - **Blocked:** 1
 - **Removed from scope:** 1 (B11; not completed)
 - **Scope decision required:** 0
 
 The completed workstreams are B00, B01, B02, B03, B04, B05, B06, B07, B08,
-B09, B12, B13, B14, B15, and B24. B24 is complete
+B09, B10, B12, B13, B14, B15, and B24. B24 is complete
 because its original deliverable was a feasibility investigation and decision,
 not a mandatory production sandbox. The decision is to ship trusted executable
 mode only unless a separately qualified restricted helper/profile is later
@@ -47,8 +47,8 @@ requested; no restricted-mode claim is made.
 | B06 | MCP convergence on application use cases | **Complete** | [MCP adapter](../../../python/src/model_deck/integrations/clients/mcp/README.md), engine-backed add/remove/display-name/list tests, and staged stdio entrypoint proof against an authenticated isolated engine | None for original B06. Benchmark refresh remains B16 and legacy fallback remains selected when engine paths are absent. | None |
 | B07 | Revisioned connection/model transactions | **Complete** | The shared [repository conformance suite](../../../python/tests/engine/test_repository_conformance.py) runs the same lifecycle, stable-identity, revision-conflict, exact-replay/payload-conflict, detached-read, reference-only-record, and deterministic competing-update cases against behaviorally accurate fakes and SQLite. SQLite-only persistence/outbox/rollback coverage remains separate. The public socket test still proves removal rejects new admission while the already-admitted run completes on its captured route. | None | None |
 | B08 | Deterministic redacted legacy-import preview | **Complete** | [preview guide](../../../python/src/model_deck/integrations/hosts/codex/migration_preview/README.md), [preview tests](../../../python/tests/integrations/hosts/codex/test_migration_preview.py); all 36 deterministic-repeat, hash, collision, malformed/foreign/symlink, preservation, and secret-redaction cases passed with `TMPDIR=/private/tmp` | None; prototype apply/rollback is removed from scope. | None |
-| B09 | Conflict-aware host projection/outbox reconciliation | **Complete** | [projection composition](../../../python/src/model_deck/integrations/hosts/codex/projection_composition/README.md), bootstrap/dispatch coordinator, persisted status, and isolated full-path tests for add/rename/connection fanout/remove/restart/foreign conflict recovery | None for original B09. Live Codex launch/reload compatibility remains B10 and authorized tool switching remains B27. | None |
-| B10 | Codex host adapter and compatibility profile | **Implementation remaining** | [Codex bridge primitives](../../../python/src/model_deck/integrations/hosts/codex/bridge.py), legacy bridge/runtime tests | Extract and compose app-server discovery/mapping/launch preparation, compatibility tri-state and unknown-version refusal; prove projection, cancellation ownership, per-process overrides, and host-bound subscription behavior with a fake app-server. The V2 loopback Responses bridge is narrower evidence. | B09 projection composition |
+| B09 | Conflict-aware host projection/outbox reconciliation | **Complete** | [projection composition](../../../python/src/model_deck/integrations/hosts/codex/projection_composition/README.md), bootstrap/dispatch coordinator, persisted status, and isolated full-path tests for add/rename/connection fanout/remove/restart/foreign conflict recovery | None for original B09. Live Codex Desktop reload remains separate qualification and authorized tool switching remains B27. | None |
+| B10 | Codex host adapter and compatibility profile | **Complete** | [Codex host guide](../../../python/src/model_deck/integrations/hosts/codex/README.md), extracted app-server/runtime adapters, frozen engine host operations, thin legacy wrapper, and 94 focused fake-bundle/app-server tests | None for applicable B10 acceptance. Live Codex Desktop attachment/reload remains unqualified and is not inferred from isolated fixtures. | None |
 | B11 | Prototype migration and rollback rehearsal | **Removed from scope** | [Fresh-start decision](V2-SCOPE.md) | No prototype import required. V2 schema evolution and recovery remain B26 acceptance; plugin recovery remains B20. | None |
 | B12 | Durable sessions/runs state machine with fixture provider | **Complete** | [runs](../../../python/src/model_deck/engine/runs/README.md), [run use-case tests](../../../python/tests/engine/test_run_use_cases.py), [repository tests](../../../python/tests/engine/test_sqlite_session_run_repository.py), dispatch/replay/startup recovery, and V2 workflow; 83 current tests passed for admission replay, single dispatch, recovery, cancellation races, slow readers, capabilities, and route snapshots | None | None |
 | B13 | HTTP provider execution and wire translation | **Complete** | Composed [execution port](../../../python/src/model_deck/integrations/providers/openai_compatible/execution.py), [profile composition](../../../python/src/model_deck/integrations/providers/openai_compatible/configuration.py), [execution tests](../../../python/tests/provider_openai_compatible/test_execution.py), request/event/stream tests, and V2 live coding evidence; 124 current tests passed, including pre-body fallback, no retry after a started/decoded response, malformed/truncated streams, tools, cancel, and real-engine injection. Host-native subscription passthrough remains host-bound rather than entering this general endpoint adapter. | None for the original HTTP-adapter slice. Existing legacy code need not be removed, but prototype compatibility is not a B26 gate; Cursor and continuation remain B14/B15 and live cutover remains B27. | None |

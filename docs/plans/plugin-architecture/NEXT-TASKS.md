@@ -313,7 +313,7 @@ reaches the same projection; absent paths retain the legacy rollback route.
 
 ## 5. Dependency-ordered assignments
 
-### D1 - Codex host adapter
+### D1 - Codex host adapter — delivered
 
 - **Outcome:** Public host preparation reports compatibility and maps Codex
   app-server behavior without global configuration changes.
@@ -326,6 +326,13 @@ reaches the same projection; absent paths retain the legacy rollback route.
 - **Acceptance:** Fake app-server proves available/already-running-unverified/
   incompatible states, unknown-version refusal, method/event/projection parity,
   cancellation ownership, per-process overrides, and host-bound subscription.
+- **Delivered:** Package-owned app-server/runtime adapters, the application-owned
+  host port, conditional frozen `hosts.list`/`hosts.prepare` engine operations,
+  real-adapter socket composition over a fake bundle, and a thin legacy
+  entrypoint wrapper. The focused isolated suite passes 94 tests without
+  launching Codex or reading live state.
+- **Remaining:** None for B10's applicable fake-server acceptance. Live Codex
+  Desktop attachment/reload is a separate authorized qualification boundary.
 - **Non-goals:** Live Codex, migration, provider execution, or native UI.
 - **Parallelism:** Can run with D3-D5 after A4 settles shared host contracts.
 - **Stop condition:** Any public host-contract expansion returns to the primary
