@@ -24,6 +24,59 @@ class LifecycleConflictError(ValueError):
     """Revision, phase or operation ownership changed; no mutation applied."""
 
 
+class ExtensionHostConflictError(RuntimeError):
+    """Application-level extension gateway conflict."""
+
+
+class ExtensionHostUnavailableError(RuntimeError):
+    """Application-level extension gateway is not serving."""
+
+
+@runtime_checkable
+class ExtensionGateway(Protocol):
+    """Public engine-facing gateway for installed extension operations."""
+
+    def install(
+        self,
+        archive_path,
+        *,
+        principal: str,
+        idempotency_key: str,
+        expected_revision: int,
+    ): ...
+    def enable(
+        self,
+        extension_id: str,
+        *,
+        principal: str,
+        idempotency_key: str,
+        expected_revision: int,
+    ): ...
+    def disable(
+        self,
+        extension_id: str,
+        *,
+        principal: str,
+        idempotency_key: str,
+        expected_revision: int,
+    ): ...
+    def get_extension(self, extension_id: str): ...
+    def list_extensions(self): ...
+    def operation_catalog(self): ...
+    def invoke_result(
+        self,
+        operation: str,
+        input: dict,
+        *,
+        principal: str,
+        idempotency_key: str,
+    ): ...
+    def ui_contributions(self): ...
+    def panel_get(self, panel_id: str): ...
+    def job_get(self, params: dict, *, principal: str): ...
+    def job_cancel(self, params: dict, *, principal: str): ...
+
+
 class LifecycleIdempotencyConflictError(LifecycleConflictError):
     """Same principal/method/key with a different immutable request digest."""
 

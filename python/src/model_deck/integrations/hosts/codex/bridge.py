@@ -14,8 +14,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from model_deck.adapters.transport.rendezvous import load_rendezvous_file
-from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
 from model_deck.engine.runs.input_codec import normalized_messages_to_wire
 
 from .input_normalization import CodexInputNormalizationError, normalize_codex_input
@@ -30,12 +28,21 @@ _TERMINAL_KINDS = frozenset({"run.completed", "run.failed", "run.cancelled", "ru
 class EngineRPC:
     """Small authenticated client for the engine's public Unix JSON-RPC API."""
 
-    def __init__(self, rendezvous_path: Path, credential_path: Path) -> None:
+    def __init__(
+        self,
+        rendezvous_path: Path,
+        credential_path: Path,
+        *,
+        rendezvous_loader: Any,
+        client_factory: Any,
+    ) -> None:
         self._rendezvous_path = Path(rendezvous_path)
         self._credential_path = Path(credential_path)
+        self._load_rendezvous = rendezvous_loader
+        self._client_factory = client_factory
 
     def _authenticate(self, session: Any) -> None:
-        descriptor = load_rendezvous_file(self._rendezvous_path)
+        descriptor = self._load_rendezvous(self._rendezvous_path)
         credential = self._credential_path.read_text(encoding="utf-8").strip()
         response = session.call({
             "jsonrpc": "2.0", "id": "authenticate", "method": "engine.v1.hello",
@@ -54,8 +61,8 @@ class EngineRPC:
             raise RuntimeError("engine authentication failed")
 
     def call(self, method: str, params: dict[str, Any]) -> Any:
-        descriptor = load_rendezvous_file(self._rendezvous_path)
-        client = UnixSocketEngineClient(descriptor.socket_path, timeout_seconds=30)
+        descriptor = self._load_rendezvous(self._rendezvous_path)
+        client = self._client_factory(descriptor.socket_path, timeout_seconds=30)
         with client.session() as session:
             self._authenticate(session)
             response = session.call({"jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": method, "params": params})
@@ -64,8 +71,8 @@ class EngineRPC:
         return response.get("result")
 
     def subscribe_events(self, run_id: str) -> Iterator[dict[str, Any]]:
-        descriptor = load_rendezvous_file(self._rendezvous_path)
-        client = UnixSocketEngineClient(descriptor.socket_path, timeout_seconds=600)
+        descriptor = self._load_rendezvous(self._rendezvous_path)
+        client = self._client_factory(descriptor.socket_path, timeout_seconds=600)
         with client.session() as session:
             self._authenticate(session)
             response = session.call({
@@ -204,8 +211,8 @@ class _ResponsesStream:
 class CodexResponsesBridge:
     """Own the loopback HTTP server and map Codex threads to engine sessions."""
 
-    def __init__(self, *, rendezvous_path: Path, credential_path: Path, profile: Any, state_path: Path, token_path: Path, descriptor_path: Path) -> None:
-        self.engine = EngineRPC(Path(rendezvous_path), Path(credential_path))
+    def __init__(self, *, rendezvous_path: Path, credential_path: Path, profile: Any, state_path: Path, token_path: Path, descriptor_path: Path, rendezvous_loader: Any, client_factory: Any) -> None:
+        self.engine = EngineRPC(Path(rendezvous_path), Path(credential_path), rendezvous_loader=rendezvous_loader, client_factory=client_factory)
         self.profile = profile
         self.state = BridgeState(Path(state_path))
         self.token_path = Path(token_path)

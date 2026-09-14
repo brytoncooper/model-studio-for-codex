@@ -30,6 +30,7 @@ from model_deck.integrations.providers.openai_compatible.configuration import (
     endpoint_resolver_from_records,
     subprocess_credential_resolver,
 )
+from model_deck.adapters.routing.registered import ProviderRouteDefinition
 
 
 CONNECTION_ID = "550e8400-e29b-41d4-a716-44665544000a"
@@ -461,6 +462,7 @@ class ComposeOpenAICompatibleProfileTests(unittest.TestCase):
                 profile,
                 post_stream=lambda **kwargs: None,
                 endpoint_resolver=resolver,
+                route_definition_factory=ProviderRouteDefinition,
             )
             self.assertEqual(len(definitions), 1)
             definition = definitions[PROVIDER_ID]

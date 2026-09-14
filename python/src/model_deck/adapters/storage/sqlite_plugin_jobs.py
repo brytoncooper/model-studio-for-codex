@@ -1,4 +1,4 @@
-"""SQLite durable plugin job STATE repository (B19 slice)."""
+"""SQLite durable plugin job STATE repository (B19/B22 slice)."""
 from __future__ import annotations
 
 import json
@@ -13,7 +13,9 @@ from typing import Any
 from model_deck.engine.jobs.ports import (
     ACTIVE_JOB_STATES,
     CHECKPOINT_MAX_BYTES,
+    JSON_VALUE_MAX_BYTES,
     TERMINAL_JOB_STATES,
+    BoundedJsonValidationError,
     ClaimJobCommand,
     CompleteJobCommand,
     ConfirmCancelCommand,
@@ -21,19 +23,24 @@ from model_deck.engine.jobs.ports import (
     FAILURE_CODES,
     FailJobCommand,
     GetJobCommand,
+    GetPublicCommand,
     JobCheckpointConflictError,
     JobCheckpointValidationError,
     JobNotFoundError,
+    JobOriginMismatchError,
     JobOwner,
     JobOwnershipMismatchError,
+    JobPublicView,
     JobRecord,
     JobState,
     JobStateConflictError,
     JobTerminalConflictError,
     ReportProgressCommand,
     RequestCancelCommand,
+    RequestCancelPublicCommand,
     SaveCheckpointCommand,
     WorkerCrashResult,
+    validate_bounded_json_value,
 )
 
 _SCHEMA_SQL = """
@@ -46,10 +53,12 @@ CREATE TABLE IF NOT EXISTS plugin_jobs (
     state TEXT NOT NULL,
     progress REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
+    origin_principal_id TEXT NOT NULL DEFAULT '',
     cancel_requested INTEGER NOT NULL DEFAULT 0,
     checkpoint_revision INTEGER NOT NULL DEFAULT 0,
     checkpoint_schema_id TEXT,
     checkpoint_json TEXT,
+    output_json TEXT,
     failure_code TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_plugin_jobs_activation_state
@@ -81,6 +90,7 @@ class SQLitePluginJobRepository:
         self._require_owner(command.owner)
         self._require_text("invocation_id", command.invocation_id)
         self._require_text("operation_id", command.operation_id)
+        self._require_text("origin_principal_id", command.origin_principal_id)
         if command.checkpoint_schema_id is not None:
             self._require_text("checkpoint_schema_id", command.checkpoint_schema_id)
         conn = self._connect()
@@ -97,13 +107,15 @@ class SQLitePluginJobRepository:
                     state=JobState.QUEUED,
                     progress=0.0,
                     created_at=self._utc_clock(),
+                    origin_principal_id=command.origin_principal_id,
                     checkpoint_schema_id=command.checkpoint_schema_id,
                 )
                 conn.execute(
                     "INSERT INTO plugin_jobs (job_id, plugin_id, activation_id, invocation_id,"
-                    " operation_id, state, progress, created_at, cancel_requested,"
-                    " checkpoint_revision, checkpoint_schema_id, checkpoint_json, failure_code)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, NULL, NULL)",
+                    " operation_id, state, progress, created_at, origin_principal_id,"
+                    " cancel_requested, checkpoint_revision, checkpoint_schema_id,"
+                    " checkpoint_json, output_json, failure_code)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, NULL, NULL, NULL)",
                     (
                         record.job_id,
                         record.plugin_id,
@@ -113,6 +125,7 @@ class SQLitePluginJobRepository:
                         JobState.QUEUED.value,
                         0.0,
                         record.created_at,
+                        record.origin_principal_id,
                         record.checkpoint_schema_id,
                     ),
                 )
@@ -159,6 +172,8 @@ class SQLitePluginJobRepository:
             try:
                 row = self._load_row(conn, command.job_id)
                 self._check_owner(row, command.owner)
+                if row["state"] in {s.value for s in TERMINAL_JOB_STATES}:
+                    raise JobTerminalConflictError("job already terminal")
                 self._require_active(row)
                 if command.progress < float(row["progress"]) - 1e-12:
                     raise JobStateConflictError("progress must be monotonic")
@@ -249,11 +264,27 @@ class SQLitePluginJobRepository:
 
     def confirm_cancel(self, command: ConfirmCancelCommand) -> JobRecord:
         return self._terminalize(
-            command.job_id, command.owner, JobState.CANCELLED, None
+            command.job_id, command.owner, JobState.CANCELLED, None, None, False
         )
 
     def complete(self, command: CompleteJobCommand) -> JobRecord:
-        return self._terminalize(command.job_id, command.owner, JobState.COMPLETED, None)
+        # Encode the output JSON up front so the storage transaction either
+        # commits both state and output atomically or rolls them back together.
+        # ``output_present`` distinguishes "worker did not supply output"
+        # from "worker supplied explicit JSON null"; only the latter is
+        # persisted, matching the public schema's optional output slot.
+        if command.output_present:
+            encoded = self._encode_output(command.output)
+        else:
+            encoded = None
+        return self._terminalize(
+            command.job_id,
+            command.owner,
+            JobState.COMPLETED,
+            None,
+            encoded,
+            command.output_present,
+        )
 
     def fail(self, command: FailJobCommand) -> JobRecord:
         self._require_text("failure_code", command.failure_code)
@@ -262,7 +293,12 @@ class SQLitePluginJobRepository:
                 f"failure_code must be one of {sorted(FAILURE_CODES)}"
             )
         return self._terminalize(
-            command.job_id, command.owner, JobState.FAILED, command.failure_code
+            command.job_id,
+            command.owner,
+            JobState.FAILED,
+            command.failure_code,
+            None,
+            False,
         )
 
     def get(self, command: GetJobCommand) -> JobRecord:
@@ -270,6 +306,77 @@ class SQLitePluginJobRepository:
         try:
             self._ensure_schema(conn)
             return self._get(conn, command.job_id)
+        finally:
+            conn.close()
+
+    def get_public(self, command: GetPublicCommand) -> JobPublicView:
+        self._require_text("job_id", command.job_id)
+        self._require_text("caller_principal_id", command.caller_principal_id)
+        conn = self._connect()
+        try:
+            self._ensure_schema(conn)
+            row = self._load_row(conn, command.job_id)
+            stored_origin = row["origin_principal_id"]
+            if not stored_origin:
+                # Backstop: rows created before origin was captured must not
+                # authorize any public reader.
+                raise JobOriginMismatchError("job has no recorded origin")
+            if stored_origin != command.caller_principal_id:
+                raise JobOriginMismatchError(
+                    "caller is not the originating principal"
+                )
+            return self._to_public_view(row)
+        finally:
+            conn.close()
+
+    def request_cancel_public(
+        self, command: RequestCancelPublicCommand
+    ) -> bool:
+        """Record a public cancel intent.
+
+        Returns True iff the request was accepted against an active job
+        (the durable ``cancel_requested`` flag is set or was already set on
+        a prior call). Returns False when the job is already terminal: the
+        caller did not need to ask because the outcome is settled. Origin
+        mismatch raises ``JobOriginMismatchError``; missing job raises
+        ``JobNotFoundError``.
+        """
+        self._require_text("job_id", command.job_id)
+        self._require_text("caller_principal_id", command.caller_principal_id)
+        conn = self._connect()
+        try:
+            self._ensure_schema(conn)
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._load_row(conn, command.job_id)
+                stored_origin = row["origin_principal_id"]
+                if not stored_origin:
+                    raise JobOriginMismatchError("job has no recorded origin")
+                if stored_origin != command.caller_principal_id:
+                    raise JobOriginMismatchError(
+                        "caller is not the originating principal"
+                    )
+                if row["state"] in {s.value for s in TERMINAL_JOB_STATES}:
+                    conn.commit()
+                    return False
+                if int(row["cancel_requested"]) == 1:
+                    # Idempotent repeat: cancel intent already recorded.
+                    conn.commit()
+                    return True
+                conn.execute(
+                    "UPDATE plugin_jobs SET cancel_requested = 1 WHERE job_id = ?"
+                    " AND state IN (?, ?)",
+                    (
+                        command.job_id,
+                        JobState.QUEUED.value,
+                        JobState.RUNNING.value,
+                    ),
+                )
+                conn.commit()
+                return True
+            except Exception:
+                conn.rollback()
+                raise
         finally:
             conn.close()
 
@@ -324,7 +431,13 @@ class SQLitePluginJobRepository:
             conn.close()
 
     def _terminalize(
-        self, job_id: str, owner: JobOwner, outcome: JobState, failure_code: str | None
+        self,
+        job_id: str,
+        owner: JobOwner,
+        outcome: JobState,
+        failure_code: str | None,
+        output_json: str | None,
+        output_present: bool,
     ) -> JobRecord:
         conn = self._connect()
         try:
@@ -337,11 +450,26 @@ class SQLitePluginJobRepository:
                     raise JobTerminalConflictError("job already terminal")
                 if row["state"] not in {s.value for s in ACTIVE_JOB_STATES}:
                     raise JobStateConflictError("job is not active")
-                updated = conn.execute(
-                    "UPDATE plugin_jobs SET state = ?, failure_code = ?"
-                    " WHERE job_id = ? AND state = ?",
-                    (outcome.value, failure_code, job_id, row["state"]),
-                )
+                if outcome is JobState.COMPLETED and output_present:
+                    updated = conn.execute(
+                        "UPDATE plugin_jobs SET state = ?, failure_code = ?,"
+                        " output_json = ? WHERE job_id = ? AND state = ?",
+                        (
+                            outcome.value,
+                            failure_code,
+                            output_json,
+                            job_id,
+                            row["state"],
+                        ),
+                    )
+                else:
+                    # Only COMPLETED may persist output; never accept output on
+                    # FAILED / CANCELLED / INTERRUPTED.
+                    updated = conn.execute(
+                        "UPDATE plugin_jobs SET state = ?, failure_code = ?"
+                        " WHERE job_id = ? AND state = ?",
+                        (outcome.value, failure_code, job_id, row["state"]),
+                    )
                 if updated.rowcount != 1:
                     raise JobTerminalConflictError("terminal race")
                 conn.commit()
@@ -362,6 +490,33 @@ class SQLitePluginJobRepository:
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript(_SCHEMA_SQL)
+        self._migrate_add_origin_principal_id(conn)
+        self._migrate_add_output_json(conn)
+
+    def _migrate_add_origin_principal_id(self, conn: sqlite3.Connection) -> None:
+        """Add the origin_principal_id column if it is missing.
+
+        Older rows predate origin capture; they stay readable but cannot
+        satisfy a public reader, so the column is backfilled with the empty
+        string and the public read path treats empty as missing.
+        """
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(plugin_jobs)").fetchall()}
+        if "origin_principal_id" in existing:
+            return
+        conn.execute(
+            "ALTER TABLE plugin_jobs ADD COLUMN origin_principal_id TEXT NOT NULL DEFAULT ''"
+        )
+
+    def _migrate_add_output_json(self, conn: sqlite3.Connection) -> None:
+        """Add the bounded output_json column if missing.
+
+        Output is only ever written together with a successful COMPLETED
+        transition, so no backfill is needed for legacy rows.
+        """
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(plugin_jobs)").fetchall()}
+        if "output_json" in existing:
+            return
+        conn.execute("ALTER TABLE plugin_jobs ADD COLUMN output_json TEXT")
 
     def _load_row(self, conn: sqlite3.Connection, job_id: str) -> sqlite3.Row:
         row = conn.execute(
@@ -387,6 +542,18 @@ class SQLitePluginJobRepository:
 
     @staticmethod
     def _to_record(row: sqlite3.Row) -> JobRecord:
+        # Decode stored output_json if present; absent column means no
+        # completed output was ever written.
+        output_present = row["output_json"] is not None
+        if output_present:
+            try:
+                decoded = json.loads(row["output_json"])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"stored output_json is not valid JSON: {exc}"
+                ) from exc
+        else:
+            decoded = None
         return JobRecord(
             job_id=row["job_id"],
             plugin_id=row["plugin_id"],
@@ -396,11 +563,40 @@ class SQLitePluginJobRepository:
             state=JobState(row["state"]),
             progress=float(row["progress"]),
             created_at=row["created_at"],
+            origin_principal_id=row["origin_principal_id"],
             cancel_requested=bool(row["cancel_requested"]),
             checkpoint_revision=int(row["checkpoint_revision"]),
             checkpoint_schema_id=row["checkpoint_schema_id"],
             checkpoint_json=row["checkpoint_json"],
+            output=decoded,
+            output_present=output_present,
             failure_code=row["failure_code"],
+        )
+
+    @staticmethod
+    def _to_public_view(row: sqlite3.Row) -> JobPublicView:
+        # Only COMPLETED rows are eligible to expose a public output value.
+        state = JobState(row["state"])
+        if state is JobState.COMPLETED and row["output_json"] is not None:
+            try:
+                decoded = json.loads(row["output_json"])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"stored output_json is not valid JSON: {exc}"
+                ) from exc
+            return JobPublicView(
+                job_id=row["job_id"],
+                state=state,
+                progress=float(row["progress"]),
+                output_present=True,
+                output=decoded,
+            )
+        return JobPublicView(
+            job_id=row["job_id"],
+            state=state,
+            progress=float(row["progress"]),
+            output_present=False,
+            output=None,
         )
 
     @staticmethod
@@ -428,6 +624,11 @@ class SQLitePluginJobRepository:
             raise ValueError("expected_revision must be an int")
         if value < 0:
             raise ValueError("expected_revision must be >= 0")
+
+    @staticmethod
+    def _require_active(row: sqlite3.Row) -> None:
+        if row["state"] not in {s.value for s in ACTIVE_JOB_STATES}:
+            raise JobStateConflictError("job is not active")
 
     @staticmethod
     def _require_strict_json(value: Any) -> None:
@@ -458,13 +659,6 @@ class SQLitePluginJobRepository:
         )
 
     @staticmethod
-    def _require_active(row: sqlite3.Row) -> None:
-        if row["state"] in {s.value for s in TERMINAL_JOB_STATES}:
-            raise JobTerminalConflictError("job is terminal")
-        if row["state"] not in {s.value for s in ACTIVE_JOB_STATES}:
-            raise JobStateConflictError("job is not active")
-
-    @staticmethod
     def _encode_checkpoint(value: Any) -> str:
         try:
             payload = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -472,4 +666,24 @@ class SQLitePluginJobRepository:
             raise JobCheckpointValidationError(f"checkpoint is not JSON: {exc}") from exc
         if len(payload.encode("utf-8")) > CHECKPOINT_MAX_BYTES:
             raise JobCheckpointValidationError("checkpoint exceeds 1 MiB")
+        return payload
+
+    @classmethod
+    def _encode_output(cls, value: Any) -> str:
+        """Encode a bounded output value with the application-owned validator.
+
+        Validation caps, depth and node limits live in
+        ``validate_bounded_json_value``; the storage adapter only enforces the
+        encoded-payload size cap (1 MiB) so the durable row stays bounded.
+        """
+        try:
+            validate_bounded_json_value(value)
+        except BoundedJsonValidationError as exc:
+            raise JobCheckpointValidationError(str(exc)) from exc
+        try:
+            payload = json.dumps(value, separators=(",", ":"), allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise JobCheckpointValidationError("output is not JSON") from exc
+        if len(payload.encode("utf-8")) > JSON_VALUE_MAX_BYTES:
+            raise JobCheckpointValidationError("output exceeds 1 MiB")
         return payload

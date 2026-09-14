@@ -56,10 +56,13 @@ Parameters and results follow the frozen schemas. `fail` accepts the frozen
 committed `FAILURE_CODES`, `retryable` is required, and optional `message` /
 `request_id` must be strings when present (empty strings are valid), are
 validated, and are then ignored. Only the code is persisted.
-`check_cancelled` reports the `cancel_requested` flag only, never the
-confirmed terminal state. Terminal jobs stay terminal: second terminal
-writes conflict and no call claims, resumes, or restarts work. Errors are
-fixed safe codes with no raw repository or authority detail.
+`check_cancelled` is the worker acknowledgement point. When it observes a
+pending cancellation on an active job, it attempts the single terminal
+transition to `cancelled` before returning. A concurrent terminal writer can
+win; the durable job state remains authoritative, and public cancellation never
+promises termination. Terminal jobs stay terminal: second terminal writes
+conflict and no call claims, resumes, or restarts work. Errors are fixed safe
+codes with no raw repository or authority detail.
 
 Error codes: `broker invalid request`, `broker job not found`,
 `broker job conflict`, `broker job terminal`, `broker authority denied`,
@@ -67,8 +70,10 @@ Error codes: `broker invalid request`, `broker job not found`,
 
 ## Scope
 
-Root public `jobs.get` (`contracts/engine.v1/methods/jobs.get.*`) lives
-outside this broker and reports `job_id`, `state` (including `interrupted`),
-and `progress`; it never resumes work. This broker exposes no `get` helper.
-Operator cancel APIs, explicit resume, and the runner remain out of scope:
-this broker does not claim full B19.
+Public `engine.v1.jobs.get` and `engine.v1.jobs.cancel` live outside this worker
+broker. They are composed by the external host against the same repository and
+authorize the authenticated application principal against the origin captured
+at creation. `get` reports state/progress and an optional completed result;
+`cancel` durably requests cancellation but never confirms termination. Explicit
+resume and the runner remain out of scope, so this slice does not claim full
+B19.

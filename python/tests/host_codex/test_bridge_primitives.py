@@ -141,6 +141,7 @@ class CodexResponsesBridgeHTTPTests(unittest.TestCase):
             rendezvous_path=root / "rendezvous.json", credential_path=root / "credential",
             profile=profile, state_path=root / "bridge-state.json",
             token_path=root / "bridge-token", descriptor_path=root / "bridge.json",
+            rendezvous_loader=lambda _path: None, client_factory=lambda *args, **kwargs: None,
         )
         self.engine = _FakeEngine()
         self.bridge.engine = self.engine

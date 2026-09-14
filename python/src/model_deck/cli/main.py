@@ -96,9 +96,12 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
                 OpenAICompatibleProfile,
                 compose_openai_compatible_profile,
             )
+            from model_deck.adapters.routing.registered import ProviderRouteDefinition
 
             profile = OpenAICompatibleProfile.load(provider_config_path)
-            provider_execution, provider_routes = compose_openai_compatible_profile(profile)
+            provider_execution, provider_routes = compose_openai_compatible_profile(
+                profile, route_definition_factory=ProviderRouteDefinition
+            )
         except (OSError, RuntimeError, TypeError, ValueError):
             _stderr("engine serve: provider configuration is unavailable")
             return 1
@@ -140,6 +143,8 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
             state_path=bridge_state_path,
             token_path=token_path,
             descriptor_path=descriptor_path,
+            rendezvous_loader=load_rendezvous_file,
+            client_factory=UnixSocketEngineClient,
         )
         runtime.server.start()
         try:

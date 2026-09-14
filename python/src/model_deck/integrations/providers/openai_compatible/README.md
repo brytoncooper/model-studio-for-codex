@@ -1,5 +1,10 @@
 # OpenAI-compatible streaming boundary
 
+The profile composer is an outer-composition seam: callers must supply
+`route_definition_factory` (typically the routing adapter's
+`ProviderRouteDefinition`). The provider integration does not import or choose
+that concrete adapter.
+
 This package decodes provider stream bytes and checks normalized run-event
 ordering. It does not make HTTP requests, resolve credentials, translate host
 history, choose fallback protocols, or prove live provider compatibility.

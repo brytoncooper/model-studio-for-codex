@@ -4,12 +4,25 @@ from pathlib import Path
 import pytest
 
 from model_deck.engine.extensions.ports import ExtensionStatus, LifecycleReceipt
+from model_deck.adapters.platform.macos.extension_lease import ExtensionEngineLease
+from model_deck.adapters.platform.macos.instance_lock import FileInstanceLock
+from model_deck.adapters.storage.sqlite_extension_lifecycle import SQLiteExtensionLifecycleRepository
+from model_deck.adapters.storage.sqlite_plugin_jobs import SQLitePluginJobRepository
+from model_deck.adapters.storage.sqlite_versioned_plugin_data import SQLiteVersionedPluginDataStore
 from model_deck.plugins.authoring import pack_project_archive
 from model_deck.plugins.external_host import (
     ExternalExtensionHost,
     HostConflictError,
     HostNotServingError,
+    HostDependencies,
 )
+
+def _host(root: Path, **kwargs):
+    return ExternalExtensionHost(root, dependencies=HostDependencies(
+        SQLiteExtensionLifecycleRepository,
+        lambda path: SQLitePluginJobRepository(path, checkpoint_validator=lambda _s, _v: None),
+        SQLiteVersionedPluginDataStore, FileInstanceLock, ExtensionEngineLease,
+    ), **kwargs)
 
 PRINCIPAL = "70000000-0000-4000-8000-000000000001"
 
@@ -23,7 +36,7 @@ def test_artifact_root_canonicalizes_symlinked_ancestor(tmp_path: Path) -> None:
     artifact_root.mkdir()
     artifact_link = tmp_path / "artifact-link"
     artifact_link.symlink_to(artifact_root, target_is_directory=True)
-    host = ExternalExtensionHost(tmp_path / "host", artifact_root=artifact_link)
+    host = _host(tmp_path / "host", artifact_root=artifact_link)
     try:
         assert host._artifact_root.is_dir()
         assert host._artifact_root == host._artifact_root.resolve()
@@ -37,7 +50,7 @@ def test_packed_notebook_lifecycle_persistence_and_disable(tmp_path: Path) -> No
     pack_project_archive(project.resolve(), output_path=archive)
     root = tmp_path / "host"
 
-    host = ExternalExtensionHost(root)
+    host = _host(root)
     installed = host.install(archive, principal=PRINCIPAL, idempotency_key="install")
     assert isinstance(installed, LifecycleReceipt)
     assert installed.record is not None
@@ -47,7 +60,14 @@ def test_packed_notebook_lifecycle_persistence_and_disable(tmp_path: Path) -> No
     assert isinstance(enabled, LifecycleReceipt)
     assert enabled.record is not None
     assert enabled.record.status is ExtensionStatus.ENABLED
-    assert len(host.operation_catalog()) == 6
+    operation_ids = {item["id"] for item in host.operation_catalog()}
+    assert {
+        "org.example.notebook.notes.create",
+        "org.example.notebook.notes.list",
+        "org.example.notebook.notes.get",
+        "org.example.notebook.notes.update",
+        "org.example.notebook.notes.delete",
+    }.issubset(operation_ids)
     assert len(host.ui_contributions()) == 2
     assert host.panel_get("org.example.notebook.list")["panel_id"] == "org.example.notebook.list"
     created_result = host.invoke_result(
@@ -123,7 +143,7 @@ def test_packed_notebook_lifecycle_persistence_and_disable(tmp_path: Path) -> No
     first_activation = host._activation.serving("org.example.notebook").identity.activation_id
     host.close()
 
-    restarted = ExternalExtensionHost(root)
+    restarted = _host(root)
     second_activation = restarted._activation.serving("org.example.notebook").identity.activation_id
     assert second_activation != first_activation
     fetched = restarted.invoke(

@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from model_deck.adapters.routing.registered import ProviderRouteDefinition
 from model_deck.engine.routing.ports import (
     CapabilityFeature,
     CapabilityTriState,
@@ -324,7 +323,8 @@ def compose_openai_compatible_profile(
     credential_resolver: CredentialResolver | None = None,
     clock: Callable[[], str] | None = None,
     request_timeout: float | None = None,
-) -> tuple[OpenAICompatibleExecutionPort, dict[str, ProviderRouteDefinition]]:
+    route_definition_factory: Callable[..., Any] | None = None,
+) -> tuple[OpenAICompatibleExecutionPort, dict[str, Any]]:
     """Compose an executor and the engine route definitions for one profile.
 
     The returned ``OpenAICompatibleExecutionPort`` resolves endpoints and
@@ -338,8 +338,15 @@ def compose_openai_compatible_profile(
     if endpoint_resolver is None:
         endpoint_spec = profile.endpoint
 
-        def endpoint_resolver(reference: str, connection_revision: int) -> OpenAICompatibleEndpointConfig:
-            if reference != profile.endpoint_config_ref or type(connection_revision) is not int or connection_revision < 0:
+        def endpoint_resolver(
+            reference: str,
+            connection_revision: int,
+        ) -> OpenAICompatibleEndpointConfig:
+            if (
+                reference != profile.endpoint_config_ref
+                or type(connection_revision) is not int
+                or connection_revision < 0
+            ):
                 _reject("endpoint configuration reference is unavailable")
             parsed = urllib.parse.urlsplit(endpoint_spec.base_url)
             return OpenAICompatibleEndpointConfig(
@@ -355,6 +362,7 @@ def compose_openai_compatible_profile(
     command_resolver = credential_resolver or subprocess_credential_resolver(
         profile.credential_command
     )
+
     def resolver(reference: str) -> str:
         if reference != profile.credential_ref:
             _reject("credential reference is unavailable")
@@ -373,7 +381,9 @@ def compose_openai_compatible_profile(
         resolver,
         **kwargs,
     )
-    definition = ProviderRouteDefinition(
+    if route_definition_factory is None:
+        _reject("route definition factory is required")
+    definition = route_definition_factory(
         execution_mode=ExecutionMode.RESPONSES,
         capability_features=(
             CapabilityFeature("tools", CapabilityTriState.SUPPORTED),

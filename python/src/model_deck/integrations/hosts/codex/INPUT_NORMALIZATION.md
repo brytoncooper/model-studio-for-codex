@@ -1,5 +1,10 @@
 # Codex input normalization
 
+`EngineRPC` and `CodexResponsesBridge` receive their rendezvous loader and
+Unix-client factory from the outer composition root. Production startup wires
+these in the CLI/bootstrap layer; host code does not select transport
+adapters.
+
 ## Purpose and ownership
 
 `input_normalization.py` is the Codex host adapter for conversation history. It

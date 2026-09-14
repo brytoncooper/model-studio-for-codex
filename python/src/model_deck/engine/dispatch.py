@@ -85,10 +85,16 @@ from model_deck.kernel import CompositionError, GrantDeniedError
 from model_deck.engine.extensions.ports import (
     ExtensionRecord,
     ExtensionStatus,
+    ExtensionHostConflictError,
+    ExtensionHostUnavailableError,
+    ExtensionGateway,
     LifecycleReceipt,
     ReceiptOutcome,
 )
-from model_deck.plugins.external_host import ExternalExtensionHost, HostConflictError, HostNotServingError
+from model_deck.engine.jobs.use_cases import (
+    JobsNotFoundError, JobsCallerMismatchError, JobsInvalidArgumentError,
+    JobsUnknownKeyError,
+)
 from model_deck.engine.usage.ports import (
     UsageConflictError, UsageEventMismatchError, UsageQueryValidationError, UsageResourceExhaustedError,
 )
@@ -160,12 +166,25 @@ _EXTERNAL_EXTENSION_METHODS = frozenset(
         "engine.v1.ui.panel.get",
     }
 )
+_JOB_METHODS = frozenset({"engine.v1.jobs.get", "engine.v1.jobs.cancel"})
 
 _RUN_TOPIC_PATTERN = re.compile(
     r"^run:([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$"
 )
 
 _OPERATION_CATALOG: tuple[dict[str, str], ...] = (
+    {
+        "operation_id": "engine.v1.jobs.get",
+        "input_schema_id": "contracts/engine.v1/methods/jobs.get.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/jobs.get.result.schema.json",
+        "effect": "read",
+    },
+    {
+        "operation_id": "engine.v1.jobs.cancel",
+        "input_schema_id": "contracts/engine.v1/methods/jobs.cancel.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/jobs.cancel.result.schema.json",
+        "effect": "write",
+    },
     {
         "operation_id": "engine.v1.usage.query",
         "input_schema_id": USAGE_QUERY_PARAMS_REF,
@@ -420,7 +439,7 @@ class EngineDispatch:
         kernel_composition: KernelComposition | None = None,
         response_preflight: Callable[[dict[str, Any]], Any] | None = None,
         usage_query: ReconciledUsageQueryUseCase | None = None,
-        external_extension_host: ExternalExtensionHost | None = None,
+        external_extension_host: ExtensionGateway | None = None,
     ) -> None:
         self._list_models = list_models
         self._identity = identity
@@ -500,6 +519,14 @@ class EngineDispatch:
             methods.update(_HOST_SETTINGS_METHODS)
         if self._external_extension_host is not None:
             methods.update(_EXTERNAL_EXTENSION_METHODS)
+            has_job_reader = callable(
+                getattr(self._external_extension_host, "job_get", None)
+            )
+            has_job_canceller = callable(
+                getattr(self._external_extension_host, "job_cancel", None)
+            )
+            if has_job_reader and has_job_canceller:
+                methods.update(_JOB_METHODS)
         return frozenset(methods)
 
     def drain_notifications(self, connection_id: int) -> tuple[dict[str, Any], ...]:
@@ -658,6 +685,8 @@ class EngineDispatch:
             return self._hosts_settings(frame.get("id"), params, connection_id, "save")
         if method in _EXTERNAL_EXTENSION_METHODS:
             return self._external_extension(frame.get("id"), method, params, connection_id)
+        if method in _JOB_METHODS:
+            return self._job_operation(frame.get("id"), method, params, connection_id)
         return self._domain_error(frame.get("id"), "internal", "unhandled method")
 
     def _hello(self, request_id: Any, params: Mapping[str, Any], connection_id: int) -> dict[str, Any]:
@@ -1194,6 +1223,40 @@ class EngineDispatch:
             result["version"] = version
         return result
 
+    def _job_operation(
+        self,
+        request_id: Any,
+        method: str,
+        params: Mapping[str, Any],
+        connection_id: int,
+    ) -> dict[str, Any]:
+        host = self._external_extension_host
+        if host is None:
+            return self._domain_error(request_id, "unsupported_capability", "method not configured")
+        principal = self._principal_for_connection(request_id, connection_id)
+        if isinstance(principal, dict):
+            return principal
+        schema_name = method.removeprefix("engine.v1.")
+        try:
+            validate_schema_ref(f"contracts/engine.v1/methods/{schema_name}.params.schema.json", dict(params))
+            operation = host.job_get if method.endswith("get") else host.job_cancel
+            result = operation(dict(params), principal=principal)
+            validate_schema_ref(
+                f"contracts/engine.v1/methods/{schema_name}.result.schema.json",
+                result,
+            )
+            return self._success(request_id, result)
+        except JobsNotFoundError:
+            return self._domain_error(request_id, "not_found", "job not found")
+        except JobsCallerMismatchError:
+            return self._domain_error(request_id, "capability_denied", "job ownership required")
+        except (JobsInvalidArgumentError, JobsUnknownKeyError):
+            return self._domain_error(request_id, "invalid_argument", "invalid job request")
+        except SchemaValidationError:
+            return self._error(request_id, -32602, "invalid params")
+        except ValueError:
+            return self._domain_error(request_id, "conflict", "job operation conflict")
+
     def _external_extension(
         self,
         request_id: Any,
@@ -1282,11 +1345,11 @@ class EngineDispatch:
                 result = {"panel": host.panel_get(params["panel_id"])}
             else:
                 return self._domain_error(request_id, "unsupported_capability", "method not configured")
-        except HostNotServingError:
+        except ExtensionHostUnavailableError:
             return self._domain_error(request_id, "plugin_unavailable", "extension operation unavailable")
         except KeyError:
             return self._domain_error(request_id, "not_found", "extension resource not found")
-        except HostConflictError:
+        except ExtensionHostConflictError:
             return self._domain_error(request_id, "conflict", "extension operation conflict")
         except (OSError, ValueError):
             return self._domain_error(request_id, "invalid_argument", "extension request invalid")

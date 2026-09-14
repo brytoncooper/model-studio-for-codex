@@ -14,8 +14,12 @@ from ..plugin_authority import (
     PluginAuthority,
 )
 from .ports import (
+    ACTIVE_JOB_STATES,
     FAILURE_CODES,
+    BoundedJsonValidationError,
+    ClaimJobCommand,
     CompleteJobCommand,
+    ConfirmCancelCommand,
     CreateJobCommand,
     FailJobCommand,
     GetJobCommand,
@@ -26,16 +30,12 @@ from .ports import (
     JobStateConflictError,
     JobTerminalConflictError,
     ReportProgressCommand,
+    validate_bounded_json_value,
 )
 
 _OPERATIONS = ("create", "progress", "complete", "fail", "check_cancelled")
 
 _REVERSE_DOMAIN = re.compile(r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9_-]*)+$")
-_JSON_STRING_MAX = 1048576
-_JSON_ARRAY_MAX = 4096
-_JSON_OBJECT_MAX = 1024
-
-
 class BrokerJobError(ValueError):
     pass
 
@@ -116,46 +116,15 @@ def _check_progress(value: object) -> float:
 
 
 def _check_json_value(value: Any) -> None:
-    seen: set[int] = set()
-    def visit(node: Any) -> None:
-        if node is None or type(node) is bool:
-            return
-        if type(node) is int:
-            return
-        if type(node) is float:
-            if not math.isfinite(node):
-                raise BrokerJobInvalidRequestError()
-            return
-        if type(node) is str:
-            if len(node) > _JSON_STRING_MAX:
-                raise BrokerJobInvalidRequestError()
-            return
-        if type(node) is list:
-            if len(node) > _JSON_ARRAY_MAX:
-                raise BrokerJobInvalidRequestError()
-            if id(node) in seen:
-                raise BrokerJobInvalidRequestError()
-            seen.add(id(node))
-            for item in node:
-                visit(item)
-            seen.discard(id(node))
-            return
-        if type(node) is dict:
-            if len(node) > _JSON_OBJECT_MAX:
-                raise BrokerJobInvalidRequestError()
-            if id(node) in seen:
-                raise BrokerJobInvalidRequestError()
-            seen.add(id(node))
-            for key, item in node.items():
-                if type(key) is not str:
-                    raise BrokerJobInvalidRequestError()
-                visit(item)
-            seen.discard(id(node))
-            return
-        raise BrokerJobInvalidRequestError()
+    """Application-owned bounded JSON validation.
+
+    Delegates to ``validate_bounded_json_value``; surfaces violations as
+    the fixed ``BrokerJobInvalidRequestError`` message without echoing the
+    offending payload.
+    """
     try:
-        visit(value)
-    except RecursionError:
+        validate_bounded_json_value(value)
+    except BoundedJsonValidationError:
         raise BrokerJobInvalidRequestError() from None
 
 
@@ -288,7 +257,7 @@ class PluginJobBroker:
             except AuthorityDeniedError:
                 raise BrokerJobDeniedError()
             try:
-                record = self._repository.create(
+                created = self._repository.create(
                     CreateJobCommand(
                         owner=JobOwner(
                             plugin_id=activation.plugin_id,
@@ -296,9 +265,37 @@ class PluginJobBroker:
                         ),
                         invocation_id=live.invocation_id,
                         operation_id=live.operation_id,
+                        origin_principal_id=live.origin_principal_id,
                         checkpoint_schema_id=schema_id,
                     )
                 )
+            except (ValueError, TypeError):
+                raise BrokerJobInvalidRequestError()
+            # Folded claim: transition QUEUED -> RUNNING inside the same
+            # guarded block under the create authority, so callers see a
+            # RUNNING job by the time create() returns. A crash between
+            # create and claim leaves the row QUEUED; worker-loss recovery
+            # then transitions it to INTERRUPTED (never auto-replayed).
+            try:
+                record = self._repository.claim(
+                    ClaimJobCommand(
+                        job_id=created.job_id,
+                        owner=JobOwner(
+                            plugin_id=activation.plugin_id,
+                            activation_id=activation.activation_id,
+                        ),
+                    )
+                )
+            except JobNotFoundError:
+                raise BrokerJobNotFoundError()
+            except JobOwnershipMismatchError:
+                raise BrokerJobDeniedError()
+            except JobTerminalConflictError:
+                raise BrokerJobTerminalError()
+            except JobStateConflictError:
+                raise BrokerJobConflictError()
+            except BrokerJobError:
+                raise
             except (ValueError, TypeError):
                 raise BrokerJobInvalidRequestError()
         return {"job_id": record.job_id}
@@ -381,16 +378,30 @@ class PluginJobBroker:
         *,
         job_id: str,
         output: Any = None,
+        output_present: bool = False,
     ) -> dict[str, bool]:
+        """Worker-driven completion.
+
+        ``output_present`` is True iff the worker supplied an ``output`` value
+        (including explicit JSON null). When True, ``output`` is validated and
+        persisted atomically with the COMPLETED transition; when False, no
+        output is written and the public reader will not surface one for this
+        job.
+        """
         activation = _check_activation(authenticated_activation)
         job_id = _check_job_id(job_id)
-        if output is not None:
+        if output_present:
             _check_json_value(output)
         with self._guarded():
             record = self._trusted_followup(job_id, activation, "complete")
             try:
                 self._repository.complete(
-                    CompleteJobCommand(job_id=record.job_id, owner=self._owner_of(record))
+                    CompleteJobCommand(
+                        job_id=record.job_id,
+                        owner=self._owner_of(record),
+                        output=output,
+                        output_present=output_present,
+                    )
                 )
             except JobNotFoundError:
                 raise BrokerJobNotFoundError()
@@ -446,8 +457,40 @@ class PluginJobBroker:
         *,
         job_id: str,
     ) -> dict[str, bool]:
+        """Worker poll point: also the worker-driven cancellation acknowledgement.
+
+        When ``cancel_requested`` is true and the job is still active, this
+        call atomically transitions the job to CANCELLED via
+        ``repository.confirm_cancel`` before returning. If a concurrent
+        ``complete`` or ``fail`` already won the terminal transition, the
+        confirm_cancel attempt raises ``JobTerminalConflictError`` and we
+        treat it as the user's intent having been satisfied anyway: the
+        response still surfaces ``{cancelled: True}``.
+        """
         activation = _check_activation(authenticated_activation)
         job_id = _check_job_id(job_id)
         with self._guarded():
             record = self._trusted_followup(job_id, activation, "check_cancelled")
+            if (
+                record.cancel_requested
+                and record.state in ACTIVE_JOB_STATES
+            ):
+                try:
+                    self._repository.confirm_cancel(
+                        ConfirmCancelCommand(
+                            job_id=record.job_id,
+                            owner=self._owner_of(record),
+                        )
+                    )
+                except JobTerminalConflictError:
+                    # Another terminal commit (complete/fail/confirm_cancel)
+                    # already won. The user-visible intent is satisfied; the
+                    # response still reports cancel was observed.
+                    pass
+                except JobStateConflictError:
+                    # Same reasoning: a terminal race left the job in some
+                    # other terminal state; cancel was effectively applied.
+                    pass
+                except BrokerJobError:
+                    raise
         return {"cancelled": bool(record.cancel_requested)}

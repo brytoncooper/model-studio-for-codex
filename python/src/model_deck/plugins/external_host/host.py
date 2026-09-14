@@ -8,20 +8,26 @@ import sqlite3
 import sys
 import threading
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from model_deck.adapters.platform.macos.extension_lease import ExtensionEngineLease
-from model_deck.adapters.platform.macos.instance_lock import FileInstanceLock
-from model_deck.adapters.storage.sqlite_extension_lifecycle import SQLiteExtensionLifecycleRepository
-from model_deck.adapters.storage.sqlite_plugin_jobs import SQLitePluginJobRepository
-from model_deck.adapters.storage.sqlite_versioned_plugin_data import SQLiteVersionedPluginDataStore
 from model_deck.engine.extensions.ports import (
-    ExecutableArtifact, ExtensionRecord, ExtensionStatus, LifecycleAction,
-    LifecycleOperation, LifecycleReceipt, LifecycleRequest,
+    ExecutableArtifact,
+    ExtensionHostConflictError,
+    ExtensionHostUnavailableError,
+    ExtensionRecord,
+    ExtensionStatus,
+    LifecycleAction,
+    LifecycleOperation,
+    LifecycleReceipt,
+    LifecycleRequest,
 )
 from model_deck.engine.extensions.service import ExtensionLifecycleService
+from model_deck.engine.jobs.service import PluginJobBroker
+from model_deck.engine.jobs.use_cases import CancelJobUseCase, GetJobUseCase
+from model_deck.engine.jobs.wire import PluginJobWireAdapter
 from model_deck.engine.plugin_authority import (
     ActivationState, AuthorityContext, OperationAuthority, OriginState, PluginAuthority,
 )
@@ -41,11 +47,20 @@ from model_deck_contracts.validator import validate_schema_ref
 _STORED_INVOKE_RESULT_KEY = "__model_deck_invoke_result_v1__"
 
 
-class HostConflictError(RuntimeError):
+@dataclass(frozen=True, slots=True)
+class HostDependencies:
+    lifecycle_repository: Any
+    jobs_repository: Any
+    data_store: Any
+    instance_lock: Any
+    extension_lease: Any
+
+
+class HostConflictError(ExtensionHostConflictError):
     pass
 
 
-class HostNotServingError(RuntimeError):
+class HostNotServingError(ExtensionHostUnavailableError):
     pass
 
 
@@ -53,6 +68,20 @@ _BROKER_METHODS = (
     "plugin.v1.broker.storage.get", "plugin.v1.broker.storage.list",
     "plugin.v1.broker.storage.put", "plugin.v1.broker.storage.delete",
 )
+_JOB_OPERATION_NAMES = (
+    "create",
+    "progress",
+    "complete",
+    "fail",
+    "check_cancelled",
+)
+_JOB_METHODS = tuple(
+    f"plugin.v1.broker.jobs.{name}" for name in _JOB_OPERATION_NAMES
+)
+_JOB_GRANTS = {
+    name: ("write", "jobs.own", "jobs.own")
+    for name in _JOB_OPERATION_NAMES
+}
 _GRANTS = {
     "get": ("read", "storage.own", "storage.own"),
     "list": ("read", "storage.own", "storage.own"),
@@ -89,14 +118,19 @@ class _Resolver:
         entrypoint = manifest["document"]["entrypoint"]
         if entrypoint["runtime"] != "python":
             raise HostConflictError("unsupported extension runtime")
-        allowed = _BROKER_METHODS if "storage.own" in manifest["document"]["permissions"] else ()
+        permissions = manifest["document"]["permissions"]
+        allowed: list[str] = []
+        if "storage.own" in permissions:
+            allowed.extend(_BROKER_METHODS)
+        if "jobs.own" in permissions:
+            allowed.extend(_JOB_METHODS)
         return ResolvedArtifactLaunch(
             executable,
             ProcessRuntimeConfig(
                 argv=(sys.executable, "-I", "-B", str(artifact / entrypoint["path"])),
                 package_dir=str(artifact), timeout_s=self._host._timeout_s,
             ),
-            allowed_broker_methods=allowed,
+            allowed_broker_methods=tuple(allowed),
         )
 
 
@@ -106,20 +140,52 @@ class _BrokerFactory:
 
     def create(self, identity, binding, allowed_methods):
         repository = self._host._data.repository_for(binding)
-        broker = PluginDataBroker(
+        storage_broker = PluginDataBroker(
             authority=self._host._plugin_authority,
             repository=repository,
             grants=dict(_GRANTS),
             mutation_guard=self._host._data.mutation_barrier,
         )
-        return PluginDataWireAdapter(trusted_activation=identity, broker=broker)
+        storage_wire = PluginDataWireAdapter(
+            trusted_activation=identity,
+            broker=storage_broker,
+        )
+        job_broker = PluginJobBroker(
+            authority=self._host._plugin_authority,
+            repository=self._host._jobs,
+            grants=dict(_JOB_GRANTS),
+            mutation_guard=self._host._data.mutation_barrier,
+        )
+        job_wire = PluginJobWireAdapter(
+            trusted_activation=identity,
+            broker=job_broker,
+        )
+
+        def dispatch(authenticated_activation_id, method, params):
+            if method in _BROKER_METHODS:
+                if method not in allowed_methods:
+                    raise PermissionError("broker method not granted")
+                return storage_wire(authenticated_activation_id, method, params)
+            if method in _JOB_METHODS:
+                if method not in allowed_methods:
+                    raise PermissionError("broker method not granted")
+                return job_wire(authenticated_activation_id, method, params)
+            raise PermissionError("broker method not granted")
+
+        return dispatch
 
 
 class ExternalExtensionHost:
     """Own installation, activation, discovery, invocation, and retained data."""
 
-    def __init__(self, root: Path | str, *, artifact_root: Path | str | None = None,
-                 timeout_s: float = 5.0) -> None:
+    def __init__(
+        self,
+        root: Path | str,
+        *,
+        artifact_root: Path | str | None = None,
+        timeout_s: float = 5.0,
+        dependencies: HostDependencies,
+    ) -> None:
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self._artifact_root = (
@@ -137,13 +203,15 @@ class ExternalExtensionHost:
         self._origins: dict[str, OriginState] = {}
         self._operations: dict[str, OperationAuthority] = {}
         self._contexts = _Contexts()
-        self._repository = SQLiteExtensionLifecycleRepository(self._db)
-        self._data = SQLiteVersionedPluginDataStore(self._db)
-        self._jobs = SQLitePluginJobRepository(self._db, checkpoint_validator=lambda _s, _v: None)
-        self._lock = FileInstanceLock(self.root / "instance.lock")
+        self._repository = dependencies.lifecycle_repository(self._db)
+        self._data = dependencies.data_store(self._db)
+        self._jobs = dependencies.jobs_repository(self._db)
+        self._get_job = GetJobUseCase(self._jobs)
+        self._cancel_job = CancelJobUseCase(self._jobs)
+        self._lock = dependencies.instance_lock(self.root / "instance.lock")
         if not self._lock.acquire(0.0):
             raise HostConflictError("host root is already owned")
-        self._lease = ExtensionEngineLease(self._lock, self._repository)
+        self._lease = dependencies.extension_lease(self._lock, self._repository)
         self._ensure_catalog()
         deadline = lambda: datetime.now(timezone.utc) + timedelta(days=1)
         self._authority = SQLiteActivationAuthorityController(
@@ -179,6 +247,12 @@ class ExternalExtensionHost:
             if serving is not None:
                 self._activation.quiesce(str(uuid.uuid4()), record, deadline_ms=1000)
         self._lock.release()
+
+    def job_get(self, params: dict[str, Any], *, principal: str) -> dict[str, Any]:
+        return self._get_job.execute(params, caller_principal_id=principal)
+
+    def job_cancel(self, params: dict[str, Any], *, principal: str) -> dict[str, Any]:
+        return self._cancel_job.execute(params, caller_principal_id=principal)
 
     def install(self, archive_path: Path | str, *, principal: str, idempotency_key: str,
                 expected_revision: int = 0) -> LifecycleReceipt | LifecycleOperation:
@@ -322,6 +396,15 @@ class ExternalExtensionHost:
             raise HostConflictError("plugin invocation conflict")
         output = bundle.validate(descriptor["output_schema"], response["output"])
         envelope: dict[str, Any] = {"output": output}
+        if "job_id" in response:
+            job_id = response["job_id"]
+            try:
+                parsed_job_id = uuid.UUID(job_id)
+            except (ValueError, TypeError, AttributeError):
+                raise HostConflictError("plugin returned an invalid job id") from None
+            if str(parsed_job_id).casefold() != str(job_id).casefold():
+                raise HostConflictError("plugin returned an invalid job id")
+            envelope["job_id"] = job_id
         if "panel" in response:
             panel = response["panel"]
             validate_schema_ref("contracts/ui.panel.v1/tree.schema.json", panel)

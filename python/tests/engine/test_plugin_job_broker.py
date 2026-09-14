@@ -131,6 +131,10 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(stored.plugin_id, "com.example.worker")
         self.assertEqual(stored.activation_id, "act-1")
         self.assertEqual(stored.operation_id, "jobs.run")
+        # Origin is captured from the live trusted context, never the worker.
+        self.assertEqual(stored.origin_principal_id, "origin")
+        # Claim is folded into create; job is RUNNING by the time create returns.
+        self.assertEqual(stored.state, JobState.RUNNING)
         ctx = self.contexts.get(stored.invocation_id)
         self.assertIsNotNone(ctx)
         self.assertEqual(ctx.operation_id, "jobs.run")
@@ -168,14 +172,20 @@ class BrokerTests(unittest.TestCase):
                 owner=JobOwner(plugin_id="com.example.worker", activation_id="act-1"),
             )
         )
+        # check_cancelled is the worker ack point; it confirms the cancel
+        # by transitioning RUNNING -> CANCELLED.
         out = self.broker.check_cancelled(self.identity, **dict(params))
         self.assertEqual(out, {"cancelled": True})
         self.assertEqual(
-            self.repo.get(GetJobCommand(job_id=job_id)).state, JobState.QUEUED
+            self.repo.get(GetJobCommand(job_id=job_id)).state, JobState.CANCELLED
         )
 
     def test_terminal_once(self):
         job_id = self._create()
+        # Create folds claim; job is RUNNING by the time create() returns.
+        self.assertEqual(
+            self.repo.get(GetJobCommand(job_id=job_id)).state, JobState.RUNNING
+        )
         out = self.broker.complete(self.identity, **{"job_id": job_id})
         self.assertEqual(out, {"completed": True})
         with self.assertRaises(BrokerJobTerminalError):
@@ -190,12 +200,14 @@ class BrokerTests(unittest.TestCase):
     def test_complete_output_is_ordinary_json(self):
         job_id = self._create()
         out = self.broker.complete(
-            self.identity, **{"job_id": job_id, "output": {"attachment_ref": "att-1", "n": [1, 2]}}
+            self.identity,
+            **{"job_id": job_id, "output": {"attachment_ref": "att-1", "n": [1, 2]}, "output_present": True},
         )
         self.assertEqual(out, {"completed": True})
         job_id2 = self._create()
         out = self.broker.complete(
-            self.identity, **{"job_id": job_id2, "output": {"attachment_ref": "foreign-att"}}
+            self.identity,
+            **{"job_id": job_id2, "output": {"attachment_ref": "foreign-att"}, "output_present": True},
         )
         self.assertEqual(out, {"completed": True})
 
@@ -203,20 +215,20 @@ class BrokerTests(unittest.TestCase):
         job_id = self._create()
         with self.assertRaises(BrokerJobInvalidRequestError):
             self.broker.complete(
-                self.identity, **{"job_id": job_id, "output": float("nan")}
+                self.identity, **{"job_id": job_id, "output": float("nan"), "output_present": True}
             )
         with self.assertRaises(BrokerJobInvalidRequestError):
             self.broker.complete(
-                self.identity, **{"job_id": job_id, "output": float("inf")}
+                self.identity, **{"job_id": job_id, "output": float("inf"), "output_present": True}
             )
         with self.assertRaises(BrokerJobInvalidRequestError):
             self.broker.complete(
-                self.identity, **{"job_id": job_id, "output": {"k" * 1: object()}}
+                self.identity, **{"job_id": job_id, "output": {"k" * 1: object()}, "output_present": True}
             )
         cyclic: dict = {}
         cyclic["self"] = cyclic
         with self.assertRaises(BrokerJobInvalidRequestError):
-            self.broker.complete(self.identity, **{"job_id": job_id, "output": cyclic})
+            self.broker.complete(self.identity, **{"job_id": job_id, "output": cyclic, "output_present": True})
         out = self.broker.complete(self.identity, **{"job_id": job_id})
         self.assertEqual(out, {"completed": True})
 
@@ -271,12 +283,20 @@ class BrokerTests(unittest.TestCase):
         self.broker.report_progress(self.identity, **{"job_id": job_id, "progress": 0.5})
         with self.assertRaises(BrokerJobConflictError):
             self.broker.report_progress(self.identity, **{"job_id": job_id, "progress": 0.1})
+        # State is RUNNING because claim is folded into create().
+        self.assertEqual(
+            self.repo.get(GetJobCommand(job_id=job_id)).state, JobState.RUNNING
+        )
 
     def test_schema_valid_results(self):
         import json
         from pathlib import Path as _P
         base = _P("/Users/brytoncooper/Documents/Model Deck Architecture/contracts/plugin.v1/broker")
         job_id = self._create()
+        # create() folds claim; job is RUNNING before the test does anything.
+        self.assertEqual(
+            self.repo.get(GetJobCommand(job_id=job_id)).state, JobState.RUNNING
+        )
         progress_params = {"job_id": job_id, "progress": 0.5}
         progress_result = self.broker.report_progress(self.identity, **dict(progress_params))
         self.assertEqual(set(progress_result), {"accepted"})
@@ -310,7 +330,8 @@ class RepairTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(BrokerJobInvalidRequestError):
                 self.broker.fail(self.identity, job_id=job_id,
                                  error={'code':'internal','retryable':False,field:None})
-            self.assertEqual(self.repo.get(GetJobCommand(job_id)).state, JobState.QUEUED)
+            # Claim is folded into create; the job is RUNNING, not QUEUED.
+            self.assertEqual(self.repo.get(GetJobCommand(job_id)).state, JobState.RUNNING)
         job_id = self._create()
         self.assertEqual(self.broker.fail(self.identity, job_id=job_id,
                          error={'code':'internal','retryable':False,'message':'','request_id':''}),
@@ -319,7 +340,7 @@ class RepairTests(unittest.TestCase):
     def test_large_integer_output_and_invalid_progress(self):
         job_id = self._create()
         self.assertEqual(self.broker.complete(self.identity, job_id=job_id,
-                         output={'integer':10**400}), {'completed':True})
+                         output={'integer':10**400}, output_present=True), {'completed':True})
         job_id = self._create()
         with self.assertRaises(BrokerJobInvalidRequestError):
             self.broker.report_progress(self.identity, job_id=job_id, progress=10**400)
@@ -340,7 +361,7 @@ class RepairTests(unittest.TestCase):
             with self.subTest(factory=factory.__name__), self.assertRaisesRegex(
                     BrokerJobGuardError, '^broker guard failed$'):
                 broker.complete(self.identity, job_id=job_id)
-            self.assertEqual(self.repo.get(GetJobCommand(job_id)).state, JobState.QUEUED)
+            self.assertEqual(self.repo.get(GetJobCommand(job_id)).state, JobState.RUNNING)
 
     def test_exit_failure_can_follow_a_committed_write(self):
         @contextmanager
@@ -366,7 +387,7 @@ class RepairTests(unittest.TestCase):
         self._bump_activation()
         with self.assertRaises(BrokerJobDeniedError):
             broker.complete(self.identity, job_id=job_id)
-        self.assertEqual(self.repo.get(GetJobCommand(job_id)).state, JobState.QUEUED)
+        self.assertEqual(self.repo.get(GetJobCommand(job_id)).state, JobState.RUNNING)
 
     def test_repository_failure_is_safe(self):
         job_id = self._create()
@@ -379,7 +400,7 @@ class RepairTests(unittest.TestCase):
                 self.broker.complete(self.identity, job_id=job_id)
         finally:
             self.repo.complete = original
-        self.assertEqual(self.repo.get(GetJobCommand(job_id)).state, JobState.QUEUED)
+        self.assertEqual(self.repo.get(GetJobCommand(job_id)).state, JobState.RUNNING)
 
 
 if __name__ == "__main__":

@@ -11,10 +11,14 @@ from uuid import uuid4
 
 from model_deck.adapters.credentials.file_enrollment import FileEnrollmentCredentialStore
 from model_deck.adapters.platform.macos.instance_lock import FileInstanceLock
+from model_deck.adapters.platform.macos.extension_lease import ExtensionEngineLease
 from model_deck.adapters.platform.macos.isolated_roots import validate_isolated_roots
 from model_deck.adapters.platform.macos.paths import IsolatedApplicationPaths
 from model_deck.adapters.storage.json_catalog_cache import JsonFixtureCatalogCacheRepository
 from model_deck.adapters.storage.sqlite_connection_repository import SQLiteConnectionRepository
+from model_deck.adapters.storage.sqlite_extension_lifecycle import SQLiteExtensionLifecycleRepository
+from model_deck.adapters.storage.sqlite_plugin_jobs import SQLitePluginJobRepository
+from model_deck.adapters.storage.sqlite_versioned_plugin_data import SQLiteVersionedPluginDataStore
 from model_deck.adapters.storage.sqlite_model_repository import SQLiteModelRepository
 from model_deck.adapters.storage.sqlite_host_settings import SQLitePreviewStore, SQLiteSaveReceiptStore
 from model_deck.adapters.transport.rendezvous import build_rendezvous_payload, publish_rendezvous_file
@@ -22,7 +26,7 @@ from model_deck.adapters.transport.unix_server import UnixSocketEngineServer
 from model_deck.adapters.transport.framing import encode_frame
 from model_deck.engine.dispatch import EngineDispatch
 from model_deck.engine.kernel_composition import KernelComposition
-from model_deck.plugins.external_host import ExternalExtensionHost
+from model_deck.plugins.external_host import ExternalExtensionHost, HostDependencies
 from model_deck.engine.connections.use_cases import ListConnectionsUseCase, SaveConnectionUseCase
 from model_deck.engine.model_library.use_cases import (
     ListModelsUseCase,
@@ -355,6 +359,16 @@ def build_engine_server(
         external_extension_host = ExternalExtensionHost(
             extension_state_root,
             artifact_root=extension_artifact_root,
+            dependencies=HostDependencies(
+                lifecycle_repository=SQLiteExtensionLifecycleRepository,
+                jobs_repository=lambda path: SQLitePluginJobRepository(
+                    path,
+                    checkpoint_validator=lambda _schema, _value: None,
+                ),
+                data_store=SQLiteVersionedPluginDataStore,
+                instance_lock=FileInstanceLock,
+                extension_lease=ExtensionEngineLease,
+            ),
         )
 
     dispatch = EngineDispatch(

@@ -1,22 +1,32 @@
-# Plugin jobs state slice (B19, state only)
+# Plugin jobs (B19 public-job slice)
 
-Durable job STATE repository: `engine/jobs/ports.py` contract plus
-`adapters/storage/sqlite_plugin_jobs.py` SQLite implementation.
+The application owns durable job state through `engine/jobs/ports.py` and the
+SQLite adapter in `adapters/storage/sqlite_plugin_jobs.py`. The serving external
+host composes the authenticated worker broker and the public `engine.v1.jobs.get`
+and `engine.v1.jobs.cancel` use cases against the same repository.
 
-Scope: queued, running, completed, failed, cancelled, interrupted states;
-atomic queued-to-running claim; monotonic bounded progress; terminal-once
-outcomes; cancel request recorded separately from confirmed cancel; worker
-crash marks queued and running jobs for the matching activation interrupted
-once, including resumable jobs with retained checkpoints, with no auto rerun.
-Checkpoints store exact strict JSON (objects with string keys, arrays, strings,
-numbers, booleans, null only; no tuples, no NaN or infinity) bounded to 1 MiB,
-validated only against the declared schema reference through a required injected
-validator that rejects unknown schemas, with revision CAS. A checkpoint command
-schema reference must match the declared schema, never replace it. Failures
-persist a safe code from the domain_error_code enum only, never raw error content.
-Mutations require exact plugin and activation ownership.
+Jobs move from queued to running and then to exactly one of completed, failed,
+cancelled, or interrupted. Progress is monotonic and bounded. Public cancellation
+only records intent and returns whether that request was accepted; it does not
+claim that the worker has stopped. A worker confirms cancellation when its next
+`jobs.check_cancelled` poll atomically reaches `cancelled`. Losing an activation
+marks its still-active jobs interrupted. Neither startup nor worker recovery
+automatically replays a job.
 
-Pending outside this slice: public dispatch wiring and jobs schema surface
-(root adds `interrupted` to the public jobs schema separately), operator
-service, and the future explicit resume adapter that consumes retained
-checkpoints. This slice grants no general resume permission.
+Creation persists the originating application principal as well as the owning
+plugin and activation. Public reads and cancellation require that exact
+principal, while worker mutations require the exact plugin activation and a
+fresh authority check. Rows created before origin capture are not publicly
+readable.
+
+`jobs.complete` may atomically persist one application-bounded JSON result.
+`jobs.get` exposes it only after completion and preserves the distinction between
+an absent result and explicit JSON null. Results are ordinary local data: plugins
+cannot choose filesystem paths, and this slice grants no filesystem or attachment
+authority.
+
+Checkpoints remain strict JSON bounded to 1 MiB and revision-CAS validated against
+the schema declared at creation. They are retained on interruption, but explicit
+resume and a runner that consumes them remain future B19 work. Events,
+subscriptions, content grants, and full lifecycle/update acceptance also remain
+outside this public-job slice.
