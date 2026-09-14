@@ -194,6 +194,35 @@ class SQLiteProjectionReceiptStore:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
 
+    def latest_unresolved_conflict_detail(self, *, consumer_id: str) -> str | None:
+        """Return the newest conflict not superseded by a later applied revision."""
+        consumer_id = validate_consumer_id(consumer_id)
+        db_path = self._db_path
+        if not db_path.is_file():
+            raise FileNotFoundError(f"receipt database not found: {db_path}")
+        uri = db_path.resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        try:
+            schema_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'projection_outbox_conflicts'"
+            ).fetchone()
+            if schema_exists is None:
+                return None
+            row = conn.execute(
+                "SELECT c.detail FROM projection_outbox_conflicts c "
+                "JOIN projection_outbox o ON o.outbox_id = c.outbox_id "
+                "LEFT JOIN projection_applied_state a ON a.consumer_id = c.consumer_id "
+                "AND a.aggregate_type = o.aggregate_type AND a.aggregate_id = o.aggregate_id "
+                "WHERE c.consumer_id = ? AND "
+                "(a.applied_revision IS NULL OR a.applied_revision <= o.aggregate_revision) "
+                "ORDER BY c.outbox_id DESC LIMIT 1",
+                (consumer_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else row[0]
+
     def get_applied(
         self,
         *,

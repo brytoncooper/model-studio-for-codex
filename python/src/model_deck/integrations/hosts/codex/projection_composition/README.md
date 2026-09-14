@@ -1,13 +1,15 @@
 # Projection composition snapshots
 
-Read-only adapters mapping committed repository state onto the
-`AgentMaterializer` snapshot protocols (`ConnectionSnapshot`, `ModelSnapshot`).
+Composition of committed repository snapshots and the existing Codex managed
+agent projection pipeline.
 
 ## Ownership
 
-`projection_composition` owns only these adapters. It never writes projections,
-never fans out `connection.saved`, and never touches shared engine ports, the
-projection consumer, or storage internals.
+`projection_composition` owns only the snapshot adapters. The executable
+composition boundary owns `CodexProjectionCoordinator` because it is the one
+place allowed to wire host code to concrete storage and filesystem adapters.
+The coordinator receives explicit repositories, database path, projection
+root, token-helper path, and connection metadata resolver.
 
 ## Contracts
 
@@ -35,8 +37,15 @@ projection consumer, or storage internals.
   `CommittedSnapshotError` surfaces as snapshot-unavailable.
 - Removed registrations disappear from `list_registered`, so lookups return
   `None` and materialization refuses instead of rendering stale data.
-- `connection.saved` fanout is out of scope; revision cross-checks between
-  model events and connection records are settled separately by root.
+- `SQLiteConnectionRepository.save` atomically expands `connection.saved` into
+  new revisions for only the affected active registrations. The coordinator
+  consumes those model events; it does not implement a second fanout.
+- Engine mutation results describe committed state only. Reconciliation runs
+  after commit and never changes a successful mutation into a projection claim.
+- `engine.v1.hosts.projection_status` exposes `ready`, `pending`, or `failed`.
+  Unresolved conflicts are derived from durable receipts, so failure survives a
+  restart. A later successfully applied model revision resolves the older
+  conflict for status purposes.
 
 ## Tests
 
@@ -46,8 +55,16 @@ projection consumer, or storage internals.
 records, resolver identity/revision mismatch rejection, resolver failures
 carrying no secret material, and fixed-message/`from None` normalization
 (typed error, runtime error, `None` return) with traceback sentinel checks.
+`test_projection_full_path.py` uses a real isolated engine socket and temporary
+host root for create, rename, connection fanout, removal, restart, foreign-file
+conflict/recovery, and the staged MCP entrypoint.
 
 ## Limitations
 
 - Full-table scans per lookup; suitable only for the bounded composition path.
-- No policy for re-driving models affected by a `connection.saved` event yet.
+- The resolver is deliberately bound to the one provider profile supplied by
+  isolated V2. A committed connection whose opaque references no longer match
+  that profile fails projection instead of guessing metadata.
+- Host reload/discovery in an actual Codex process remains B10. These tests
+  verify the exact isolated `CODEX_HOME/agents` materialization contract without
+  launching or modifying live Codex.

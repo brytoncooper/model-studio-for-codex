@@ -137,6 +137,55 @@ class CliV2ProviderServeTests(unittest.TestCase):
         self.assertIs(kwargs["provider_route_definitions"], self.provider_routes)
         self.assertTrue(kwargs["enable_application_state"])
 
+    def test_codex_projection_forwards_isolated_root_profile_resolver_and_helper(self) -> None:
+        state, artifact, socket_root, _ = self._paths()
+        agents = self.tmpdir / "codex-home" / "agents"
+        agents.mkdir(parents=True)
+        config = self._provider_config()
+        self.profile.connection_id = "550e8400-e29b-41d4-a716-446655440002"
+        self.profile.provider_id = "com.example.provider"
+        self.profile.provider_name = "Example"
+        self.profile.endpoint_config_ref = "ref:example.endpoint"
+        self.profile.credential_ref = "ref:example.credential"
+        self.profile.credential_command.args = (
+            "--token", "550e8400-e29b-41d4-a716-446655440003",
+        )
+        self.profile.credential_command.executable = "/usr/bin/printf"
+        self.profile.endpoint.base_url = "https://example.com/v1"
+        runtime = mock.MagicMock()
+        runtime.server.serve_forever.side_effect = lambda: None
+        with mock.patch(
+            "model_deck.bootstrap.build_engine_server", return_value=runtime,
+        ) as build_mock:
+            exit_code = cli_main.main(
+                _make_basic_args(
+                    state_root=state,
+                    artifact_root=artifact,
+                    socket_root=socket_root,
+                    legacy_agents_dir=agents,
+                    extras=[
+                        "--provider-config", str(config),
+                        "--enable-codex-projection",
+                    ],
+                )
+            )
+        self.assertEqual(exit_code, 0)
+        kwargs = build_mock.call_args.kwargs
+        self.assertEqual(kwargs["projection_root"], agents.parent)
+        self.assertEqual(kwargs["projection_token_helper_path"], Path("/usr/bin/printf"))
+        resolver = kwargs["projection_resolver"]
+        record = mock.MagicMock(
+            connection_id=self.profile.connection_id,
+            provider_id=self.profile.provider_id,
+            endpoint_config_ref=self.profile.endpoint_config_ref,
+            credential_ref=self.profile.credential_ref,
+            revision=3,
+        )
+        resolved = resolver(record)
+        self.assertEqual(resolved.connection_id, self.profile.connection_id)
+        self.assertEqual(resolved.revision, 3)
+        self.assertEqual(resolved.base_url, "https://example.com/v1")
+
     def test_cursor_profile_uses_cursor_sdk_composition(self) -> None:
         state, artifact, socket_root, legacy = self._paths()
         config = self._provider_config()

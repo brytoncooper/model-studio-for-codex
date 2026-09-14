@@ -62,7 +62,7 @@ class EndpointRendererTest(unittest.TestCase):
             document,
             {
                 "name": f"openrouter_deepseek_deepseek_v4_1_flash_{digest}",
-                "description": "Bounded task worker using deepseek/deepseek-v4.1-flash through OpenRouter. Uses OpenRouter credits.",
+                "description": "DeepSeek Flash. Bounded task worker using deepseek/deepseek-v4.1-flash through OpenRouter. Uses OpenRouter credits.",
                 "developer_instructions": INSTRUCTIONS,
                 "model": "deepseek/deepseek-v4.1-flash",
                 "model_reasoning_effort": "low",
@@ -129,7 +129,7 @@ class SubscriptionRendererTest(unittest.TestCase):
             document,
             {
                 "name": "subscription_gpt_5_6_sol",
-                "description": "Bounded task worker using gpt-5.6-sol through the OpenAI subscription connection.",
+                "description": "Sol. Bounded task worker using gpt-5.6-sol through the OpenAI subscription connection.",
                 "developer_instructions": INSTRUCTIONS,
                 "model": "gpt-5.6-sol",
                 "model_provider": "openai",

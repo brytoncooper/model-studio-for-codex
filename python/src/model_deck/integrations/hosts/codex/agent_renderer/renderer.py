@@ -178,7 +178,10 @@ def _render_endpoint(request: RenderRequest, display_name: str) -> RenderedAgent
     agent = tomlkit.document()
     agent.add(tomlkit.comment(AGENT_MARKER[2:]))
     agent["name"] = name
-    agent["description"] = f"Bounded task worker using {model} through {endpoint_name}. {request.billing_description.strip()}"
+    agent["description"] = (
+        f"{display_name}. Bounded task worker using {model} through {endpoint_name}. "
+        f"{request.billing_description.strip()}"
+    )
     agent["developer_instructions"] = BOUNDED_AGENT_INSTRUCTIONS
     agent["model"] = model
     agent["model_reasoning_effort"] = "low" if effort == "default" else effort
@@ -207,7 +210,9 @@ def _render_subscription(request: RenderRequest, display_name: str) -> RenderedA
     agent = tomlkit.document()
     agent.add(tomlkit.comment(AGENT_MARKER[2:]))
     agent["name"] = name
-    agent["description"] = f"Bounded task worker using {model} through the OpenAI subscription connection."
+    agent["description"] = (
+        f"{display_name}. Bounded task worker using {model} through the OpenAI subscription connection."
+    )
     agent["developer_instructions"] = BOUNDED_AGENT_INSTRUCTIONS
     agent["model"] = model
     agent["model_provider"] = "openai"

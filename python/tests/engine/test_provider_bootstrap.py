@@ -149,6 +149,46 @@ class ProviderBootstrapTests(unittest.TestCase):
         runtime.server.stop()
         self.assertEqual(self.provider.closes, 0)
 
+    def test_removed_model_rejects_new_admission_while_admitted_run_keeps_route(self):
+        runtime = self.build()
+        connection, descriptor, credential = self.session(runtime)
+        with connection as session:
+            self.authenticate(session, descriptor, credential)
+            registration_id = self.register(session)
+            first_params = self.start_params(session, registration_id)
+            admitted = self.call(session, "runs.start", first_params)["run"]
+            self.assertEqual(admitted["state"], "waiting_for_tool")
+            captured_route = self.provider.requests[0].route_snapshot
+
+            removed = self.call(session, "models.remove", {
+                "registration_id": registration_id,
+                "expected_revision": 1,
+                "idempotency_key": "remove-during-run",
+            })
+            self.assertTrue(removed["removed"])
+
+            rejected_params = dict(first_params)
+            rejected_params["client_request_id"] = "new-after-removal"
+            rejected_params["idempotency_key"] = "new-after-removal"
+            rejected = self.request(session, "runs.start", rejected_params)
+            self.assertIn("error", rejected)
+            self.assertEqual(rejected["error"]["data"]["code"], "not_found")
+            self.assertEqual(len(self.provider.requests), 1)
+
+            self.call(session, "runs.submit_tool_result", {
+                "run_id": admitted["run_id"],
+                "call_id": "call-injected",
+                "result": {"answer": "fixture"},
+                "idempotency_key": "finish-admitted-after-removal",
+            })
+            completed = self.call(
+                session, "runs.get", {"run_id": admitted["run_id"]}
+            )["run"]
+            self.assertEqual(completed["state"], "completed")
+            self.assertEqual(self.provider.requests[0].route_snapshot, captured_route)
+            self.assertEqual(captured_route.provider_id, PROVIDER_ID)
+            self.assertEqual(captured_route.connection_id, CONNECTION_ID)
+
     def test_unknown_tools_capability_refuses_before_durable_admission(self):
         runtime = self.build(provider_route_definitions={PROVIDER_ID: definition(CapabilityTriState.UNKNOWN)})
         connection, descriptor, credential = self.session(runtime)

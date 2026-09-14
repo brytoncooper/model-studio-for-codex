@@ -6,7 +6,10 @@ import uuid
 from copy import deepcopy
 from dataclasses import dataclass
 from collections.abc import Callable, Mapping
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from model_deck.engine.projections.coordinator import ProjectionCoordinator
 
 from model_deck_contracts.negotiation import (
     ApiVersion,
@@ -167,6 +170,12 @@ _EXTERNAL_EXTENSION_METHODS = frozenset(
         "engine.v1.operations.invoke",
         "engine.v1.ui.contributions.list",
         "engine.v1.ui.panel.get",
+    }
+)
+
+_HOST_PROJECTION_METHODS = frozenset(
+    {
+        "engine.v1.hosts.projection_status",
     }
 )
 _JOB_METHODS = frozenset({"engine.v1.jobs.get", "engine.v1.jobs.cancel"})
@@ -446,6 +455,7 @@ class EngineDispatch:
         response_preflight: Callable[[dict[str, Any]], Any] | None = None,
         usage_query: ReconciledUsageQueryUseCase | None = None,
         external_extension_host: ExtensionGateway | None = None,
+        projection_coordinator: "ProjectionCoordinator | None" = None,
     ) -> None:
         self._list_models = list_models
         self._identity = identity
@@ -470,6 +480,7 @@ class EngineDispatch:
         self._response_preflight = response_preflight
         self._usage_query = usage_query
         self._external_extension_host = external_extension_host
+        self._projection_coordinator = projection_coordinator
         self._implemented_methods = self._build_implemented_methods()
         self._kernel_methods: frozenset[str] = frozenset()
         if kernel_composition is not None:
@@ -533,6 +544,8 @@ class EngineDispatch:
             )
             if has_job_reader and has_job_canceller:
                 methods.update(_JOB_METHODS)
+        if self._projection_coordinator is not None:
+            methods.update(_HOST_PROJECTION_METHODS)
         return frozenset(methods)
 
     def drain_notifications(self, connection_id: int) -> tuple[dict[str, Any], ...]:
@@ -689,6 +702,8 @@ class EngineDispatch:
             return self._hosts_settings(frame.get("id"), params, connection_id, "preview")
         if method == "engine.v1.hosts.settings.save":
             return self._hosts_settings(frame.get("id"), params, connection_id, "save")
+        if method == "engine.v1.hosts.projection_status":
+            return self._hosts_projection_status(frame.get("id"), params)
         if method in _EXTERNAL_EXTENSION_METHODS:
             return self._external_extension(frame.get("id"), method, params, connection_id)
         if method in _JOB_METHODS:
@@ -884,6 +899,7 @@ class EngineDispatch:
             "contracts/engine.v1/methods/models.register.params.schema.json",
             "contracts/engine.v1/methods/models.register.result.schema.json",
             self._register_model,
+            trigger="models.register",
         )
 
     def _models_rename(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -893,6 +909,7 @@ class EngineDispatch:
             "contracts/engine.v1/methods/models.rename.params.schema.json",
             "contracts/engine.v1/methods/models.rename.result.schema.json",
             self._rename_model,
+            trigger="models.rename",
         )
 
     def _models_remove(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -902,24 +919,27 @@ class EngineDispatch:
             "contracts/engine.v1/methods/models.remove.params.schema.json",
             "contracts/engine.v1/methods/models.remove.result.schema.json",
             self._remove_model,
+            trigger="models.remove",
         )
 
     def _connections_list(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
-        return self._run_connection_mutation(
+        return self._run_connection_operation(
             request_id,
             params,
             "contracts/engine.v1/methods/connections.list.params.schema.json",
             "contracts/engine.v1/methods/connections.list.result.schema.json",
             self._list_connections,
+            trigger=None,
         )
 
     def _connections_save(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
-        return self._run_connection_mutation(
+        return self._run_connection_operation(
             request_id,
             params,
             "contracts/engine.v1/methods/connections.save.params.schema.json",
             "contracts/engine.v1/methods/connections.save.result.schema.json",
             self._save_connection,
+            trigger="connections.save",
         )
 
     def _sessions_create(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -1009,6 +1029,8 @@ class EngineDispatch:
         params_schema: str,
         result_schema: str,
         use_case: RegisterModelUseCase | RenameModelUseCase | RemoveModelUseCase | None,
+        *,
+        trigger: str | None,
     ) -> dict[str, Any]:
         if use_case is None:
             return self._domain_error(request_id, "unsupported_capability", "method not configured")
@@ -1030,15 +1052,19 @@ class EngineDispatch:
             validate_schema_ref(result_schema, result)
         except SchemaValidationError as exc:
             return self._error(request_id, -32603, str(exc))
+        if trigger is not None:
+            self._reconcile_projection(trigger=trigger)
         return self._success(request_id, result)
 
-    def _run_connection_mutation(
+    def _run_connection_operation(
         self,
         request_id: Any,
         params: Mapping[str, Any],
         params_schema: str,
         result_schema: str,
         use_case: ListConnectionsUseCase | SaveConnectionUseCase | None,
+        *,
+        trigger: str,
     ) -> dict[str, Any]:
         if use_case is None:
             return self._domain_error(request_id, "unsupported_capability", "method not configured")
@@ -1058,6 +1084,7 @@ class EngineDispatch:
             validate_schema_ref(result_schema, result)
         except SchemaValidationError as exc:
             return self._error(request_id, -32603, str(exc))
+        self._reconcile_projection(trigger=trigger)
         return self._success(request_id, result)
 
     def _run_session_mutation(
@@ -1691,6 +1718,48 @@ class EngineDispatch:
     def _is_authenticated(self, connection_id: int) -> bool:
         with self._lock:
             return connection_id in self._authenticated_sessions
+
+    def _reconcile_projection(self, *, trigger: str) -> None:
+        coordinator = self._projection_coordinator
+        if coordinator is None:
+            return
+        try:
+            coordinator.reconcile_after(trigger=trigger)
+        except Exception:
+            # Reconcile is best-effort by design; never block a successful mutation.
+            return
+
+    def _hosts_projection_status(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        coordinator = self._projection_coordinator
+        if coordinator is None:
+            return self._domain_error(request_id, "unsupported_capability", "projection status not configured")
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/hosts.projection_status.params.schema.json",
+                dict(params),
+            )
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32602, str(exc))
+        host_id = params.get("host_id")
+        if not isinstance(host_id, str) or host_id != coordinator.host_id:
+            return self._domain_error(request_id, "unsupported_capability", "unknown host_id")
+        try:
+            report = coordinator.status()
+        except Exception:
+            return self._domain_error(
+                request_id,
+                "internal",
+                "projection status unavailable",
+            )
+        result = {"status": report.status}
+        try:
+            validate_schema_ref(
+                "contracts/engine.v1/methods/hosts.projection_status.result.schema.json",
+                result,
+            )
+        except SchemaValidationError as exc:
+            return self._error(request_id, -32603, str(exc))
+        return self._success(request_id, result)
 
     def _success(self, request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
         return {"jsonrpc": "2.0", "id": request_id, "result": result}

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -66,12 +66,49 @@ from model_deck.engine.sessions.use_cases import (
     SelectSessionModelUseCase,
 )
 from model_deck.integrations.hosts.codex.legacy_models import LegacyCodexModelRepository
+from model_deck.cli.codex_projection_composition import CodexProjectionCoordinator
+from model_deck.integrations.hosts.codex.projection_composition.snapshots import ConnectionMetadataResolver
+from model_deck.engine.projections.coordinator import ProjectionCoordinator
 from model_deck_contracts.negotiation import ApiVersion
 from model_deck_contracts.paths import repo_root as contracts_repo_root
 
 
 _OPAQUE_REF_PATTERN = re.compile(r"^ref:[a-z][a-z0-9._-]{0,120}$")
 _MAX_OPAQUE_REF = 128
+
+
+def _projection_root_traverses_symlink(path: Path) -> bool:
+    """Reject user-controlled aliases while permitting macOS system temp aliases."""
+    for candidate in (path, *path.parents):
+        if not candidate.is_symlink():
+            continue
+        expected_destination = {
+            Path("/tmp"): "private/tmp",
+            Path("/var"): "private/var",
+        }.get(candidate)
+        if expected_destination is None:
+            return True
+        try:
+            if candidate.readlink().as_posix() != expected_destination:
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _combine_startup_recovery(
+    base_callback: Callable[[], None] | None,
+    projection_coordinator: ProjectionCoordinator,
+) -> Callable[[], None]:
+    """Keep projection recovery independent without masking base failures."""
+    def recover_all() -> None:
+        try:
+            if base_callback is not None:
+                base_callback()
+        finally:
+            projection_coordinator.recover_then_reconcile(trigger="startup")
+
+    return recover_all
 
 
 def _canonical_uuid_spelling(value: str) -> bool:
@@ -198,6 +235,9 @@ def build_engine_server(
     enable_external_extensions: bool = False,
     extension_state_root: Path | None = None,
     extension_artifact_root: Path | None = None,
+    projection_root: Path | None = None,
+    projection_resolver: ConnectionMetadataResolver | None = None,
+    projection_token_helper_path: Path | None = None,
 ) -> EngineRuntime:
     if enable_fixture_runs and not enable_application_state:
         raise ValueError("enable_fixture_runs requires enable_application_state")
@@ -232,6 +272,29 @@ def build_engine_server(
         if not isinstance(provider_execution, ProviderExecutionPort) or not callable(provider_execution.start):
             raise ValueError("injected provider must implement ProviderExecutionPort")
         injected_routes = _snapshot_provider_routes(provider_route_definitions)
+    projection_supplied = any(
+        value is not None
+        for value in (projection_root, projection_resolver, projection_token_helper_path)
+    )
+    if projection_supplied and any(
+        value is None
+        for value in (projection_root, projection_resolver, projection_token_helper_path)
+    ):
+        raise ValueError(
+            "projection_root, projection_resolver, and projection_token_helper_path "
+            "must be supplied together"
+        )
+    if projection_supplied and not enable_application_state:
+        raise ValueError("projection wiring requires enable_application_state")
+    if projection_supplied:
+        if not projection_root.exists() or not projection_root.is_dir():
+            raise ValueError("projection_root must be an existing directory")
+        if _projection_root_traverses_symlink(projection_root):
+            raise ValueError("projection_root must not traverse a symlink")
+        projection_root = projection_root.resolve(strict=True)
+        for existing_root in (state_root, artifact_root, socket_root):
+            if _paths_overlap(projection_root, existing_root):
+                raise ValueError("projection_root must be distinct from application roots")
     if (host_settings_document is None) != (host_settings_caller is None):
         raise ValueError("host settings document and caller must be supplied together")
     if host_settings_document is not None:
@@ -285,6 +348,16 @@ def build_engine_server(
         application_database_path.parent.mkdir(parents=True, exist_ok=True)
         sqlite_models = SQLiteModelRepository(application_database_path)
         sqlite_connections = SQLiteConnectionRepository(application_database_path)
+        projection_coordinator = None
+        if projection_root is not None and projection_resolver is not None:
+            projection_coordinator = CodexProjectionCoordinator.build(
+                projection_root=projection_root,
+                database_path=application_database_path,
+                model_repository=sqlite_models,
+                connection_repository=sqlite_connections,
+                resolver=projection_resolver,
+                token_helper_path=projection_token_helper_path,
+            )
         list_models = ListModelsUseCase(sqlite_models, catalog_reader=catalog_reader)
         register_model = RegisterModelUseCase(sqlite_models)
         rename_model = RenameModelUseCase(sqlite_models)
@@ -403,6 +476,7 @@ def build_engine_server(
         response_preflight=encode_frame,
         usage_query=usage_query,
         external_extension_host=external_extension_host,
+        projection_coordinator=projection_coordinator,
     )
 
     socket_path = socket_root / "engine.sock"
@@ -437,6 +511,11 @@ def build_engine_server(
             run_repository.recover_after_restart(observed_at)
 
         startup_callback = recover_runs
+    if projection_coordinator is not None:
+        startup_callback = _combine_startup_recovery(
+            startup_callback,
+            projection_coordinator,
+        )
 
     server = EngineServer(
         instance_lock=instance_lock,

@@ -129,6 +129,58 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
         forward_kwargs["provider_execution"] = provider_execution
         forward_kwargs["provider_route_definitions"] = provider_routes
 
+    if getattr(args, "enable_codex_projection", False):
+        if profile is None or not args.enable_application_state:
+            _stderr(
+                "engine serve: --enable-codex-projection requires "
+                "--provider-config and --enable-application-state"
+            )
+            return 1
+        legacy_agents_dir = Path(args.legacy_agents_dir)
+        if not legacy_agents_dir.is_absolute() or legacy_agents_dir.name != "agents":
+            _stderr(
+                "engine serve: --enable-codex-projection requires an absolute "
+                "--legacy-agents-dir ending in agents"
+            )
+            return 1
+        from model_deck.integrations.hosts.codex.agent_materializer.resolution import (
+            ResolvedConnection,
+        )
+
+        command = profile.credential_command
+        command_args = tuple(command.args)
+        if len(command_args) != 2 or command_args[0] != "--token":
+            _stderr("engine serve: provider projection credential reference is unavailable")
+            return 1
+        credential_account_id = command_args[1]
+        base_url = (
+            profile.endpoint.base_url
+            if hasattr(profile, "endpoint")
+            else "https://api.cursor.com"
+        )
+
+        def resolve_projection_connection(record):
+            if (
+                record.connection_id != profile.connection_id
+                or record.provider_id != profile.provider_id
+                or record.endpoint_config_ref != profile.endpoint_config_ref
+                or record.credential_ref != profile.credential_ref
+            ):
+                raise ValueError("connection does not match the configured provider profile")
+            return ResolvedConnection(
+                connection_id=record.connection_id,
+                kind="endpoint",
+                revision=record.revision,
+                endpoint_name=profile.provider_name,
+                base_url=base_url,
+                credential_account_id=credential_account_id,
+                billing_description=profile.billing_description,
+            )
+
+        forward_kwargs["projection_root"] = legacy_agents_dir.parent
+        forward_kwargs["projection_resolver"] = resolve_projection_connection
+        forward_kwargs["projection_token_helper_path"] = Path(command.executable)
+
     enable_codex_bridge = getattr(args, "enable_codex_bridge", False)
     bridge_paths: tuple[Path, Path, Path] | None = None
     if enable_codex_bridge:
@@ -1446,6 +1498,7 @@ def main(argv: list[str] | None = None) -> int:
         help="absolute path holding isolated external-plugin artifacts (used with --enable-extensions)",
     )
     serve_cmd.add_argument("--provider-config", default=None)
+    serve_cmd.add_argument("--enable-codex-projection", action="store_true")
     serve_cmd.add_argument("--enable-codex-bridge", action="store_true")
     serve_cmd.add_argument("--codex-bridge-descriptor", default=None)
     serve_cmd.add_argument("--codex-bridge-token", default=None)
