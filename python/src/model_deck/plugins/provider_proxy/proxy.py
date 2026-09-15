@@ -81,6 +81,15 @@ def _start_params(request: RunRequest) -> dict[str, Any]:
                            "capabilities": {"features": {feature.name: feature.state.value
                                               for feature in route.capability_features or ()}}},
     }
+    # Session continuation travels beside the run request on the wire; forward the
+    # engine-issued scope unchanged so a worker can resume its own conversation.
+    scope = request.continuation_scope
+    if scope is not None:
+        params["continuation_scope"] = {"connection_id": scope.connection_id,
+                                        "provider_model_id": scope.provider_model_id,
+                                        "provider_id": scope.provider_id,
+                                        "execution_mode": scope.execution_mode.value,
+                                        "handle": scope.handle}
     params, _ = _document(params)
     _validate(ProviderMethod.START, "params", params)
     return params

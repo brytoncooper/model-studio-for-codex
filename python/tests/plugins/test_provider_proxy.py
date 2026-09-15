@@ -8,20 +8,25 @@ import unittest
 from uuid import uuid4
 
 from model_deck.engine.routing.ports import RouteSnapshot, ExecutionMode
-from model_deck.engine.runs.ports import (NormalizedRunInput, RunRequest, ToolDefinition,
+from model_deck.engine.runs.input_codec import parse_normalized_messages
+from model_deck.engine.runs.ports import (RunRequest, ToolDefinition,
     ProviderExecutionPort, ProviderRunHandle, ProviderCancelTerminationStatus)
 from model_deck.plugins.provider_proxy import ExternalProviderExecution, ProviderProxyError
 from model_deck.plugins.process_runtime.channel import ProviderMethod
 from model_deck_contracts import validate_schema_ref
 
 NOW = datetime(2026, 9, 12, tzinfo=timezone.utc)
+# The engine admits only normalized conversation items; build them through the
+# codec so this fixture stays bound to the vocabulary the proxy must forward.
+MESSAGES = [{"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "hi"}]}]
 
 
 def request(*, endpoint="11111111-2222-4333-8444-555555555555", tools=()):
     return RunRequest(str(uuid4()), str(uuid4()), "client", "idem",
         RouteSnapshot(str(uuid4()), 1, str(uuid4()), 2, "org.example.provider", "model",
                       ExecutionMode.CUSTOM, endpoint_config_ref=endpoint, credential_ref="secret-ref"),
-        NormalizedRunInput(({"role": "user", "content": "hi"},)), tools)
+        parse_normalized_messages(MESSAGES), tools=tools)
 
 
 def event(req, handle, sequence, kind="run.started", **payload):

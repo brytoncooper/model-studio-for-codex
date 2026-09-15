@@ -8,8 +8,13 @@ owns authenticated transport; runtime lifecycle retains process ownership.
 Construct one proxy per authenticated activation with the contributed provider ID
 and an explicit aware-datetime clock. Call `start` with an admitted `RunRequest`
 and a `ProviderRunEventSink`. Route IDs, model, mode, capabilities and endpoint
-reference are encoded to the frozen provider wire schema. Credentials are never
-included. A missing endpoint reference is rejected as `unsupported_capability`
+reference are encoded to the frozen provider wire schema. Run input is forwarded
+as the engine's normalized conversation items
+(`engine.v1/vocabulary.schema.json#/definitions/normalized_input_item`), already
+tagged by admission and passed to the worker unchanged; the proxy neither
+reshapes nor reinterprets message or tool-history values. An engine-issued
+`continuation_scope` rides beside the run request and is forwarded verbatim when
+the admitted request carries one. Credentials are never included. A missing endpoint reference is rejected as `unsupported_capability`
 before dispatch; no synthetic reference is generated.
 
 ## Invariants

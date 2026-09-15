@@ -19,6 +19,7 @@ from model_deck.adapters.storage.sqlite_session_run_repository import SQLiteSess
 from model_deck.engine.connections.ports import SaveConnectionCommand
 from model_deck.engine.model_library.ports import RegisterModelCommand
 from model_deck.engine.routing.ports import CapabilityFeature, CapabilityTriState, ExecutionMode
+from model_deck.engine.runs.input_codec import normalized_messages_to_wire, parse_normalized_messages
 from model_deck.engine.runs.ports import GetRunCommand, RunState
 from model_deck.engine.runs.use_cases import CancelRunUseCase, RunApplicationCoordinator, StartRunUseCase, SubmitToolResultUseCase
 from model_deck.engine.sessions.ports import CreateSessionCommand
@@ -32,6 +33,13 @@ from model_deck_contracts import validate_schema_ref
 
 PLUGIN_ID = "org.example.deterministic-provider"
 PRINCIPAL = "fixture-operator"
+
+
+def fixture_messages():
+    """Return a fresh normalized wire list, the only shape run admission accepts."""
+    return normalized_messages_to_wire(parse_normalized_messages(
+        [{"type": "message", "role": "user",
+          "content": [{"type": "input_text", "text": "fixture"}]}]))
 
 
 class Events:
@@ -115,12 +123,15 @@ class ExternalProviderIntegrationTests(unittest.TestCase):
     def run_scenario(self, scenario):
         initial = self.registrations["text"]
         selected = self.registrations[scenario]
+        # A bare repository create leaves the session without a continuation scope,
+        # which run admission now requires. Let the selection use case mint one for
+        # the registration this scenario dispatches to.
         session = self.repo.create(CreateSessionCommand(initial.registration_id))
         self.selection.execute({"session_id": session.session_id, "registration_id": selected.registration_id,
-                                "expected_revision": session.revision})
+                                "expected_revision": session.revision, "continuation_reset": True})
         params = {"session_id": session.session_id, "registration_id": selected.registration_id,
                   "client_request_id": str(uuid4()), "idempotency_key": str(uuid4()),
-                  "input": {"messages": [{"role": "user", "content": "fixture"}]}}
+                  "input": {"messages": fixture_messages()}}
         if scenario == "tool":
             params["tools"] = [{"name": "lookup", "input_schema": {"type": "object"}, "host_execution_required": True}]
         result = self.start.execute(params, principal_id=PRINCIPAL)
