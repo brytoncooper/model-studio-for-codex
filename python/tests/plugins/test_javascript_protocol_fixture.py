@@ -22,6 +22,7 @@ import io
 import json
 import os
 import select
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,7 +39,17 @@ from model_deck_contracts.validator import validate_schema_ref
 PLUGIN_ID = "org.example.protocol-fixture"
 PLUGIN_VERSION = "1.0.0"
 FIXTURE_DIR = Path(__file__).resolve().parents[3] / "examples" / "protocol-fixture"
-NODE_BINARY = "/usr/local/bin/node"
+def _discover_node_binary() -> str | None:
+    found = shutil.which("node")
+    if found:
+        return found
+    for candidate in ("/opt/homebrew/bin/node", "/usr/local/bin/node"):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+NODE_BINARY = _discover_node_binary()
 PLUGIN_ENTRYPOINT = FIXTURE_DIR / "plugin.js"
 PLUGIN_MANIFEST = FIXTURE_DIR / "manifest.json"
 FRAME_LIMIT = 1 * 1024 * 1024
@@ -50,10 +61,10 @@ CANONICAL_METHODS = frozenset(f"plugin.v1.{kind}" for kind in LIFECYCLE_KINDS)
 
 
 def _node_available() -> bool:
-    return os.path.isfile(NODE_BINARY) and os.access(NODE_BINARY, os.X_OK)
+    return NODE_BINARY is not None
 
 
-@unittest.skipUnless(_node_available(), "/usr/local/bin/node is required to drive the JS fixture")
+@unittest.skipUnless(_node_available(), "node is required for the JavaScript protocol fixture")
 class JavaScriptProtocolFixtureTests(unittest.TestCase):
     """Drive ``plugin.js`` as a real subprocess and assert on its wire behaviour."""
 
