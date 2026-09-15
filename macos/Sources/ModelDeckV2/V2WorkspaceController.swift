@@ -17,6 +17,8 @@ final class V2WorkspaceController: NSViewController {
     private let codingLabel = NSTextField(wrappingLabelWithString: "Coding route unavailable")
     private let usageLabel = NSTextField(wrappingLabelWithString: "Usage not loaded")
     private let refreshUsageButton = NSButton()
+    private let priceSnapshotLabel = NSTextField(wrappingLabelWithString: "Prices not loaded")
+    private let refreshPricesButton = NSButton()
     private let providerSetupController = ProviderSetupViewController()
     private let codexConnectionController = CodexConnectionViewController()
     private let modelManagementController = ModelManagementViewController()
@@ -49,6 +51,14 @@ final class V2WorkspaceController: NSViewController {
         let usageControls = NSStackView(views: [refreshUsageButton, usageLabel])
         usageControls.spacing = 8
         root.addArrangedSubview(usageControls)
+
+        refreshPricesButton.title = "Refresh prices"
+        refreshPricesButton.target = self
+        refreshPricesButton.action = #selector(refreshPricesRequested)
+        priceSnapshotLabel.textColor = .secondaryLabelColor
+        let priceControls = NSStackView(views: [refreshPricesButton, priceSnapshotLabel])
+        priceControls.spacing = 8
+        root.addArrangedSubview(priceControls)
 
         addChild(providerSetupController)
         root.addArrangedSubview(providerSetupController.view)
@@ -115,7 +125,10 @@ final class V2WorkspaceController: NSViewController {
     func attach(usageService: EngineUsageService, bridgeSummary: V2BridgeSummary?) {
         self.usageService = usageService
         codingLabel.stringValue = bridgeSummary.map { "Coding route: \($0.provider) / \($0.model) — \($0.billing)" } ?? "Coding route unavailable"
-        refreshUsageRequested()
+        // Chained, not concurrent: both calls serialize on EngineUsageService's
+        // own lock anyway (one authenticated connection), and sequencing them
+        // keeps `md-N` JSON-RPC request ids — and this attach path — deterministic.
+        refreshUsage { [weak self] in self?.loadPriceSnapshot() }
     }
 
     func attachModelManagement(
@@ -165,13 +178,119 @@ final class V2WorkspaceController: NSViewController {
     }
 
     @objc private func refreshUsageRequested() {
-        guard let usageService else { return }
+        refreshUsage(completion: nil)
+    }
+
+    /// Same work as the "Refresh usage" button; ``completion`` runs on the
+    /// main thread whether the query succeeds or fails, so ``attach(usageService:bridgeSummary:)``
+    /// can chain ``loadPriceSnapshot()`` after it without racing it for the
+    /// engine connection's request ids.
+    private func refreshUsage(completion: (() -> Void)?) {
+        guard let usageService else {
+            completion?()
+            return
+        }
         usageLabel.stringValue = "Refreshing usage…"
-        runInBackground({ try usageService.query() }, success: { [weak self] records in
-            let totals = records.reduce(into: [String: Double]()) { $0[$1.unitKind, default: 0] += $1.units }
-            let parts = ["input_tokens", "output_tokens", "cached_tokens"].compactMap { key in totals[key].map { "\(key): \($0)" } }
-            self?.usageLabel.stringValue = parts.isEmpty ? "No completed usage records" : parts.joined(separator: " · ")
-        })
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let records = try usageService.query()
+                let totals = records.reduce(into: [String: Double]()) { $0[$1.unitKind, default: 0] += $1.units }
+                let parts = ["input_tokens", "output_tokens", "cached_tokens"].compactMap { key in totals[key].map { "\(key): \($0)" } }
+                DispatchQueue.main.async {
+                    self?.usageLabel.stringValue = parts.isEmpty ? "No completed usage records" : parts.joined(separator: " · ")
+                    completion?()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.statusLabel.stringValue = "Error: \(error)"
+                    completion?()
+                }
+            }
+        }
+    }
+
+    /// Loads the price cache snapshot age/staleness row (five-state
+    /// convention: loading/ready/empty/failure/unavailable, same as
+    /// ``ModelCatalogPhase`` elsewhere in V2). `unavailable` means the
+    /// engine has not wired `prices.query` up yet
+    /// (``EngineClientError/unavailable(_:)``); any other error is a
+    /// genuine read failure.
+    private func loadPriceSnapshot() {
+        guard let usageService else {
+            applyPriceSnapshot(EvidencePresenter.evidenceFailureSummary(message: "no usage service attached", capabilityMissing: true))
+            return
+        }
+        applyPriceSnapshot(PriceSnapshotSummary(phase: .loading, stale: false, statusMessage: "Loading prices…"))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let result = try usageService.queryPrices()
+                let summary = EvidencePresenter.priceSnapshotSummary(from: result)
+                DispatchQueue.main.async { self?.applyPriceSnapshot(summary) }
+            } catch {
+                let failure = Self.evidenceFailure(error)
+                let summary = EvidencePresenter.evidenceFailureSummary(
+                    message: failure.message,
+                    capabilityMissing: failure.capabilityMissing
+                )
+                DispatchQueue.main.async { self?.applyPriceSnapshot(summary) }
+            }
+        }
+    }
+
+    /// Splits an engine call failure into the two things the evidence rows
+    /// need from it: what to show, and whether the engine simply does not
+    /// implement the operation yet (``EngineClientError/unavailable(_:)``)
+    /// rather than having genuinely failed the call.
+    nonisolated private static func evidenceFailure(_ error: Error) -> (message: String, capabilityMissing: Bool) {
+        guard let engineError = error as? EngineClientError else {
+            return ("\(error)", false)
+        }
+        if case .unavailable = engineError {
+            return (engineError.description, true)
+        }
+        return (engineError.description, false)
+    }
+
+    private func applyPriceSnapshot(_ summary: PriceSnapshotSummary) {
+        priceSnapshotLabel.stringValue = summary.statusMessage
+        priceSnapshotLabel.textColor = summary.stale ? .systemOrange : .secondaryLabelColor
+        refreshPricesButton.isEnabled = summary.phase != .loading && usageService != nil
+    }
+
+    /// Shows the started refresh job's id without claiming a new snapshot
+    /// phase: the cached prices are unchanged until the job finishes, so the
+    /// row keeps the phase its last read left it in and only re-enables the
+    /// button, which the in-flight ``.loading`` state had disabled.
+    private func applyPriceRefreshStarted(jobID: String) {
+        priceSnapshotLabel.stringValue = EvidencePresenter.refreshStartedMessage(jobID: jobID)
+        priceSnapshotLabel.textColor = .secondaryLabelColor
+        refreshPricesButton.isEnabled = usageService != nil
+    }
+
+    /// Starts a price refresh job. A refresh that cannot even be started
+    /// settles the row in `failure`/`unavailable`; it must never leave the
+    /// row in the in-flight ``.loading`` state, which keeps the button
+    /// disabled and so would strand the user with no way to retry.
+    @objc private func refreshPricesRequested() {
+        guard let usageService else { return }
+        applyPriceSnapshot(PriceSnapshotSummary(phase: .loading, stale: false, statusMessage: "Starting price refresh…"))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let job = try usageService.refreshPrices(idempotencyKey: EngineUsageService.newIdempotencyKey())
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.applyPriceRefreshStarted(jobID: job.jobID)
+                    self.presentJobObservation(jobID: job.jobID, service: usageService)
+                }
+            } catch {
+                let failure = Self.evidenceFailure(error)
+                let summary = EvidencePresenter.refreshFailureSummary(
+                    message: failure.message,
+                    capabilityMissing: failure.capabilityMissing
+                )
+                DispatchQueue.main.async { self?.applyPriceSnapshot(summary) }
+            }
+        }
     }
 
     func showStartupFailure(_ error: Error) {
@@ -370,8 +489,8 @@ final class V2WorkspaceController: NSViewController {
                 guard let self else { return }
                 let (document, jobID) = outcome
                 self.display(document: document)
-                if let jobID {
-                    self.presentJobObservation(jobID: jobID)
+                if let jobID, let panelService = self.service {
+                    self.presentJobObservation(jobID: jobID, service: panelService)
                     self.statusLabel.stringValue = "Action started async job \(jobID)."
                 } else {
                     self.statusLabel.stringValue = "Action completed."
@@ -380,16 +499,18 @@ final class V2WorkspaceController: NSViewController {
         )
     }
 
-    /// Presents a bounded observation child controller for ``jobID``. The
-    /// controller drives its own polling via ``engine.v1.jobs.get`` and
-    /// offers a single "Request cancel" button. We never parse plugin output
-    /// here — the child renders the canonical JSON envelope verbatim.
-    private func presentJobObservation(jobID: String) {
+    /// Presents a bounded observation child controller for ``jobID`` against
+    /// any ``JobObservationService`` — the extension panel service for
+    /// panel-triggered jobs, or ``usageService`` for a
+    /// prices/benchmarks refresh job. The controller drives its own polling
+    /// via ``engine.v1.jobs.get`` and offers a single "Request cancel"
+    /// button. We never parse plugin output here — the child renders the
+    /// canonical JSON envelope verbatim.
+    private func presentJobObservation(jobID: String, service: JobObservationService) {
         if let existing = jobObservers[jobID] {
             view.window?.makeFirstResponder(existing.view)
             return
         }
-        guard let service else { return }
         let controller = JobObservationViewController(
             jobID: jobID,
             service: service,

@@ -15,6 +15,10 @@ rendezvous and credential paths are present.
 | `add_model` | Authenticated `connections.list` resolution, then `models.register` |
 | `set_display_name` | Authoritative `models.list` revision, then `models.rename` |
 | `remove_model` | Authoritative `models.list` revision, then `models.remove` |
+| `model_pricing` | `engine.v1.prices.query` when wired; otherwise `LegacyMcpApplicationAdapter.call("model_pricing", ...)` |
+| `model_benchmarks` | `engine.v1.benchmarks.query` when wired; otherwise `LegacyMcpApplicationAdapter.call("model_benchmarks", ...)` |
+| `refresh_benchmarks` | `engine.v1.benchmarks.refresh` (starts a job) when wired; otherwise `LegacyMcpApplicationAdapter.call("refresh_benchmarks", ...)` |
+| `benchmark_status`, `compare_models`, `rank_models` | `LegacyMcpApplicationAdapter` only (see "Evidence reads" below) |
 
 ## Injection rules
 
@@ -102,3 +106,47 @@ Cache-backed `search_models` must not invent `verified: true`. Inject `McpCatalo
 ## Registered model roles
 
 `McpRegisteredModelPresentation.host_role` is the only source for the MCP `role` field. When it returns `None`, the row omits `role` rather than substituting `registration_id`.
+
+## Evidence reads (B16/C8e): prices and benchmarks
+
+`McpEvidenceReadService` (`evidence_reads.py`) answers `model_pricing`, `model_benchmarks`
+and `refresh_benchmarks` against the C8a evidence seam
+(`contracts/engine.v1/methods/{prices,benchmarks}.{query,refresh}.*`) through a new
+`McpEvidenceEngine` port, with legacy fallback per operation:
+
+```python
+evidence = EngineEvidenceReader(transport)  # same McpEngineTransport the write seam uses
+reads = McpEvidenceReadService(legacy=legacy, evidence=evidence)
+reads.model_pricing("deepseek/deepseek-v4.1-flash")     # -> engine.v1.prices.query
+reads.model_benchmarks("deepseek/deepseek-v4.1-flash")  # -> engine.v1.benchmarks.query
+reads.refresh_benchmarks()                                # -> engine.v1.benchmarks.refresh (job)
+reads.refresh_prices()                                     # -> engine.v1.prices.refresh (job); no legacy tool
+```
+
+- Each of the four engine operations (`prices.query`, `prices.refresh`, `benchmarks.query`,
+  `benchmarks.refresh`) is tried independently. When the engine has not wired one up yet,
+  `call_engine` raises `McpEngineError` with `code == "unsupported_capability"` (see
+  `EngineDispatch.handle` in `engine/dispatch.py`), and that one operation falls back to
+  `LegacyMcpApplicationAdapter.call(name, arguments)` — the same generic dispatch the root
+  `Deck.call` already validates against `TOOL_INDEX`. A partially-landed engine (prices wired,
+  benchmarks not, or vice versa) still serves both tools correctly. Any other engine error
+  (e.g. `conflict`) is raised as `McpReadError` rather than silently falling back, so a real
+  failure is never presented as "not listed".
+- Presenters (`present_price_query`, `present_benchmark_query`, `present_provenance`) render
+  every price and benchmark value alongside its `source_provenance` — `source`, `as_of` (when
+  the feed publishes one), `fetched_at`, and `stale`. An unknown price keeps the exact literal
+  `"not listed"` used elsewhere in this package (`price_for`, `present_catalog_search`), not the
+  legacy tool's own `"not listed on OpenRouter"` wording — the engine cache is not scoped to one
+  provider, so that wording would mislead.
+- `benchmark_status`, `compare_models` and `rank_models` are **not** converted in this unit: the
+  C8a seam defines only a per-model `benchmarks.query` and a refresh job, not an aggregate
+  feed-status, comparison, or ranking shape. Those three tools stay on
+  `LegacyMcpApplicationAdapter.call` directly, same as `list_endpoints` stays legacy today.
+- `refresh_benchmarks` and `refresh_prices` are asynchronous when engine-backed: they start a
+  job (`prices.refresh`/`benchmarks.refresh`, observable via `engine.v1.jobs.get`) and return
+  `{"ok": true, "job_id": ..., "job_kind": ..., "message": ...}` immediately, rather than the
+  legacy tool's synchronous full post-refresh status. `refresh_prices` has no legacy MCP tool at
+  all; without an engine evidence port it raises `McpReadError` instead of a silent no-op.
+- `EngineEvidenceReader` is a thin `McpEngineTransport.call_engine` wrapper, same shape as the
+  `Engine*` resolvers in `registry_resolver.py` — no caching of its own; the engine result's
+  `cached: true` marker is what tells a caller this never triggers a hidden network fetch.

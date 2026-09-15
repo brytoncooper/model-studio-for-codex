@@ -680,16 +680,33 @@ final class UsageDashboardView: NSView, NSSearchFieldDelegate {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, HH:mm"
         let timestamp = record.date.map(formatter.string(from:)) ?? "Unknown time"
-        let outcome = (record.status ?? 0) >= 400 ? "Failed \(record.status ?? 0)" : record.isSubscription ? "Subscription" : UsageValues.dollars(record.cost)
-        let charge = UsageViewStyle.label(outcome, size: 11, weight: .medium, color: (record.status ?? 0) >= 400 ? .systemRed : UsageValues.color(record.providerKey))
+        let failed = (record.status ?? 0) >= 400
+        let outcome = Self.chargeText(record)
+        let outcomeColor: NSColor = failed ? .systemRed : UsageValues.color(record.providerKey)
+        let charge = UsageViewStyle.label(outcome, size: 11, weight: .medium, color: outcomeColor)
         let heading = UsageViewStyle.row([model, charge])
         charge.setContentCompressionResistancePriority(.required, for: .horizontal)
         charge.setContentHuggingPriority(.required, for: .horizontal)
         let meta = timestamp + " · " + record.agent + " · " + record.providerName
         let detail = record.tokens.map { UsageValues.count($0) + " tokens reported" } ?? "Tokens not reported"
         let row = UsageViewStyle.column([heading, UsageViewStyle.label(meta, size: 10), UsageViewStyle.label(detail, size: 10)], spacing: 3)
-        row.toolTip = meta + "\n" + outcome + (record.providerKey == "cursor" ? " · Cursor SDK-reported charge" : "") + "\n" + detail
+        let chargeNote = record.providerKey == "cursor" ? " · Cursor SDK-reported charge" : ""
+        row.toolTip = [meta, outcome + chargeNote, detail].joined(separator: "\n")
         return row
+    }
+
+    /// What one activity row prints in its charge column.
+    ///
+    /// `UsageRecord.isSubscription` is `Bool?`: `nil` means the record's cost
+    /// kind was never recorded, which is not the same as "not a subscription".
+    /// Only a record *known* to be subscription billing reads "Subscription";
+    /// an unknown one falls through to the amount, and an absent amount prints
+    /// "Not reported" rather than a figure nothing reported.
+    private static func chargeText(_ record: UsageRecord) -> String {
+        let statusCode = record.status ?? 0
+        if statusCode >= 400 { return "Failed \(statusCode)" }
+        if record.isSubscription == true { return "Subscription" }
+        return UsageValues.dollars(record.cost)
     }
 
     private func linkButton(_ title: String, url: String) -> NSButton {

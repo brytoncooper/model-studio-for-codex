@@ -81,3 +81,37 @@ class McpRegisteredModelLocator(Protocol):
     """
 
     def find(self, provider_model_id: str) -> tuple[str, int] | None: ...
+
+
+@runtime_checkable
+class McpEvidenceEngine(Protocol):
+    """Engine-backed reads/refreshes for cached prices and benchmarks (B16/C8e).
+
+    Implementations call ``McpEngineTransport.call_engine`` under the
+    ``engine.v1.prices.query``, ``engine.v1.prices.refresh``,
+    ``engine.v1.benchmarks.query`` and ``engine.v1.benchmarks.refresh``
+    operation ids frozen by the C8a evidence seam
+    (``contracts/engine.v1/methods/{prices,benchmarks}.{query,refresh}.*``).
+
+    When the engine has not wired one of those operations up yet, the call
+    raises :class:`McpEngineError` with ``code == "unsupported_capability"``.
+    :class:`~model_deck.integrations.clients.mcp.evidence_reads.McpEvidenceReadService`
+    catches that per-operation and falls back to the legacy root
+    ``pricing.py`` / ``model_benchmarks.py`` path, so a partially-landed
+    engine (prices wired, benchmarks not, or vice versa) still serves both
+    MCP tools correctly.
+    """
+
+    def query_prices(
+        self,
+        *,
+        provider_model_id: str | None = None,
+        registration_id: str | None = None,
+        include_stale: bool = True,
+    ) -> dict[str, Any]: ...
+
+    def refresh_prices(self, *, idempotency_key: str) -> dict[str, Any]: ...
+
+    def query_benchmarks(self, *, model_id: str | None = None) -> dict[str, Any]: ...
+
+    def refresh_benchmarks(self, *, idempotency_key: str) -> dict[str, Any]: ...
