@@ -7,6 +7,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from model_deck.adapters.storage.sqlite_plugin_jobs import SQLitePluginJobRepository
+from model_deck.engine.jobs.first_party import (
+    FIRST_PARTY_PLUGIN_ID,
+    FIRST_PARTY_PLUGIN_PREFIX,
+)
 from model_deck.engine.jobs.ports import GetJobCommand, JobOwner, JobState, RequestCancelCommand
 from model_deck.engine.jobs.service import (
     BrokerJobConflictError,
@@ -143,6 +147,27 @@ class BrokerTests(unittest.TestCase):
         with self.assertRaises(BrokerJobDeniedError):
             params = {"operation_id": "jobs.admin"}
             self.broker.create(self.handle, self.identity, **params)
+
+    def test_plugin_claiming_the_reserved_engine_namespace_is_denied(self):
+        """A plugin must never borrow the engine's authority over its own jobs."""
+        for plugin_id in (
+            FIRST_PARTY_PLUGIN_ID,
+            FIRST_PARTY_PLUGIN_PREFIX + "prices.refresh",
+        ):
+            impostor = replace(self.identity, plugin_id=plugin_id)
+            with self.subTest(plugin_id=plugin_id):
+                with self.assertRaises(BrokerJobDeniedError):
+                    self.broker.create(self.handle, impostor, operation_id="jobs.run")
+                # Every follow-up is closed too, not just creation.
+                job_id = self._create()
+                with self.assertRaises(BrokerJobDeniedError):
+                    self.broker.check_cancelled(impostor, job_id=job_id)
+                with self.assertRaises(BrokerJobDeniedError):
+                    self.broker.fail(
+                        impostor,
+                        job_id=job_id,
+                        error={"code": "internal", "retryable": False},
+                    )
 
     def test_cross_activation_followup_denied(self):
         job_id = self._create()

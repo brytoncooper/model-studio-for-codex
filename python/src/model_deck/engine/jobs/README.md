@@ -35,3 +35,39 @@ the schema declared at creation. They are retained on interruption, but explicit
 resume and a runner that consumes them remain future B19 work. Events,
 subscriptions, content grants, and full lifecycle/update acceptance also remain
 outside this public-job slice.
+
+## First-party (engine-owned) jobs
+
+The engine also runs jobs of its own — today the evidence refreshes behind
+`prices.refresh` and `benchmarks.refresh`. There is still no public job-create
+operation: a first-party job exists because an engine operation started one.
+
+They reuse everything above. `first_party.py` creates them under a reserved
+`JobOwner` — `plugin_id` in the `com.modeldeck.engine.` namespace, the engine's
+boot identity as `activation_id` — with the engine itself as
+`origin_principal_id`. The broker refuses any external activation whose
+`plugin_id` claims that namespace, so a plugin can never have the engine act on
+its behalf. Because the engine is the originator, any authenticated engine
+client may observe and cancel these jobs; one consequence is that a
+`jobs.cancel` idempotency key for a first-party job is scoped to the engine
+rather than to the calling client.
+
+`runner.py` is the minimum needed to execute one inside the engine process: a
+daemon thread per job, a cancellation probe that re-reads `cancel_requested`
+from durable state rather than from memory, and exactly one terminal write per
+job (a lost race is a result, not an error). It is not the plugin worker and it
+resumes nothing. The runner dies with the process, so startup calls
+`recover_first_party_jobs`, which marks whatever is still active as
+interrupted — never replayed, matching the plugin path.
+
+An engine operation that starts one maps its own `idempotency_key` to a job for
+as long as that job is not terminal. That mapping is process-local by design:
+after a restart every earlier first-party job is already terminal, so the same
+key correctly starts fresh work instead of pointing at a job that will never
+finish.
+
+Both in-memory maps are bounded, because those keys are caller-chosen and are
+usually a fresh UUID per call. The key map sweeps entries whose jobs are
+terminal once it fills, then caps itself, so a flood of unique keys costs
+de-duplication rather than memory; the runner releases a job's thread as soon
+as that job's terminal write lands, so it only ever tracks jobs still running.

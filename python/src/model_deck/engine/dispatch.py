@@ -85,6 +85,7 @@ from model_deck.engine.host_settings.ports import (
 from model_deck.engine.host_settings.service import HostSettingsService
 from model_deck.engine.hosts.ports import HostIntegrationPort
 from model_deck.engine.hosts.service import HostOperationsService
+from model_deck.engine.builtins import BUILTIN_FEATURE_IDS
 from model_deck.engine.kernel_composition import KernelComposition, KernelInputError, KernelInvocationError
 from model_deck.kernel import CompositionError, GrantDeniedError
 from model_deck.engine.extensions.ports import (
@@ -96,6 +97,7 @@ from model_deck.engine.extensions.ports import (
     LifecycleReceipt,
     ReceiptOutcome,
 )
+from model_deck.engine.jobs.first_party import FirstPartyJobDirectory
 from model_deck.engine.jobs.use_cases import (
     JobsNotFoundError, JobsCallerMismatchError, JobsInvalidArgumentError,
     JobsUnknownKeyError,
@@ -107,8 +109,11 @@ from model_deck.engine.usage.reconciliation import ReconciledUsageQueryUseCase, 
 from model_deck.engine.usage.use_cases import USAGE_QUERY_PARAMS_REF, USAGE_QUERY_RESULT_REF
 
 SERVER_API = ApiVersion(1, 0)
+# Hello negotiation vocabulary. Unrelated to the kernel capability IDs that the
+# built-in feature descriptors declare; the two never share a namespace.
 SERVER_FEATURES = {"tools": "unsupported", "compaction": "unknown"}
 _CLIENT_PRINCIPAL_NAME_PREFIX = "model-deck:client:"
+_BUILTIN_FEATURE_IDS = frozenset(BUILTIN_FEATURE_IDS)
 
 _BASE_IMPLEMENTED_METHODS = frozenset(
     {
@@ -476,6 +481,7 @@ class EngineDispatch:
         response_preflight: Callable[[dict[str, Any]], Any] | None = None,
         usage_query: ReconciledUsageQueryUseCase | None = None,
         external_extension_host: ExtensionGateway | None = None,
+        first_party_jobs: FirstPartyJobDirectory | None = None,
         projection_coordinator: "ProjectionCoordinator | None" = None,
     ) -> None:
         self._list_models = list_models
@@ -502,16 +508,30 @@ class EngineDispatch:
         self._response_preflight = response_preflight
         self._usage_query = usage_query
         self._external_extension_host = external_extension_host
+        self._first_party_jobs = first_party_jobs
         self._projection_coordinator = projection_coordinator
         self._implemented_methods = self._build_implemented_methods()
         self._kernel_methods: frozenset[str] = frozenset()
+        self._kernel_routed_methods: frozenset[str] = frozenset()
         if kernel_composition is not None:
             if not isinstance(kernel_composition, KernelComposition):
                 raise CompositionError("kernel composition must be a KernelComposition")
             self._kernel_methods = frozenset(row.operation_id for row in kernel_composition.operations())
-            if self._kernel_methods & {entry["operation_id"] for entry in _OPERATION_CATALOG}:
+            owners = kernel_composition.operation_owners()
+            builtin_served = frozenset(
+                operation_id
+                for operation_id, feature_id in owners.items()
+                if feature_id in _BUILTIN_FEATURE_IDS
+            )
+            # Built-in descriptors own discovery for operations this class already
+            # serves; anything else must stay out of the reserved engine namespace.
+            self._kernel_routed_methods = self._kernel_methods - builtin_served
+            if self._kernel_routed_methods & {entry["operation_id"] for entry in _OPERATION_CATALOG}:
                 raise CompositionError("kernel operation collides with a reserved engine operation")
-            self._implemented_methods |= self._kernel_methods
+            unimplemented = builtin_served - self._implemented_methods
+            if unimplemented:
+                raise CompositionError("composed built-in operation has no engine implementation")
+            self._implemented_methods |= self._kernel_routed_methods
             try:
                 validate_schema_ref("contracts/engine.v1/methods/operations.list.result.schema.json",
                                     {"operations": self._operation_catalog()})
@@ -566,6 +586,10 @@ class EngineDispatch:
             )
             if has_job_reader and has_job_canceller:
                 methods.update(_JOB_METHODS)
+        if self._first_party_jobs is not None:
+            # The engine's own job repository answers jobs.get / jobs.cancel
+            # whether or not an external extension host was composed.
+            methods.update(_JOB_METHODS)
         if self._projection_coordinator is not None:
             methods.update(_HOST_PROJECTION_METHODS)
         if self._host_integration is not None:
@@ -676,7 +700,7 @@ class EngineDispatch:
             return self._hello(frame.get("id"), params, connection_id)
         if not self._is_authenticated(connection_id):
             return self._domain_error(frame.get("id"), "capability_denied", "authentication required")
-        if method in self._kernel_methods:
+        if method in self._kernel_routed_methods:
             return self._invoke_kernel(frame.get("id"), method, params)
         if method == "engine.v1.health":
             return self._success(frame.get("id"), {"status": "ok"})
@@ -819,11 +843,17 @@ class EngineDispatch:
         return response
 
     def _operation_catalog(self) -> list[dict[str, Any]]:
+        # A composed feature describes its own operations, so the static table is
+        # only the residue: operations no composed descriptor already covers.
+        composed = self._kernel_composition.catalog() if self._kernel_composition is not None else []
+        described = {entry["operation_id"] for entry in composed}
         operations = [
-            dict(entry) for entry in _OPERATION_CATALOG if entry["operation_id"] in self._implemented_methods
+            dict(entry)
+            for entry in _OPERATION_CATALOG
+            if entry["operation_id"] in self._implemented_methods
+            and entry["operation_id"] not in described
         ]
-        if self._kernel_composition is not None:
-            operations.extend(self._kernel_composition.catalog())
+        operations.extend(composed)
         if self._external_extension_host is not None:
             operations.extend(
                 {
@@ -1291,8 +1321,15 @@ class EngineDispatch:
         params: Mapping[str, Any],
         connection_id: int,
     ) -> dict[str, Any]:
-        host = self._external_extension_host
-        if host is None:
+        # The engine's own jobs and the extension host's jobs live in separate
+        # repositories, so a job id is looked up in each in turn. Only "not
+        # found" moves on; every other outcome is that directory's answer.
+        directories = tuple(
+            directory
+            for directory in (self._first_party_jobs, self._external_extension_host)
+            if directory is not None
+        )
+        if not directories:
             return self._domain_error(request_id, "unsupported_capability", "method not configured")
         principal = self._principal_for_connection(request_id, connection_id)
         if isinstance(principal, dict):
@@ -1300,8 +1337,9 @@ class EngineDispatch:
         schema_name = method.removeprefix("engine.v1.")
         try:
             validate_schema_ref(f"contracts/engine.v1/methods/{schema_name}.params.schema.json", dict(params))
-            operation = host.job_get if method.endswith("get") else host.job_cancel
-            result = operation(dict(params), principal=principal)
+            result = self._first_matching_job_directory(
+                directories, method, params, principal
+            )
             validate_schema_ref(
                 f"contracts/engine.v1/methods/{schema_name}.result.schema.json",
                 result,
@@ -1317,6 +1355,33 @@ class EngineDispatch:
             return self._error(request_id, -32602, "invalid params")
         except ValueError:
             return self._domain_error(request_id, "conflict", "job operation conflict")
+
+    @staticmethod
+    def _first_matching_job_directory(
+        directories: tuple[Any, ...],
+        method: str,
+        params: Mapping[str, Any],
+        principal: str,
+    ) -> dict[str, Any]:
+        """Ask each job directory in turn; only "not found" tries the next one.
+
+        Every directory receives the authenticated caller. The extension host
+        authorizes each job against the principal that originated it; the
+        first-party directory owns engine jobs and accepts any authenticated
+        caller, which is why the same principal is safe to pass to both.
+        """
+        last_missing: JobsNotFoundError | None = None
+        for directory in directories:
+            operation = (
+                directory.job_get if method.endswith("get") else directory.job_cancel
+            )
+            try:
+                return operation(dict(params), principal=principal)
+            except JobsNotFoundError as missing:
+                last_missing = missing
+        if last_missing is not None:
+            raise last_missing
+        raise JobsNotFoundError("job not found")
 
     def _external_extension(
         self,

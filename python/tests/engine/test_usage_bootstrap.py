@@ -20,6 +20,7 @@ from model_deck_contracts.validator import validate_schema_ref
 from tests.engine import test_engine_event_dispatch as event_fixtures
 
 USAGE_METHOD = "engine.v1.usage.query"
+SUMMARY_METHOD = "engine.v1.usage.summary"
 
 
 class RequestUsageFixtureProvider:
@@ -46,7 +47,13 @@ class UsageBootstrapTests(unittest.TestCase):
         self.provider = RequestUsageFixtureProvider()
 
     def build(self, *, application=True, runs=True):
-        with mock.patch("model_deck.bootstrap.DeterministicProviderExecutionPort", return_value=self.provider):
+        # Bootstrap imports the deterministic provider inside its fixture-run
+        # branch so a minimal engine loads no vendor adapter at all, so the
+        # patch has to land on the defining module, not on bootstrap.
+        with mock.patch(
+            "model_deck.adapters.providers.deterministic.DeterministicProviderExecutionPort",
+            return_value=self.provider,
+        ):
             runtime = build_engine_server(
                 state_root=self.root / "state", artifact_root=self.root / "artifact", socket_root=self.root / "socket",
                 source_root=repo_root(), legacy_agents_dir=event_fixtures.FIXTURES / "legacy_agent",
@@ -181,3 +188,60 @@ class UsageBootstrapTests(unittest.TestCase):
                 operations = session.call({"jsonrpc": "2.0", "id": 43, "method": "engine.v1.operations.list", "params": {}})
                 self.assertNotIn(USAGE_METHOD, [row["operation_id"] for row in operations["result"]["operations"]])
             runtime.server.stop()
+
+    def test_usage_summary_is_available_exactly_when_usage_query_is(self):
+        runtime = self.build()
+        connection, descriptor, credential = self.connection(runtime)
+        with connection as session:
+            self.run_fixture(session, descriptor, credential)
+            operations = session.call({"jsonrpc": "2.0", "id": 45,
+                                       "method": "engine.v1.operations.list", "params": {}})
+            ids = [row["operation_id"] for row in operations["result"]["operations"]]
+            self.assertIn(USAGE_METHOD, ids)
+            self.assertIn(SUMMARY_METHOD, ids)
+            summary = session.call({"jsonrpc": "2.0", "id": 46,
+                                    "method": SUMMARY_METHOD, "params": {}})
+            validate_schema_ref("contracts/engine.v1/methods/usage.summary.result.schema.json",
+                                summary["result"])
+            # The fixture provider reports units with no money and no model to
+            # price, so no cost kind is established and no total is invented.
+            self.assertEqual(summary["result"]["totals"], [])
+            self.assertEqual(self.query(session)["result"]["records"], self.provider.expected)
+        runtime.server.stop()
+
+    def test_evidence_is_available_with_application_state_while_usage_is_not(self):
+        """Prices and benchmarks do not borrow their availability from runs."""
+        runtime = self.build(application=True, runs=False)
+        connection, descriptor, credential = self.connection(runtime)
+        with connection as session:
+            self._authenticate(session, descriptor, credential)
+            operations = session.call({"jsonrpc": "2.0", "id": 47,
+                                       "method": "engine.v1.operations.list", "params": {}})
+            ids = [row["operation_id"] for row in operations["result"]["operations"]]
+            self.assertNotIn(USAGE_METHOD, ids)
+            self.assertNotIn(SUMMARY_METHOD, ids)
+            for operation_id in ("engine.v1.prices.query", "engine.v1.benchmarks.query",
+                                 "engine.v1.prices.refresh", "engine.v1.benchmarks.refresh",
+                                 "engine.v1.jobs.get", "engine.v1.jobs.cancel"):
+                self.assertIn(operation_id, ids)
+            prices = session.call({"jsonrpc": "2.0", "id": 48,
+                                   "method": "engine.v1.prices.query", "params": {}})
+            self.assertTrue(prices["result"]["cached"])
+            self.assertEqual(prices["result"]["records"], [])
+            summary = session.call({"jsonrpc": "2.0", "id": 49,
+                                    "method": SUMMARY_METHOD, "params": {}})
+            self.assertEqual(summary["error"]["data"]["code"], "unsupported_capability")
+        runtime.server.stop()
+
+    def test_minimal_engine_offers_neither_usage_nor_evidence_nor_jobs(self):
+        runtime = self.build(application=False, runs=False)
+        connection, descriptor, credential = self.connection(runtime)
+        with connection as session:
+            self._authenticate(session, descriptor, credential)
+            operations = session.call({"jsonrpc": "2.0", "id": 50,
+                                       "method": "engine.v1.operations.list", "params": {}})
+            ids = [row["operation_id"] for row in operations["result"]["operations"]]
+            for operation_id in (USAGE_METHOD, SUMMARY_METHOD, "engine.v1.prices.query",
+                                 "engine.v1.prices.refresh", "engine.v1.jobs.get"):
+                self.assertNotIn(operation_id, ids)
+        runtime.server.stop()

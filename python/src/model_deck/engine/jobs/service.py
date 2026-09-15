@@ -13,6 +13,7 @@ from ..plugin_authority import (
     AuthorityDeniedError,
     PluginAuthority,
 )
+from .first_party import is_first_party_plugin_id
 from .ports import (
     ACTIVE_JOB_STATES,
     FAILURE_CODES,
@@ -154,6 +155,11 @@ def _check_error(error: object) -> str:
 def _check_activation(activation: object) -> ActivationIdentity:
     if type(activation) is not ActivationIdentity:
         raise BrokerJobInvalidRequestError()
+    # Confused-deputy guard. Every broker entry point passes through here, so a
+    # plugin whose manifest declares an identifier inside the engine's reserved
+    # namespace can never create, observe or terminate a first-party job.
+    if is_first_party_plugin_id(activation.plugin_id):
+        raise BrokerJobDeniedError()
     return activation
 
 
