@@ -536,3 +536,186 @@ No product scope decision is currently required. B24 is resolved as trusted mode
 only. A future request to advertise restricted execution would reopen its
 qualified-helper/OS-denial work. B27 requires operational authorization after
 B26, under the fresh-start scope in V2-SCOPE.md.
+
+## 6. Critical-path wave (raised 2026-09-15)
+
+Sequences the B16-B23/B25-B27 rows still "Implementation/Integration remaining" in STATUS.md. B24 stays closed (see the scope-decisions section above). Acceptance below is taken only from BACKLOG.md (B16-B27, lines 155-253) and STATUS.md's "Exact remaining material requirement" column; nothing is invented.
+
+Lanes: Lane 1 = kernel -> supervisor -> brokers -> lifecycle -> management UI (sequential, shared composition/lifecycle surface). Lane 2 = SDK/tooling. Lane 3 = usage/pricing/benchmarks and the Codex-settings fixture, startable now.
+
+### C0 - Stabilization outcome (placeholder)
+
+- **Outcome:** Landed on 2026-09-15 as four commits on `refactor/plugin-architecture`:
+  1. `bd2e224` fix(plugins): conform provider proxy to provider-neutral messages
+  2. `a8982c0` fix(providers): keep run completion when continuation save fails
+  3. `69163cc` test(plugins): commit JavaScript protocol fixture
+  4. `9ccaeb0` feat(verify): implement G2-G6 gates and the test environment contract
+
+  Final gate lines (all-local, 2026-09-15, before the docs commit):
+  ```
+  development-guard: 37 tests, 0 failures, 0 errors, 3.5s
+  contracts: 0 tests, 0 failures, 0 errors, 0.4s
+  engine: 1403 tests, 0 failures, 0 errors, 73.9s
+  swift: 211 tests, 0 failures, 0 errors, 4.3s
+  migration: 329 tests, 0 failures, 0 errors, 8.2s
+  providers: 335 tests, 0 failures, 0 errors, 4.8s
+  extensions: 362 tests, 0 failures, 0 errors, 14.6s
+  ```
+
+  Rejected untracked files from the same triage (moved, never deleted) live at
+  `/private/tmp/claude-501/-Users-brytoncooper-Documents-Model-Deck/5fe229cc-3a9a-4a26-8bd8-f76448e26e5f/scratchpad/rejected-untracked/scripts/checks/editing_check.py`
+  and `.../rejected-untracked/scripts/checks/__init__.py` (the tracked
+  `scripts/editing_check.py` at `91d23f4` was judged authoritative over both).
+
+  Main-folder result (stash ref / pushed `origin/main` sha): not recorded —
+  the main-hygiene unit's report returned no files or notes, so there is
+  nothing to cite here. Needs a follow-up pass on that unit before this line
+  can be completed.
+- **Note:** Replaced by a later unit's landing commit; reserves the slot only.
+
+### C1 - B17 kernel: descriptors, vendor-free composition — Lane 1, S-M
+
+- **Outcome:** Remaining built-in/specialized-provider descriptors register with required-capability enforcement at real startup; vendor-free minimal composition starts.
+- **Original workstreams covered:** B17.
+- **Ownership:** Kernel registry/grants/ports and builtin descriptors; only the composition modules descriptor migration touches — do not reopen A2's settled graph boundary.
+- **Reuse:** A2's delivered composition boundary, layer model, plugin-runtime layer, public ports.
+- **Dependencies:** None new; builds on delivered A2. First in Lane 1.
+- **Acceptance (G1/G2):** built-ins/provider ports use descriptors, not privileged internal lookups; a generic namespaced fixture operation works without changing a kernel dispatch switch; collision/incompatible-version/absent-required-capability fail startup while optional-capability failure stays isolated; missing/cyclic dependency diagnostics fire; a fresh minimal composition starts without any vendor.
+- **Non-goals:** Reopening A2's boundary; new operation semantics beyond descriptor migration; broad package moves.
+- **Parallelism:** Lane 1; runs alongside C8 and the C9 fixture/parser (Lane 3).
+- **Stop condition:** Any public kernel/port contract change beyond descriptor migration returns to the primary agent.
+
+### C2 - B18 supervisor, continues A7 — Lane 1 after C1, L
+
+- **Outcome:** Installed children get proven heartbeat, crash-backoff/restart-loop, dependency-failure, slow-reader/resource/owned-descendant, credential-scope and model-library-selection behavior, a shared built-in/external conformance suite, and declared resume.
+- **Original workstreams covered:** B18.
+- **Ownership:** `python/src/model_deck/plugins/process_runtime/`, provider proxy, external-provider integration fixtures/guides/tests (continues A7).
+- **Reuse:** Existing lifecycle session, invocation/provider channels, exact child handles, activation tokens, archived deterministic provider.
+- **Dependencies:** C1. Lane 1, after C1.
+- **Acceptance (G6):** heartbeat, timeout, crash backoff, restart-loop stop, dependency-failure, slow-reader, resource, owned-descendant-teardown cases pass; external feature/provider fixtures run with private engine imports unavailable; the installed provider is selected through the model library and proves route/credential scope, tool-result identity, cancellation; a shared built-in/external conformance suite and declared resume exist.
+- **Non-goals:** Public background jobs, package update/remove, sandboxing, live credentials, vendor qualification.
+- **Parallelism:** Lane 1; C8 and the C9 fixture/parser continue in Lane 3.
+- **Stop condition:** Any provider/plugin protocol change or new process authority returns to the primary agent.
+
+### C3 - B19 brokers — Lane 1 after C2, M
+
+- **Outcome:** Brokered storage/jobs/events support safe explicit resume, event-subscription revocation, and confused-deputy/content-grant protection, closing remaining B18 supervisor lifecycle guarantees.
+- **Original workstreams covered:** B19.
+- **Ownership:** Storage/job/event brokers and the grant schemas frozen in B01; extension-capabilities package only.
+- **Reuse:** A3's job repository/broker hookup, activation identity, frozen job/grant schemas.
+- **Dependencies:** C2. Lane 1, after C2.
+- **Acceptance (G6):** quota, stale-revision, event-subscription revocation during an active subscription, worker-crash interruption, plugin-to-plugin confused-deputy denial, metadata/content-grant distinction pass; explicit safe resume proven without replaying interrupted work; remaining B18 supervisor lifecycle guarantees close.
+- **Non-goals:** Notebook implementation, lifecycle update/remove, marketplace, sandboxing, live app installation.
+- **Parallelism:** Lane 1; C8 and the C9 fixture/parser continue in Lane 3.
+- **Stop condition:** Any change to frozen job/grant schemas or resume meaning returns to the primary agent.
+
+### C4 - B20 lifecycle, continues A8 — Lane 1 after C3, M
+
+- **Outcome:** Package update/remove presents trusted-executable/provenance and grant-renewal information with explicit consent, closing remaining in-flight-job, freeze-race, failed-token, and post-activation data-resolution acceptance.
+- **Original workstreams covered:** B20.
+- **Ownership:** `python/src/model_deck/plugins/{external_host,activation_lifecycle}/`, lifecycle dispatch/CLI, focused lifecycle tests (continues A8).
+- **Reuse:** Artifact store, lifecycle repository/service, activation authority, versioned data freeze/migration, A8's delivered inspect/update/remove path.
+- **Dependencies:** C3. Lane 1, after C3.
+- **Acceptance (G6):** trusted-executable status/provenance displayed; permission expansion requires explicit renewed operator consent, not silent expansion; zip traversal/symlink/size rejection, failed-upgrade rollback, uninstall data retention, explicit in-flight-job outcomes, update-freeze write races, and failed staged-activation-token fallback pass at the composed boundary; updates keep failing closed to the intersection of prior approvals and newly requested scopes.
+- **Non-goals:** Marketplace/network install, data-deletion UX, native management UI, sandboxing, live installation.
+- **Parallelism:** Lane 1; C8 and the C9 fixture/parser continue in Lane 3.
+- **Stop condition:** Any change to extension mutation schemas, grant semantics, or post-activation data-loss policy returns to the primary agent.
+
+### C5 - B21 management UI — Lane 1 after C4, M
+
+- **Outcome:** The Extensions screen delivers a complete management experience (install/enable/crash/update/grants) across all five panel states, with proven accessibility/focus and a second unrelated panel.
+- **Original workstreams covered:** B21.
+- **Ownership:** Shared component schema renderer, presenter, navigation/command registry (AppKit plugin renderer / Extensions screen).
+- **Reuse:** Generic panel renderer, A3 jobs, A7/C2 supervision, A8/C4 lifecycle, Notebook's proven generic list/editor/action rendering.
+- **Dependencies:** C4. Lane 1, after C4.
+- **Acceptance (G3/G6):** two synthetic panels render without shell source edits; a malformed/unknown required component fails only one panel; disabled-plugin data is retained; no arbitrary selector/URL executes; the complete management experience, accessibility/focus, and all five panel states are added atop Notebook's proven rendering.
+- **Pass condition to agree before start (proposed):** the screen drives install/enable/disable/crash/update/grant actions against real B20 operations; all five states render on Notebook's panel and one second unrelated synthetic panel; every control is keyboard-reachable with visible focus and coherent tab order; a malformed/unknown component fails only its own panel; disabled-plugin data is retained; no arbitrary selector/URL runs.
+- **Non-goals:** Per-plugin app switching, third-party native binary loading, arbitrary selector/URL execution.
+- **Parallelism:** Lane 1; C8/C9 fixture continue in Lane 3; C9's native integration waits for this unit.
+- **Stop condition:** Any panel-schema/component contract expansion, or a required kernel/core/shell special case, returns to the primary agent.
+
+### C6 - B22 optional session-metadata link — after C5, S
+
+- **Outcome:** Session Notebook gains the originally scoped optional session-metadata link.
+- **Original workstreams covered:** B22.
+- **Ownership:** `examples/session-notebook` only, plus its external tests/docs.
+- **Reuse:** Notebook's existing CRUD/editor/export, packaged A-to-B update, retained metadata/revisions, restart persistence (already delivered).
+- **Dependencies:** C5. After C5.
+- **Acceptance (G6):** the optional session-metadata link is added atop the already-proven install/write/export/disable/update/re-enable-with-data-preserved and metadata-unavailable manual-notes behavior, with zero kernel/core/shell edits; permission-renewal presentation stays a B20/B21 dependency and general job resume stays separate B19 work — neither reopens here.
+- **Non-goals:** Broader lifecycle/permission-renewal presentation (B20/B21); general job resume (B19).
+- **Parallelism:** Single small unit; does not block Lane 2 or Lane 3.
+- **Stop condition:** Any required contract expansion stops and returns to the primary agent.
+
+### C7 - B23 SDK and tooling — Lane 2 after C4, M
+
+- **Outcome:** An independent Python SDK wheel (no engine imports) supports a documented init/dev/test workflow, proven by a fresh-project walkthrough outside the repo.
+- **Original workstreams covered:** B23.
+- **Ownership:** `sdk/python`, generator/template/CLI docs, `examples/protocol-fixture`.
+- **Reuse:** Public generic invoke, committed validate/pack commands, authoring guide.
+- **Dependencies:** C4. Lane 2, after C4; the walkthrough also waits for C6.
+- **Acceptance (G6):** a fresh temp project builds/installs through documented steps; the SDK wheel has no engine imports; command discovery makes `model-deck invoke <operation>` work for unknown future extensions; the non-Python (JavaScript) fixture negotiates/invokes/cancels/disables correctly; no hidden runtime download occurs.
+- **Note:** the JavaScript protocol fixture was accepted and committed on 2026-09-15 (previously flagged untracked/unaudited in STATUS.md); only the SDK/wheel, workflow, and fresh-project walkthrough remain open.
+- **Non-goals:** Marketplace distribution, native binaries beyond the JS fixture, hidden runtime downloads, engine-coupled SDK packaging.
+- **Parallelism:** Lane 2; independent of Lane 1 after C4 and of Lane 3.
+- **Stop condition:** Any change coupling the SDK to engine internals, or a hidden runtime download requirement, returns to the primary agent.
+
+### C8 - B16 usage, pricing, benchmarks — Lane 3, starts now, M
+
+- **Outcome:** Usage/pricing/benchmark source adapters feed provenance- and age-bearing cached queries, served to UI/MCP via explicit refresh jobs on the public job path, with defined cache-failure behavior and settled/estimate/subscription separation.
+- **Original workstreams covered:** B16.
+- **Ownership:** Usage/evidence use cases and adapters, refresh-job handlers, UI/MCP read consumers, focused tests.
+- **Reuse:** Existing usage ledger/reconciliation/query, A3's public job path, V2 usage client, legacy price/benchmark readers.
+- **Dependencies:** None blocking; A3's job path is delivered. Lane 3, starts now, parallel with C1-C2.
+- **Acceptance (G2/G5):** provenance/age-bearing cached queries; explicit refresh jobs on the public job path, never hidden refresh on request paths; UI/MCP consumers read the cache; cache-expiry and failed-refresh-with-stale-good-value proven; duplicated usage events handled; unknown provider monetary cost stays explicitly unknown; settled/estimate/subscription values stay separated.
+- **Non-goals:** Invented provider prices, billed live requests, dashboard redesign, account-wide subscription accounting.
+- **Parallelism:** Lane 3; fully parallel with Lane 1 (C1-C5) and Lane 2 (C7).
+- **Stop condition:** A source that cannot expose provenance/scope, or needs a hidden network action on a read path, returns to the primary agent.
+
+### C9 - B25 native completion — fixture Lane 3 now; native after C5, M
+
+- **Outcome:** Remaining native pages, led by the Codex settings editor, reach five-state/generation/main-actor/geometry/focus/appearance parity and close remaining lifecycle acceptance; legacy UI orchestration is then removed.
+- **Original workstreams covered:** B25.
+- **Ownership:** Separate owners for overview/connections/registration, usage, host settings/launch (Codex settings editor per CODEX-SETTINGS.md), and platform attachment; one integration owner for entrypoint/legacy removal.
+- **Reuse:** Extracted model/usage/settings/platform components, the V2 app, qualified D1a Desktop attachment, native fresh-state OpenRouter/model/Codex preparation.
+- **Dependencies:** Codex-settings fixture adapter/parser may start now in Lane 3; native Extensions-screen integration depends on C5.
+- **Acceptance (G3):** all five states per page, generation races, stale usage, main-actor access, geometry/recovery fixtures pass; the Codex settings editor is finished; generation/main-actor/geometry/focus/appearance parity and remaining lifecycle cases are proven; legacy orchestration removed only after parity; real AX/host observations stay deferred to G8; no running-app action in the local gate; the visible Desktop picker click stays outside this protected-session GUI run.
+- **Pass condition to agree before start (proposed):** each remaining page (overview/connections/registration; usage; host settings/launch incl. Codex settings editor; platform attachment) independently proves all five states, survives a generation race without stale data, touches AppKit state only from the main actor, and preserves geometry/minimum-size/focus/appearance/process-lifecycle behavior under fixture-driven recovery, all without live AX or a running installed app; legacy orchestration is removed only once every page above passes.
+- **Non-goals:** App installation, live host observation, visual redesign, removing legacy orchestration before parity is proven.
+- **Parallelism:** Fixture/parser in Lane 3 alongside C8, starting now; native integration joins Lane 1's critical path after C5.
+- **Stop condition:** A page needing private storage/provider access, or a shared client contract change, returns to the primary agent.
+
+### C10 - B26 packaging — after C7, C8, C9, M
+
+- **Outcome:** Engine and SDK artifacts join the app artifact under one aggregate inventory with real signatures and helper identity (personal Apple Development identity, no bytecode mutation), V2 schema-version/upgrade/recovery evidence, and G7 implemented so all-local runs G0-G7.
+- **Original workstreams covered:** B26.
+- **Ownership:** `scripts/package/`, verification gates, artifact manifests, compatibility wrappers, root documentation/catalog integration.
+- **Reuse:** The legacy-compatible stager, V2 builder, catalog, and the one relocated checkout-independent V2 app with its external-runtime contract.
+- **Dependencies:** C7, C8, C9 delivered.
+- **Acceptance (G7):** clean isolated source builds produce the expected engine/SDK/app artifact inventory; actual signatures and helper identity use the personal Apple Development identity with no bytecode mutation of signed resources; V2 schema-version/upgrade/recovery evidence recorded; the Codex settings editor (C9) complete; the existing behavior matrix fully mapped; headless/plugin fixtures pass with no private source checkout; G1-G7/all-local gates implemented and run; local source success is not claimed as installation/live-provider proof.
+- **Non-goals:** Install, notarization, live providers/host/AX, obsolete-code deletion without reference proof.
+- **Parallelism:** Single integration unit; waits for all three feeders.
+- **Stop condition:** Any command touching an installed bundle/live state, or an artifact requiring undeclared source-tree imports, returns to the primary agent.
+
+### C11 - B27 qualification — after C10 plus authorization, S plus authorization
+
+- **Outcome:** After separate operator authorization and disclosure, a fresh-install qualification records real route/provider/device behavior and tested recovery.
+- **Original workstreams covered:** B27.
+- **Ownership:** Primary agent plus one independent acceptance reviewer; exact target/state/snapshot/runbook files only.
+- **Reuse:** C10's artifact and checks, V2 recovery evidence, documented isolated coding/Notebook scenarios, the D1a Desktop-attachment record.
+- **Dependencies:** C10 delivered, plus separate operator authorization.
+- **Acceptance (G8):** before any action, exact app/state targets, snapshot recovery, and tool-availability impact are disclosed; only after separate authorization does a fresh-state install qualify real providers/host/AX and record actual billing route, streaming/tools/cancel, compaction, restart state, plugin update, and helper-identity observations, plus tested recovery without losing new data; nothing here triggers an automatic push, merge, install, or kill on its own.
+- **Non-goals:** Automatic push, merge, install, or kill; credential changes; unsupported platforms; claims resting on local fixtures alone.
+- **Parallelism:** Single terminal unit; nothing in this wave follows it.
+- **Stop condition:** Authorization is absent, fallback/tool access is uncertain, targets drift, or recovery proof fails.
+
+### Scope decisions to record in V2-SCOPE.md before C1 starts (proposed, not yet approved)
+
+- External Python runtime retained; no bundled interpreter.
+- Signing uses the personal Apple Development identity only (team 6W7ABL9KX8); no notarization.
+- B24 stays closed; restricted execution mode is never claimed.
+
+These are proposals for the primary agent to confirm and record in V2-SCOPE.md; this wave does not edit V2-SCOPE.md itself.
+
+### Gate discipline
+
+Every unit above ends with `scripts/verify.py all-local` green (G7 stays pending until C10 implements it) and a STATUS.md update landing in the same commit as the unit. This wave does not edit STATUS.md directly; each unit's own commit carries that update.
