@@ -689,6 +689,7 @@ Lanes: Lane 1 = kernel -> supervisor -> brokers -> lifecycle -> management UI (s
 - **Reuse:** The legacy-compatible stager, V2 builder, catalog, and the one relocated checkout-independent V2 app with its external-runtime contract.
 - **Dependencies:** C7, C8, C9 delivered.
 - **Acceptance (G7):** clean isolated source builds produce the expected engine/SDK/app artifact inventory; actual signatures and helper identity use the personal Apple Development identity with no bytecode mutation of signed resources; V2 schema-version/upgrade/recovery evidence recorded; the Codex settings editor (C9) complete; the existing behavior matrix fully mapped; headless/plugin fixtures pass with no private source checkout; G1-G7/all-local gates implemented and run; local source success is not claimed as installation/live-provider proof.
+- Pinned external runtime: the builder records the validated interpreter and the relocated app refuses any other; qualification records that path.
 - **Non-goals:** Install, notarization, live providers/host/AX, obsolete-code deletion without reference proof.
 - **Parallelism:** Single integration unit; waits for all three feeders.
 - **Stop condition:** Any command touching an installed bundle/live state, or an artifact requiring undeclared source-tree imports, returns to the primary agent.
@@ -705,11 +706,11 @@ Lanes: Lane 1 = kernel -> supervisor -> brokers -> lifecycle -> management UI (s
 - **Parallelism:** Single terminal unit; nothing in this wave follows it.
 - **Stop condition:** Authorization is absent, fallback/tool access is uncertain, targets drift, or recovery proof fails.
 
-### Scope decisions to record in V2-SCOPE.md before C1 starts (proposed, not yet approved)
+### Scope decisions to record in V2-SCOPE.md before C1 starts (approved 2026-09-15; recorded in V2-SCOPE.md)
 
-- External Python runtime retained; no bundled interpreter.
-- Signing uses the personal Apple Development identity only (team 6W7ABL9KX8); no notarization.
-- B24 stays closed; restricted execution mode is never claimed.
+- Python runtime: V2 keeps depending on a machine-installed Python 3.11 or newer, pinned. The V2 builder records the exact interpreter it validated, and the app refuses to start against any other interpreter. No bundled interpreter is planned; this pinning work belongs to B26 (unit C10 in NEXT-TASKS.md section 7) and B27 records the pinned path in its qualification.
+- Signing: B26 signs with the personal Apple Development identity only (team 6W7ABL9KX8). No Developer ID and no notarization; distribution beyond the owner's machines is out of scope.
+- Execution mode: B24 stays closed. Plugins run as trusted executable code and the UI states that; no restricted execution mode is claimed or planned.
 
 These are proposals for the primary agent to confirm and record in V2-SCOPE.md; this wave does not edit V2-SCOPE.md itself.
 

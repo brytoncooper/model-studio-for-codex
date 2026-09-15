@@ -47,3 +47,9 @@ B26 has no B11 dependency. Prioritize a fresh-setup-to-coding workflow through
 B10 and B25, reusing the existing isolated V2 and provider evidence, alongside
 independent remaining plugin and distribution work. Do not rerun completed
 slices or build migration infrastructure to satisfy superseded requirements.
+
+## Decisions approved 2026-09-15
+
+- Python runtime: V2 keeps depending on a machine-installed Python 3.11 or newer, pinned. The V2 builder records the exact interpreter it validated, and the app refuses to start against any other interpreter. No bundled interpreter is planned; this pinning work belongs to B26 (unit C10 in NEXT-TASKS.md section 7) and B27 records the pinned path in its qualification.
+- Signing: B26 signs with the personal Apple Development identity only (team 6W7ABL9KX8). No Developer ID and no notarization; distribution beyond the owner's machines is out of scope.
+- Execution mode: B24 stays closed. Plugins run as trusted executable code and the UI states that; no restricted execution mode is claimed or planned.
