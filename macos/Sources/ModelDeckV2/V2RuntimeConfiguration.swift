@@ -49,6 +49,10 @@ struct V2RuntimePaths: Equatable, Sendable {
         applicationState.appendingPathComponent("engine/operator_credential")
     }
 
+    var providerProfile: URL {
+        applicationState.appendingPathComponent("setup/openrouter-provider.json")
+    }
+
     var engineStandardOutput: URL {
         logs.appendingPathComponent("engine.stdout.log")
     }
@@ -139,11 +143,19 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
         else {
             throw V2RuntimeConfigurationError.invalidRuntimeConfiguration
         }
+        let selectedStateRoot = try stateRoot(arguments: arguments)
+        let explicitProviderConfig = arguments.enumerated().first(where: { $0.element == "--provider-config" }).flatMap {
+            arguments.indices.contains($0.offset + 1) ? URL(fileURLWithPath: arguments[$0.offset + 1]) : nil
+        }
+        let defaultProviderConfig = selectedStateRoot
+            .appendingPathComponent("application-state/setup/openrouter-provider.json")
+        let providerConfig = explicitProviderConfig
+            ?? (FileManager.default.isReadableFile(atPath: defaultProviderConfig.path) ? defaultProviderConfig : nil)
         return V2RuntimeConfiguration(
-            stateRoot: try stateRoot(arguments: arguments),
+            stateRoot: selectedStateRoot,
             pythonExecutable: URL(fileURLWithPath: pythonPath),
             resourceRoot: resources,
-            providerConfig: arguments.enumerated().first(where: { $0.element == "--provider-config" }).flatMap { arguments.indices.contains($0.offset + 1) ? URL(fileURLWithPath: arguments[$0.offset + 1]) : nil }
+            providerConfig: providerConfig
         )
     }
 
@@ -253,6 +265,8 @@ struct V2RuntimeConfiguration: Equatable, Sendable {
             "--legacy-agents-dir", paths.managedCodexAgents.path,
             "--enable-application-state",
             "--enable-extensions",
+            "--enable-codex-host",
+            "--codex-applications-dir", "/Applications",
             "--extension-state-root", paths.extensionState.path,
             "--extension-artifact-root", paths.extensionArtifacts.path,
         ]

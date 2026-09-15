@@ -38,6 +38,13 @@ enum Credentials {
         return value
     }
 
+    static func delete(_ account: String) throws {
+        let status = SecItemDelete(query(account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw CredentialError.unavailable
+        }
+    }
+
     static func selfTest() throws {
         let account = UUID().uuidString
         let value = Data(("disposable-self-test-" + UUID().uuidString).utf8)
@@ -96,6 +103,8 @@ do {
             FileHandle.standardOutput.write(try Credentials.read(account) + Data([10]))
         case "--token":
             FileHandle.standardOutput.write(try Credentials.read(account) + Data([10]))
+        case "--delete":
+            try Credentials.delete(account)
         default:
             throw CredentialError.unavailable
         }

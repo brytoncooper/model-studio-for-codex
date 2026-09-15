@@ -10,6 +10,7 @@ final class ModelDeckV2App: NSObject, NSApplicationDelegate {
     private let workspaceController = V2WorkspaceController()
     private var window: NSWindow?
     private var ownedEngine: V2OwnedEngine?
+    private var runtimeConfiguration: V2RuntimeConfiguration?
     private var terminationRequested = false
 
     static func main() {
@@ -47,9 +48,18 @@ final class ModelDeckV2App: NSObject, NSApplicationDelegate {
     private func startOwnedEngine() {
         do {
             let configuration = try V2RuntimeConfiguration.load(arguments: CommandLine.arguments)
-            let engine = V2OwnedEngine(configuration: configuration)
-            ownedEngine = engine
-            engineQueue.async { [weak self] in
+            runtimeConfiguration = configuration
+            attachProviderSetup(configuration: configuration)
+            startOwnedEngine(configuration: configuration)
+        } catch {
+            workspaceController.showStartupFailure(error)
+        }
+    }
+
+    private func startOwnedEngine(configuration: V2RuntimeConfiguration) {
+        let engine = V2OwnedEngine(configuration: configuration)
+        ownedEngine = engine
+        engineQueue.async { [weak self] in
                 do {
                     let connectionFiles = try engine.startAndWaitForConnection()
                     let descriptor = try EngineRendezvousDescriptor.load(
@@ -82,6 +92,11 @@ final class ModelDeckV2App: NSObject, NSApplicationDelegate {
                         transport: UnixSocketEngineTransport(socketPath: descriptor.socketPath),
                         credentialProvider: EngineFileCredentialProvider(credentialURL: connectionFiles.credential)
                     )
+                    let hostService = EngineHostService(
+                        rendezvous: descriptor,
+                        transport: UnixSocketEngineTransport(socketPath: descriptor.socketPath),
+                        credentialProvider: EngineFileCredentialProvider(credentialURL: connectionFiles.credential)
+                    )
                     let configuredRoute = try configuration.providerConfig.map {
                         try V2ConfiguredModelRoute.load(from: $0)
                     }
@@ -90,8 +105,23 @@ final class ModelDeckV2App: NSObject, NSApplicationDelegate {
                     try connectionService.connect()
                     try modelService.connect()
                     try projectionService.connect()
+                    try hostService.connect()
+                    let desktopService = connectionFiles.bridgeSummary.map { _ in
+                        let connector = configuration.resourceRoot.appendingPathComponent("CodexDesktopBridge")
+                        return V2CodexDesktopConnectionService(
+                            connectorURL: connector,
+                            engineRendezvousURL: connectionFiles.rendezvous,
+                            engineCredentialURL: connectionFiles.credential,
+                            bridgeDescriptorURL: configuration.paths.applicationState
+                                .appendingPathComponent("engine/codex-bridge.json")
+                        )
+                    }
                     DispatchQueue.main.async { [weak self] in
                         guard self?.terminationRequested == false else { return }
+                        self?.attachProviderSetup(
+                            configuration: configuration,
+                            configuredRoute: configuredRoute
+                        )
                         self?.workspaceController.attach(service: service)
                         self?.workspaceController.attach(usageService: usageService, bridgeSummary: connectionFiles.bridgeSummary)
                         self?.workspaceController.attachModelManagement(
@@ -100,6 +130,10 @@ final class ModelDeckV2App: NSObject, NSApplicationDelegate {
                             projectionService: projectionService,
                             configuredRoute: configuredRoute
                         )
+                        self?.workspaceController.attachCodexConnection(
+                            hostService: hostService,
+                            desktopService: desktopService
+                        )
                     }
                 } catch {
                     DispatchQueue.main.async { [weak self] in
@@ -107,8 +141,47 @@ final class ModelDeckV2App: NSObject, NSApplicationDelegate {
                     }
                 }
             }
-        } catch {
-            workspaceController.showStartupFailure(error)
+    }
+
+    private func attachProviderSetup(
+        configuration: V2RuntimeConfiguration,
+        configuredRoute: V2ConfiguredModelRoute? = nil
+    ) {
+        let helper = configuration.resourceRoot
+            .deletingLastPathComponent()
+            .appendingPathComponent("Helpers/OpenRouterCredentialHelper")
+        let setup = V2ProviderSetupService(
+            profileURL: configuration.paths.providerProfile,
+            credentialHelperURL: helper
+        )
+        workspaceController.attachProviderSetup(
+            setupService: setup,
+            configuredRoute: configuredRoute,
+            providerProfileSaved: { [weak self] profileURL in
+                self?.restartOwnedEngine(providerConfig: profileURL)
+            }
+        )
+    }
+
+    private func restartOwnedEngine(providerConfig: URL) {
+        guard let currentConfiguration = runtimeConfiguration,
+              let currentEngine = ownedEngine,
+              !terminationRequested else { return }
+        workspaceController.prepareForEngineRestart()
+        let nextConfiguration = V2RuntimeConfiguration(
+            stateRoot: currentConfiguration.paths.stateRoot,
+            pythonExecutable: currentConfiguration.pythonExecutable,
+            resourceRoot: currentConfiguration.resourceRoot,
+            providerConfig: providerConfig
+        )
+        engineQueue.async { [weak self] in
+            currentEngine.stop()
+            DispatchQueue.main.async {
+                guard let self, !self.terminationRequested else { return }
+                self.ownedEngine = nil
+                self.runtimeConfiguration = nextConfiguration
+                self.startOwnedEngine(configuration: nextConfiguration)
+            }
         }
     }
 

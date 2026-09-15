@@ -80,6 +80,7 @@ import unittest
 import uuid
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from model_deck.integrations.hosts.codex import app_server
 from model_deck.integrations.hosts.codex.app_server import (
@@ -315,6 +316,36 @@ class DesktopAttachmentImportTests(unittest.TestCase):
                     hasattr(desktop_attachment, name),
                     f"desktop_attachment must export {name}",
                 )
+
+    def test_cli_bootstrap_injects_public_unix_engine_client(self) -> None:
+        from model_deck.cli import codex_desktop_attachment as bootstrap
+
+        configuration = mock.MagicMock()
+        engine = mock.MagicMock(name="engine")
+        with (
+            mock.patch.object(
+                bootstrap.DesktopAttachmentConfiguration,
+                "load",
+                return_value=configuration,
+            ) as load_configuration,
+            mock.patch.object(bootstrap, "EngineRPC", return_value=engine) as engine_type,
+            mock.patch.object(
+                bootstrap,
+                "run_desktop_attachment",
+                return_value=0,
+            ) as run_attachment,
+        ):
+            result = bootstrap.main(["app-server"])
+
+        self.assertEqual(result, 0)
+        load_configuration.assert_called_once_with(mock.ANY)
+        engine_type.assert_called_once_with(
+            configuration.engine_rendezvous_path,
+            configuration.engine_credential_path,
+            rendezvous_loader=bootstrap.load_rendezvous_file,
+            client_factory=bootstrap.UnixSocketEngineClient,
+        )
+        run_attachment.assert_called_once_with(["app-server"], engine=engine)
 
 
 class ConfigurationLoadingTests(unittest.TestCase):

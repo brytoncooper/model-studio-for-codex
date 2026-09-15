@@ -81,6 +81,29 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
         forward_kwargs["extension_state_root"] = extension_state_root
         forward_kwargs["extension_artifact_root"] = extension_artifact_root
 
+    if getattr(args, "enable_codex_host", False):
+        applications_dir = Path(args.codex_applications_dir)
+        if not applications_dir.is_absolute():
+            _stderr("engine serve: --codex-applications-dir must be absolute")
+            return 1
+        try:
+            from model_deck.integrations.hosts.codex.desktop_connector import (
+                RunningCodexApplicationProbe,
+            )
+            from model_deck.integrations.hosts.codex.host_adapter import (
+                CODEX_API_PROFILE,
+                CodexHostAdapter,
+            )
+            forward_kwargs["host_integration"] = CodexHostAdapter(
+                applications_dir=applications_dir,
+                observed_protocol_version=CODEX_API_PROFILE,
+                supported_protocol_versions=frozenset({CODEX_API_PROFILE}),
+                process_probe=RunningCodexApplicationProbe(applications_dir),
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            _stderr("engine serve: Codex host integration is unavailable")
+            return 1
+
     profile = None
     provider_config = getattr(args, "provider_config", None)
     if provider_config is not None:
@@ -1498,6 +1521,8 @@ def main(argv: list[str] | None = None) -> int:
         help="absolute path holding isolated external-plugin artifacts (used with --enable-extensions)",
     )
     serve_cmd.add_argument("--provider-config", default=None)
+    serve_cmd.add_argument("--enable-codex-host", action="store_true")
+    serve_cmd.add_argument("--codex-applications-dir", default="/Applications")
     serve_cmd.add_argument("--enable-codex-projection", action="store_true")
     serve_cmd.add_argument("--enable-codex-bridge", action="store_true")
     serve_cmd.add_argument("--codex-bridge-descriptor", default=None)

@@ -137,6 +137,52 @@ class CliV2ProviderServeTests(unittest.TestCase):
         self.assertIs(kwargs["provider_route_definitions"], self.provider_routes)
         self.assertTrue(kwargs["enable_application_state"])
 
+    def test_codex_host_flag_composes_adapter_with_requested_applications_directory(self) -> None:
+        state, artifact, socket_root, legacy = self._paths()
+        applications = self.tmpdir / "Applications"
+        applications.mkdir()
+        runtime = mock.MagicMock()
+        runtime.server.serve_forever.side_effect = lambda: None
+        host_adapter = mock.MagicMock(name="codex_host_adapter")
+        process_probe = mock.MagicMock(name="codex_process_probe")
+        with (
+            mock.patch(
+                "model_deck.integrations.hosts.codex.desktop_connector.RunningCodexApplicationProbe",
+                return_value=process_probe,
+            ) as probe_type,
+            mock.patch(
+                "model_deck.integrations.hosts.codex.host_adapter.CodexHostAdapter",
+                return_value=host_adapter,
+            ) as adapter_type,
+            mock.patch(
+                "model_deck.bootstrap.build_engine_server",
+                return_value=runtime,
+            ) as build_mock,
+        ):
+            exit_code = cli_main.main(
+                _make_basic_args(
+                    state_root=state,
+                    artifact_root=artifact,
+                    socket_root=socket_root,
+                    legacy_agents_dir=legacy,
+                    extras=[
+                        "--enable-codex-host",
+                        "--codex-applications-dir",
+                        str(applications),
+                    ],
+                )
+            )
+
+        self.assertEqual(exit_code, 0)
+        probe_type.assert_called_once_with(applications)
+        adapter_type.assert_called_once_with(
+            applications_dir=applications,
+            observed_protocol_version="codex.app-server.v1",
+            supported_protocol_versions=frozenset({"codex.app-server.v1"}),
+            process_probe=process_probe,
+        )
+        self.assertIs(build_mock.call_args.kwargs["host_integration"], host_adapter)
+
     def test_codex_projection_forwards_isolated_root_profile_resolver_and_helper(self) -> None:
         state, artifact, socket_root, _ = self._paths()
         agents = self.tmpdir / "codex-home" / "agents"

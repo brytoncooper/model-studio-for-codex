@@ -30,7 +30,7 @@ BUILD_SCRIPT = REPO_ROOT / "scripts" / "v2" / "build.sh"
 RUNTIME_PLIST_RELATIVE = Path("Contents/Resources/config/runtime.plist")
 WRAPPER_STAGED_RELATIVE = Path("Contents/Resources/CodexDesktopBridge")
 PYTHON_SRC_RELATIVE = Path("Contents/Resources/python/src")
-TARGET_MODULE = "model_deck.integrations.hosts.codex.desktop_attachment"
+TARGET_MODULE = "model_deck.cli.codex_desktop_attachment"
 
 
 class CodexDesktopBridgeWrapperTests(unittest.TestCase):
@@ -50,14 +50,12 @@ class CodexDesktopBridgeWrapperTests(unittest.TestCase):
     def test_wrapper_exec_target_is_v2_desktop_attachment_module(self) -> None:
         text = BRIDGE_WRAPPER.read_text(encoding="utf-8")
         # The wrapper must exec the producer-owned module with argv forwarded verbatim.
-        match = re.search(r"exec\s+\"\$\{?bridge_python\}?\"\s+(.+?)\s+\"\$\@\"", text)
-        self.assertIsNotNone(
-            match,
+        matches = re.findall(r"exec\s+\"\$\{?bridge_python\}?\"\s+(.+?)\s+\"\$\@\"", text)
+        self.assertTrue(
+            matches,
             "wrapper must exec the configured Python interpreter with the module + argv",
         )
-        exec_arguments = match.group(1)
-        self.assertIn("-m", exec_arguments)
-        self.assertIn(TARGET_MODULE, exec_arguments)
+        self.assertTrue(any("-m" in arguments and TARGET_MODULE in arguments for arguments in matches))
 
     def test_wrapper_reads_python_executable_from_v2_runtime_plist(self) -> None:
         text = BRIDGE_WRAPPER.read_text(encoding="utf-8")

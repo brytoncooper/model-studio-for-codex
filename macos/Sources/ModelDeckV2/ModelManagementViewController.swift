@@ -88,6 +88,18 @@ final class ModelManagementViewController: NSViewController {
         refresh()
     }
 
+    func prepareForEngineRestart() {
+        connectionService = nil
+        modelService = nil
+        projectionService = nil
+        connections = []
+        models = []
+        connectionStatusLabel.stringValue = "Connection restarting…"
+        projectionStatusLabel.stringValue = "Host projection restarting…"
+        modelPicker.removeAllItems()
+        updateControls()
+    }
+
     @objc private func refreshRequested() {
         refresh()
     }

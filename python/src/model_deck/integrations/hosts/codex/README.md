@@ -17,6 +17,9 @@ second authority.
   status, and pure launch argument assembly.
 - `provider_bridge.py` remains the legacy entrypoint wrapper. It supplies the
   existing root catalog/router implementations to the extracted package.
+- `desktop_connector.py` validates V2's isolated attachment files, reports
+  actionable compatibility/restart status, and prepares or starts the exact
+  per-process Desktop launch used by the prototype. It never edits host state.
 - [projection composition](projection_composition/README.md) independently
   delivers committed model and connection state to an isolated Codex home.
 
@@ -31,6 +34,8 @@ adapter owns discovery, compatibility, and launch preparation.
   Applications directory, process table, credentials, or Codex state.
 - Preparation never launches Codex and never rewrites global configuration.
   Model Deck MCP and provider settings remain per-process `-c` overrides.
+- Desktop connection refuses to launch while the exact Codex application
+  executable is running. V2 does not stop, restart, or reconfigure that process.
 - Bundle version is descriptive. Compatibility uses an independently observed
   app-server protocol version and explicitly refuses unknown or unsupported
   versions.
@@ -85,3 +90,13 @@ documents installed-app-server discovery, selection, a real disposable coding
 edit/test, same-thread continuation, registration reload, routing/billing, and
 clean shutdown. Visible Electron UI interaction, installation, and live cutover
 remain separate operational boundaries.
+
+The V2 AppKit UI consumes only public engine host/catalog contracts plus this
+adapter-owned connector. A fresh GUI setup stores an OpenRouter credential via
+the packaged Keychain helper, writes a non-secret V2 provider profile, restarts
+only the owned engine, and enables Connect only after this connector returns
+`ready`.
+
+The packaged wrapper enters through `model_deck.cli.codex_desktop_attachment`,
+which supplies the public Unix engine client. This keeps transport composition
+out of the host package while leaving all Codex-specific behavior here.

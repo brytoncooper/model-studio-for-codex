@@ -11,4 +11,8 @@ bridge_directory="${0:A:h}"
 runtime_plist="$bridge_directory/config/runtime.plist"
 bridge_python="$(/usr/libexec/PlistBuddy -c 'Print :python_executable' "$runtime_plist")"
 export PYTHONPATH="$bridge_directory/python/src${PYTHONPATH:+:$PYTHONPATH}"
-exec "$bridge_python" -B -m model_deck.integrations.hosts.codex.desktop_attachment "$@"
+if [[ "${1:-}" == "--model-deck-connect" ]]; then
+  shift
+  exec "$bridge_python" -B -m model_deck.integrations.hosts.codex.desktop_connector "$@"
+fi
+exec "$bridge_python" -B -m model_deck.cli.codex_desktop_attachment "$@"

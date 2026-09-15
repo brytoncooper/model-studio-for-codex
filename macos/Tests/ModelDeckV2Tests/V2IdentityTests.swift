@@ -44,6 +44,14 @@ final class V2IdentityTests: XCTestCase {
         XCTAssertFalse(arguments.contains("--enable-codex-projection"))
     }
 
+    func testRuntimePathsKeepProviderProfileInsideV2State() {
+        let configuration = makeConfiguration()
+        XCTAssertEqual(
+            configuration.paths.providerProfile.path,
+            stateRoot.appendingPathComponent("application-state/setup/openrouter-provider.json").path
+        )
+    }
+
     func testEngineArgumentsEnableProjectionWhenProviderIsConfigured() {
         let configuration = V2RuntimeConfiguration(
             stateRoot: stateRoot,

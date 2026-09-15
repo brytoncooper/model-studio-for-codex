@@ -50,10 +50,31 @@ The engine receives a small explicit environment and the bundled engine source
 on `PYTHONPATH`. V2 installs no launch agent or background service and does not
 read or modify live Model Deck or Codex state.
 
+## Native provider and Codex setup
+
+From a fresh V2 state, enter an OpenRouter API key, provider model ID, and
+optional display name under **Provider connection**, then choose **Save
+connection**. The packaged credential helper writes the key to Keychain. The
+saved provider profile contains only opaque references and the helper command;
+it never contains the key. V2 restarts only its owned engine, creates the
+connection and registration, and refreshes the model controls.
+
+**Check compatibility** reports missing configuration, a missing or unsupported
+Codex runtime, or a required restart. **Prepare Codex** calls the public host
+contract. **Connect Codex** is enabled only when the packaged Desktop connector
+has verified the isolated engine files, bridge descriptor, supported runtime,
+and that Codex is not already running. Connecting reuses the D1a
+`CODEX_CLI_PATH` launch mechanism with per-process environment; it does not edit
+Codex settings or treat projection files as Desktop discovery.
+
+If Codex is already running, fully quit it before connecting. That restart is a
+user-visible host requirement: V2 never stops an existing Codex process.
+
 ## Isolated model management
 
-Launching with `--provider-config` enables the Model management controls and
-the Codex managed-agent projection. The configured connection can be added or
+Saving the native provider form, or launching with an explicit
+`--provider-config` fixture, enables the Model management controls and the
+Codex managed-agent projection. The configured connection can be added or
 revision-updated, and models can be registered, renamed, or removed through the
 typed native client. The app refreshes committed connection/model state and
 shows the engine's host projection status (`ready`, `pending`, or `failed`).

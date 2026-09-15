@@ -245,19 +245,6 @@ class V2DesktopRouteAdapter:
         return None
 
 
-def _default_engine(configuration: DesktopAttachmentConfiguration) -> Any:
-    from model_deck.adapters.transport.rendezvous import load_rendezvous_file
-    from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
-    from .bridge import EngineRPC
-
-    return EngineRPC(
-        configuration.engine_rendezvous_path,
-        configuration.engine_credential_path,
-        rendezvous_loader=load_rendezvous_file,
-        client_factory=UnixSocketEngineClient,
-    )
-
-
 def run_desktop_attachment(
     arguments: list[str],
     environment: Mapping[str, str],
@@ -270,7 +257,9 @@ def run_desktop_attachment(
     """Compose V2 state with the prototype's package-owned app-server bridge."""
     del arguments
     configuration = DesktopAttachmentConfiguration.load(environment)
-    active_engine = engine if engine is not None else _default_engine(configuration)
+    if engine is None:
+        raise ValueError("Desktop attachment requires an injected engine client")
+    active_engine = engine
     route_adapter = V2DesktopRouteAdapter(configuration)
     catalog = EngineRegisteredModelCatalog(active_engine, configuration, route_adapter)
     options: dict[str, Any] = {}
@@ -285,7 +274,7 @@ def _emit(message: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
-def main(arguments: list[str] | None = None) -> int:
+def main(arguments: list[str] | None = None, *, engine: Any | None = None) -> int:
     argv = list(sys.argv[1:] if arguments is None else arguments)
     if "app-server" not in argv:
         from .runtime import discover_runtime
@@ -293,7 +282,7 @@ def main(arguments: list[str] | None = None) -> int:
         os.execv(executable, [executable, *argv])
     configuration = DesktopAttachmentConfiguration.load(os.environ)
     os.environ[BRIDGE_TOKEN_ENV] = configuration.bridge_token
-    bridge = run_desktop_attachment(argv, os.environ, _emit)
+    bridge = run_desktop_attachment(argv, os.environ, _emit, engine=engine)
     asyncio.run(bridge.run(argv))
     return 0
 

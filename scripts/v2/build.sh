@@ -77,14 +77,29 @@ if [[ ! -x "$binary" ]]; then
   exit 1
 fi
 
+credential_helper="$scratch_root/OpenRouterCredentialHelper"
+/usr/bin/xcrun swiftc \
+  -O \
+  -framework Security \
+  "$repository_root/OpenRouterCredentialHelper.swift" \
+  -o "$credential_helper"
+/usr/bin/codesign \
+  --force \
+  --sign - \
+  --identifier com.cooper.codex-openrouter.credential-helper \
+  "$credential_helper"
+
 mkdir "$output_root"
 application="$output_root/Model Deck V2.app"
 mkdir -p "$application/Contents/MacOS"
+mkdir -p "$application/Contents/Helpers"
 mkdir -p "$application/Contents/Resources/python/src"
 mkdir -p "$application/Contents/Resources/config"
 
 /usr/bin/ditto "$binary" "$application/Contents/MacOS/ModelDeckV2"
 chmod 755 "$application/Contents/MacOS/ModelDeckV2"
+/usr/bin/ditto "$credential_helper" "$application/Contents/Helpers/OpenRouterCredentialHelper"
+chmod 755 "$application/Contents/Helpers/OpenRouterCredentialHelper"
 /usr/bin/rsync -a \
   --exclude='__pycache__/' \
   --exclude='*.pyc' \

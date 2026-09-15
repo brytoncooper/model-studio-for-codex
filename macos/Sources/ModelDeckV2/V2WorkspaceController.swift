@@ -17,6 +17,8 @@ final class V2WorkspaceController: NSViewController {
     private let codingLabel = NSTextField(wrappingLabelWithString: "Coding route unavailable")
     private let usageLabel = NSTextField(wrappingLabelWithString: "Usage not loaded")
     private let refreshUsageButton = NSButton()
+    private let providerSetupController = ProviderSetupViewController()
+    private let codexConnectionController = CodexConnectionViewController()
     private let modelManagementController = ModelManagementViewController()
 
     private var service: EngineExtensionPanelService?
@@ -48,6 +50,10 @@ final class V2WorkspaceController: NSViewController {
         usageControls.spacing = 8
         root.addArrangedSubview(usageControls)
 
+        addChild(providerSetupController)
+        root.addArrangedSubview(providerSetupController.view)
+        addChild(codexConnectionController)
+        root.addArrangedSubview(codexConnectionController.view)
         addChild(modelManagementController)
         root.addArrangedSubview(modelManagementController.view)
 
@@ -123,6 +129,38 @@ final class V2WorkspaceController: NSViewController {
             modelService: modelService,
             projectionService: projectionService,
             configuredRoute: configuredRoute
+        )
+    }
+
+    func attachProviderSetup(
+        setupService: V2ProviderSetupService,
+        configuredRoute: V2ConfiguredModelRoute?,
+        providerProfileSaved: @escaping (URL) -> Void
+    ) {
+        providerSetupController.providerProfileSaved = providerProfileSaved
+        providerSetupController.attach(
+            setupService: setupService,
+            configuredRoute: configuredRoute
+        )
+        if configuredRoute != nil {
+            providerSetupController.showEngineReady()
+        }
+    }
+
+    func prepareForEngineRestart() {
+        codingLabel.stringValue = "Coding route restarting…"
+        providerSetupController.showEngineRestart()
+        modelManagementController.prepareForEngineRestart()
+        codexConnectionController.prepareForEngineRestart()
+    }
+
+    func attachCodexConnection(
+        hostService: EngineHostService,
+        desktopService: V2CodexDesktopConnectionService?
+    ) {
+        codexConnectionController.attach(
+            hostService: hostService,
+            desktopService: desktopService
         )
     }
 

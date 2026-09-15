@@ -75,6 +75,28 @@ validated Python runtime. The reused app-server bridge owns its exact native
 Codex child and reaps it when stdin closes. The source engine was stopped by
 its foreground interrupt and left no isolated descendants.
 
+## Native setup composition — 2026-09-15
+
+A separately staged unsigned V2 app at
+`/private/tmp/model-deck-v2-gui-setup-20260915-6/Model Deck V2.app` used a fresh
+state root to enter a disposable OpenRouter credential and model entirely in
+the native UI. The key was saved through the existing Keychain helper; direct
+inspection of the mode-0600 provider profile confirmed it held the helper
+command and opaque references, not the key.
+
+The owned engine restarted in process and displayed the OpenRouter route,
+billing source, revision-1 connection, registered model, and ready host
+projection. The registration was renamed to `GUI Setup Renamed` in the native
+controls. After two clean Cmd-Q/reopen cycles, the route, connection, renamed
+registration, and projection persisted. The protected running Codex process
+was detected: Connect was disabled and the UI required a full user-controlled
+Codex restart. No live process, setting, credential, or application was changed.
+
+The unchanged D1a evidence above remains the routing proof for the same bridge,
+provider execution, coding edit/test, continuation, and `model/list` reload.
+This GUI run proves the new setup composition, persistence, and safe connection
+gate; it does not add a visible picker-click claim.
+
 ## Remaining limitations
 
 - Qualification is against the real Desktop app-server backend contract. A

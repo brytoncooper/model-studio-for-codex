@@ -370,6 +370,23 @@ reaches the same projection; absent paths retain the legacy rollback route.
 - **Status:** Complete for isolated D1a acceptance. Installation and live
   cutover remain separately authorized B27 work.
 
+### D1b - Native V2 setup and safe Codex connect — delivered 2026-09-15
+
+- **Outcome:** Fresh V2 state can save an OpenRouter credential through the
+  existing Keychain helper, compose the non-secret provider profile, restart
+  only its owned engine, create and rename the model registration, prepare the
+  Codex host, and enable Desktop connection only when attachment is safe.
+- **Evidence:** The [D1a qualification record](CODEX-DESKTOP-QUALIFICATION-2026-09-14.md)
+  records the isolated GUI setup, clean reopen persistence, rename, ready
+  projection, protected-running-Codex refusal, and the unchanged D1a routing,
+  coding, continuation, reload, ownership, and billing proof.
+- **Original workstreams covered:** Additional B25 native composition evidence
+  and B27 prerequisite evidence; neither workstream is complete.
+- **Remaining boundary:** A visible picker click and live cutover require a
+  separately authorized Codex restart or a separate supported Desktop session.
+- **Status:** Delivered for the isolated GUI workflow. No installation or live
+  configuration change was performed.
+
 ### D2 - Removed: prototype migration
 
 B11 is removed from scope by [V2 starts fresh](V2-SCOPE.md). Do not schedule
