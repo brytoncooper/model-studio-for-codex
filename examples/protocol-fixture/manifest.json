@@ -1,0 +1,24 @@
+{
+  "manifest_version": 1,
+  "id": "org.example.protocol-fixture",
+  "version": "1.0.0",
+  "plugin_api": {"major": 1, "minimum_minor": 0},
+  "entrypoint": {"runtime": "node", "path": "plugin.js"},
+  "permissions": [],
+  "contributes": {
+    "operations": [
+      {
+        "id": "org.example.protocol-fixture.echo",
+        "input_schema": "contracts/common/types.schema.json#/definitions/json_value",
+        "output_schema": "contracts/common/types.schema.json#/definitions/json_value",
+        "effect": "read"
+      },
+      {
+        "id": "org.example.protocol-fixture.pending",
+        "input_schema": "contracts/common/types.schema.json#/definitions/json_value",
+        "output_schema": "contracts/common/types.schema.json#/definitions/json_value",
+        "effect": "read"
+      }
+    ]
+  }
+}
