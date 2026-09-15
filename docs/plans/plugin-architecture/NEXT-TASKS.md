@@ -537,7 +537,7 @@ only. A future request to advertise restricted execution would reopen its
 qualified-helper/OS-denial work. B27 requires operational authorization after
 B26, under the fresh-start scope in V2-SCOPE.md.
 
-## 6. Critical-path wave (raised 2026-09-15)
+## 7. Critical-path wave (raised 2026-09-15)
 
 Sequences the B16-B23/B25-B27 rows still "Implementation/Integration remaining" in STATUS.md. B24 stays closed (see the scope-decisions section above). Acceptance below is taken only from BACKLOG.md (B16-B27, lines 155-253) and STATUS.md's "Exact remaining material requirement" column; nothing is invented.
 
@@ -567,10 +567,7 @@ Lanes: Lane 1 = kernel -> supervisor -> brokers -> lifecycle -> management UI (s
   and `.../rejected-untracked/scripts/checks/__init__.py` (the tracked
   `scripts/editing_check.py` at `91d23f4` was judged authoritative over both).
 
-  Main-folder result (stash ref / pushed `origin/main` sha): not recorded —
-  the main-hygiene unit's report returned no files or notes, so there is
-  nothing to cite here. Needs a follow-up pass on that unit before this line
-  can be completed.
+  Main folder (/Users/brytoncooper/Documents/Model Deck, branch main): 35 stray untracked files (AGENTS.md, docs/, python/; 19 differing from the V2 copies) were moved into stash@{0} 'stray V2 copies moved out of main 2026-09-15' and the tree is clean; git push origin main was rejected with HTTP 403 because the active GitHub credential is brytoncoopertech, which lacks push rights to brytoncooper/model-studio-for-codex, so origin/main remains at 732b393 and main is still 9 commits ahead.
 - **Note:** Replaced by a later unit's landing commit; reserves the slot only.
 
 ### C1 - B17 kernel: descriptors, vendor-free composition — Lane 1, S-M
