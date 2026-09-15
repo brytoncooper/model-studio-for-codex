@@ -8,13 +8,36 @@ import unittest
 from unittest import mock
 
 from model_deck.adapters.storage.sqlite_usage import SqliteUsageRepository
+from model_deck.engine.evidence import PriceRecord, SourceProvenance, UnitPrices
 from model_deck.engine.runs.usage_events import (
     CommittedUsageCursor, CommittedUsageEvent, CommittedUsagePage,
 )
 from model_deck.engine.usage import (
-    QueryUsageUseCase, RecordUsageUseCase, UsageConflictError, UsageEventMismatchError,
+    QueryUsageUseCase, RecordUsageUseCase, SummarizeUsageUseCase, UsageConflictError,
+    UsageEventMismatchError,
 )
 from model_deck.engine.usage.reconciliation import ReconciledUsageQueryUseCase, UsageReconciliationError
+
+PRICE = PriceRecord(
+    provider_model_id="openai/gpt-x", currency="USD",
+    unit_prices=UnitPrices(input_tokens=0.001, output_tokens=0.002, cached_tokens=None),
+    provenance=SourceProvenance(source_id="com.example.prices",
+                                fetched_at="2026-09-15T00:00:00+00:00", stale=True,
+                                last_refresh_error="fetch_failed"))
+
+
+class StubPrices:
+    """A cached price snapshot. The read path never fetches."""
+
+    def __init__(self, record=PRICE):
+        self.record = record
+        self.calls = []
+
+    def price_for(self, *, provider_model_id, registration_id=None):
+        self.calls.append((provider_model_id, registration_id))
+        if provider_model_id != self.record.provider_model_id:
+            return None
+        return self.record
 
 RUN_ID = "550e8400-e29b-41d4-a716-446655440004"
 SESSION_ID = "550e8400-e29b-41d4-a716-446655440003"
@@ -171,3 +194,53 @@ class UsageReconciliationTests(unittest.TestCase):
         for size in (True, 0, -1, 257, "1"):
             with self.subTest(size=size), self.assertRaises(ValueError):
                 self.reconciler(SnapshotReader([]), page_size=size)
+
+    def test_reconciled_records_are_labelled_without_rewriting_the_ledger(self):
+        events = [event(1, settled_amount=0.5, currency="USD"),
+                  event(2, provider_model_id="openai/gpt-x")]
+        prices = StubPrices()
+        labelling_query = QueryUsageUseCase(self.repository, prices=prices)
+        result = ReconciledUsageQueryUseCase(reader=SnapshotReader(events),
+            record_usage=RecordUsageUseCase(self.repository), query_usage=labelling_query).query()
+        settled, estimated = result.records
+        self.assertEqual(settled.cost_kind, "provider_settled")
+        self.assertEqual(settled.settled_amount, 0.5)
+        self.assertIsNone(settled.estimate_amount)
+        self.assertEqual(estimated.cost_kind, "estimated")
+        self.assertEqual(estimated.estimate_amount, 0.002)
+        self.assertIsNone(estimated.settled_amount)
+        self.assertEqual(estimated.provenance, PRICE.provenance)
+        self.assertTrue(estimated.provenance.stale)
+        # A settled record is never priced, and the committed rows never change.
+        self.assertEqual(prices.calls, [("openai/gpt-x", None)])
+        self.assertEqual([row.to_wire() for row in self.repository.query(None, None).records],
+                         [item.payload["usage"] for item in events])
+
+    def test_an_estimate_is_never_promoted_into_settled_money(self):
+        events = [event(1, settled_amount=0.5, currency="USD", provider_model_id="openai/gpt-x")]
+        query = QueryUsageUseCase(self.repository, prices=StubPrices())
+        result = ReconciledUsageQueryUseCase(reader=SnapshotReader(events),
+            record_usage=RecordUsageUseCase(self.repository), query_usage=query).query()
+        (record,) = result.records
+        self.assertEqual(record.cost_kind, "provider_settled")
+        self.assertEqual(record.settled_amount, 0.5)
+        self.assertIsNone(record.estimate_amount)
+
+    def test_reconciled_summary_keeps_estimated_and_settled_apart(self):
+        events = [event(1, settled_amount=0.5, currency="USD"),
+                  event(2, provider_model_id="openai/gpt-x")]
+        reconciled = ReconciledUsageQueryUseCase(reader=SnapshotReader(events),
+            record_usage=RecordUsageUseCase(self.repository),
+            query_usage=QueryUsageUseCase(self.repository, prices=StubPrices()))
+        totals = {total.cost_kind: total for total in SummarizeUsageUseCase(reconciled).summarize().totals}
+        self.assertEqual(sorted(totals), ["estimated", "provider_settled"])
+        self.assertEqual(totals["provider_settled"].amount, 0.5)
+        self.assertEqual(totals["estimated"].amount, 0.002)
+        self.assertEqual(totals["estimated"].units, 2)
+        self.assertEqual(totals["provider_settled"].record_count, 1)
+
+    def test_without_a_price_snapshot_records_keep_their_committed_shape(self):
+        events = [event(1, provider_model_id="openai/gpt-x", estimate_amount=0.2)]
+        result = self.reconciler(SnapshotReader(events)).query()
+        self.assertIsNone(result.records[0].cost_kind)
+        self.assertEqual(result.to_wire(), {"records": [events[0].payload["usage"]]})

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/prices.query.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "records",
+    "snapshot",
+    "cached"
+  ],
+  "properties": {
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "../vocabulary.schema.json#/definitions/price_record"
+      },
+      "maxItems": 2048,
+      "description": "Matching cached price records. Each carries its own provenance, which may be older than the snapshot when that record's source last refreshed earlier."
+    },
+    "snapshot": {
+      "$ref": "../vocabulary.schema.json#/definitions/source_provenance",
+      "description": "Provenance of the price cache as a whole at the moment it was read. Present even when records is empty, so a caller can always tell how old the cache is and why the last refresh failed."
+    },
+    "cached": {
+      "type": "boolean",
+      "const": true,
+      "description": "Always true: this answer is served from the cache. A read path never triggers a hidden network fetch; refreshing is an explicit prices.refresh job."
+    }
+  }
+}

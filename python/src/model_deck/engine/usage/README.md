@@ -65,6 +65,31 @@ the port against SQLite.
 - Core imports `model_deck_contracts`, its own ports and the runs subsystem's
   public committed-usage reader port; it never imports concrete storage.
 
+## Cost kinds on read
+
+Stored rows are still never rewritten: labelling happens on the read, on a copy.
+`QueryUsageUseCase(repository, prices=..., subscription_allowance=...)` takes two
+optional ports — `PriceLookupPort` (satisfied by
+`model_deck.engine.evidence.QueryPricesUseCase`, which reads its cache and never
+fetches) and `SubscriptionAllowancePort`. With neither composed, only
+provider-reported money is labelled.
+
+`project_cost_kind` applies, in order: a `cost_kind` the producer recorded is
+kept; a numeric `settled_amount` is `provider_settled`; an allowance source that
+claims the record makes it `subscription_allowance`; a cached price that can
+price the record's units makes it `estimated`. The estimate goes to
+`estimate_amount` and never to `settled_amount` —
+`guard_estimate_never_settled` raises `UsageCostProjectionError` on the
+contradiction, which the frozen `usage_record` schema also rejects. An observed
+`estimate_amount` is labelled but never recomputed or reattributed. A record
+none of these place carries no kind.
+
+`SummarizeUsageUseCase(query_usage).summarize(since, until)` groups the same
+labelled records into at most one `usage_total` per kind. Kinds are never summed
+together, an unknown amount or a group spanning two currencies reports `amount`
+and `currency` as null rather than a partial sum, and unlabelled records are
+left to `usage.query`.
+
 ## Reconciled query composition
 
 Import `ReconciledUsageQueryUseCase` from

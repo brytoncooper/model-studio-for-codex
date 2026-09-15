@@ -7,15 +7,27 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from model_deck.adapters.storage.sqlite_usage import SqliteUsageRepository
+from model_deck.engine.evidence import (
+    AllowanceWindow,
+    PriceRecord,
+    SourceProvenance,
+    SubscriptionAllowance,
+    UnitPrices,
+)
 from model_deck.engine.usage import (
+    QueryUsageResult,
     QueryUsageUseCase,
     RecordUsageUseCase,
+    SummarizeUsageUseCase,
     UsageConflictError,
+    UsageCostProjectionError,
     UsageEventMismatchError,
     UsageQueryValidationError,
+    UsageRecord,
     UsageResourceExhaustedError,
+    project_cost_kind,
 )
-from model_deck_contracts.validator import validate_schema_ref
+from model_deck_contracts.validator import SchemaValidationError, validate_schema_ref
 
 USAGE_RECORD_REF = (
     "contracts/engine.v1/vocabulary.schema.json#/definitions/usage_record"
@@ -23,6 +35,76 @@ USAGE_RECORD_REF = (
 USAGE_QUERY_RESULT_REF = (
     "contracts/engine.v1/methods/usage.query.result.schema.json"
 )
+USAGE_SUMMARY_RESULT_REF = (
+    "contracts/engine.v1/methods/usage.summary.result.schema.json"
+)
+
+PRICE_PROVENANCE = SourceProvenance(
+    source_id="com.example.prices",
+    fetched_at="2026-09-15T00:00:00+00:00",
+    stale=False,
+    citation="Example price list",
+)
+ALLOWANCE = SubscriptionAllowance(
+    provider_id="com.example.provider",
+    window=AllowanceWindow(
+        start="2026-09-01T00:00:00+00:00", end="2026-10-01T00:00:00+00:00"
+    ),
+    allowance=None,
+    used=None,
+    provenance=SourceProvenance(
+        source_id="com.example.provider",
+        fetched_at="2026-09-15T00:00:00+00:00",
+        stale=False,
+    ),
+)
+
+
+def _price(**overrides: object) -> PriceRecord:
+    fields: dict = {
+        "provider_model_id": "openai/gpt-x",
+        "currency": "USD",
+        "unit_prices": UnitPrices(
+            input_tokens=0.001, output_tokens=0.002, cached_tokens=None
+        ),
+        "provenance": PRICE_PROVENANCE,
+    }
+    fields.update(overrides)
+    return PriceRecord(**fields)
+
+
+class StubPrices:
+    """A composed price snapshot. Reads it; never fetches."""
+
+    def __init__(self, record: PriceRecord | None = None) -> None:
+        self.record = record
+        self.calls: list[tuple] = []
+
+    def price_for(self, *, provider_model_id, registration_id=None):
+        self.calls.append((provider_model_id, registration_id))
+        if provider_model_id is None or self.record is None:
+            return None
+        if provider_model_id != self.record.provider_model_id:
+            return None
+        return self.record
+
+
+class StubAllowances:
+    def __init__(self, allowance: SubscriptionAllowance | None = None) -> None:
+        self.allowance = allowance
+        self.calls: list[UsageRecord] = []
+
+    def allowance_for(self, record: UsageRecord) -> SubscriptionAllowance | None:
+        self.calls.append(record)
+        return self.allowance
+
+
+class StubUsageQuery:
+    def __init__(self, *records: UsageRecord) -> None:
+        self._records = tuple(records)
+
+    def query(self, since=None, until=None) -> QueryUsageResult:
+        return QueryUsageResult(records=self._records)
 
 
 def _ids() -> tuple[str, str]:
@@ -322,6 +404,294 @@ class UsageRecordsTest(unittest.TestCase):
         with self.assertRaises(UsageResourceExhaustedError):
             QueryUsageUseCase(repository).query()
         self.assertEqual(inserted, [True])
+
+
+class UsageCostKindTest(unittest.TestCase):
+    """Estimated, provider-settled and subscription-allowance never mix."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.db_path = str(Path(self._tmp.name) / "usage.sqlite3")
+        self.repository = SqliteUsageRepository(self.db_path)
+        self.record_case = RecordUsageUseCase(self.repository)
+
+    def _query(self, **ports) -> QueryUsageUseCase:
+        return QueryUsageUseCase(self.repository, **ports)
+
+    def test_settled_amount_is_labelled_provider_settled(self) -> None:
+        run_id, session_id = _ids()
+        self.record_case.record(
+            _event(run_id, session_id, 0, settled_amount=0.5, currency="USD")
+        )
+        (stored,) = self._query().query().records
+        self.assertEqual(stored.cost_kind, "provider_settled")
+        self.assertEqual(stored.settled_amount, 0.5)
+        self.assertIsNone(stored.estimate_amount)
+        validate_schema_ref(USAGE_RECORD_REF, stored.to_wire())
+
+    def test_estimate_is_computed_on_read_and_never_written_into_settled(self) -> None:
+        run_id, session_id = _ids()
+        self.record_case.record(
+            _event(run_id, session_id, 0, provider_model_id="openai/gpt-x")
+        )
+        prices = StubPrices(_price())
+        page = self._query(prices=prices).query()
+        validate_schema_ref(USAGE_QUERY_RESULT_REF, page.to_wire())
+        (stored,) = page.records
+        self.assertEqual(stored.cost_kind, "estimated")
+        self.assertEqual(stored.estimate_amount, 0.12)
+        self.assertEqual(stored.currency, "USD")
+        self.assertIsNone(stored.settled_amount)
+        self.assertEqual(stored.provenance, PRICE_PROVENANCE)
+        self.assertEqual(prices.calls, [("openai/gpt-x", None)])
+        # The stored row is untouched: the estimate exists only on the read.
+        self.assertNotIn(
+            "estimate_amount", self.repository.query(None, None).records[0].to_wire()
+        )
+
+    def test_a_settled_record_is_never_re_estimated_or_relabelled(self) -> None:
+        run_id, session_id = _ids()
+        self.record_case.record(
+            _event(
+                run_id,
+                session_id,
+                0,
+                provider_model_id="openai/gpt-x",
+                settled_amount=0.5,
+                currency="USD",
+            )
+        )
+        (stored,) = self._query(prices=StubPrices(_price())).query().records
+        self.assertEqual(stored.cost_kind, "provider_settled")
+        self.assertEqual(stored.settled_amount, 0.5)
+        self.assertIsNone(stored.estimate_amount)
+
+    def test_unknown_prices_leave_the_record_unlabelled(self) -> None:
+        cases = {
+            "unpriced unit kind": dict(unit_kind="requests", units=3.0),
+            "null unit price": dict(unit_kind="cached_tokens"),
+            "unknown provider model": dict(provider_model_id="openai/absent"),
+        }
+        for name, overrides in cases.items():
+            with self.subTest(name=name):
+                run_id, session_id = _ids()
+                self.record_case.record(
+                    _event(
+                        run_id,
+                        session_id,
+                        0,
+                        **{"provider_model_id": "openai/gpt-x", **overrides},
+                    )
+                )
+                page = self._query(prices=StubPrices(_price())).query()
+                stored = next(
+                    record for record in page.records if record.run_id == run_id
+                )
+                self.assertIsNone(stored.cost_kind)
+                self.assertIsNone(stored.estimate_amount)
+
+    def test_a_currency_the_price_does_not_share_is_not_estimated(self) -> None:
+        run_id, session_id = _ids()
+        self.record_case.record(
+            _event(
+                run_id,
+                session_id,
+                0,
+                provider_model_id="openai/gpt-x",
+                currency="EUR",
+            )
+        )
+        (stored,) = self._query(prices=StubPrices(_price())).query().records
+        self.assertIsNone(stored.cost_kind)
+        self.assertEqual(stored.currency, "EUR")
+
+    def test_an_observed_estimate_is_labelled_but_never_recomputed(self) -> None:
+        run_id, session_id = _ids()
+        self.record_case.record(
+            _event(
+                run_id,
+                session_id,
+                0,
+                provider_model_id="openai/gpt-x",
+                estimate_amount=9.99,
+            )
+        )
+        (stored,) = self._query(prices=StubPrices(_price())).query().records
+        self.assertEqual(stored.cost_kind, "estimated")
+        self.assertEqual(stored.estimate_amount, 9.99)
+        self.assertIsNone(stored.provenance)
+
+    def test_without_composed_evidence_records_keep_their_exact_wire_shape(self) -> None:
+        run_id, session_id = _ids()
+        observed = _usage(
+            run_id, session_id, provider_model_id="openai/gpt-x", estimate_amount=0.25
+        )
+        self.record_case.record(
+            _event(
+                run_id,
+                session_id,
+                0,
+                provider_model_id="openai/gpt-x",
+                estimate_amount=0.25,
+            )
+        )
+        page = self._query().query()
+        self.assertEqual(page.to_wire(), {"records": [observed]})
+        self.assertIsNone(page.records[0].cost_kind)
+
+    def test_an_estimate_in_settled_amount_is_refused_by_code_and_by_schema(self) -> None:
+        run_id, session_id = _ids()
+        contradiction = _usage(
+            run_id, session_id, cost_kind="estimated", settled_amount=0.5, currency="USD"
+        )
+        with self.assertRaises(UsageCostProjectionError):
+            project_cost_kind(UsageRecord.from_wire(contradiction))
+        with self.assertRaises(SchemaValidationError):
+            validate_schema_ref(USAGE_RECORD_REF, contradiction)
+
+    def test_an_allowance_source_labels_without_inventing_money(self) -> None:
+        run_id, session_id = _ids()
+        self.record_case.record(
+            _event(run_id, session_id, 0, provider_model_id="openai/gpt-x")
+        )
+        allowances = StubAllowances(ALLOWANCE)
+        (stored,) = (
+            self._query(prices=StubPrices(_price()), subscription_allowance=allowances)
+            .query()
+            .records
+        )
+        self.assertEqual(stored.cost_kind, "subscription_allowance")
+        self.assertIsNone(stored.settled_amount)
+        self.assertIsNone(stored.estimate_amount)
+        self.assertEqual(stored.provenance, ALLOWANCE.provenance)
+        validate_schema_ref(USAGE_RECORD_REF, stored.to_wire())
+        self.assertEqual(len(allowances.calls), 1)
+
+    def test_an_uncomposed_allowance_is_unknown_not_zero(self) -> None:
+        run_id, session_id = _ids()
+        self.record_case.record(_event(run_id, session_id, 0))
+        (without_source,) = self._query().query().records
+        (with_silent_source,) = (
+            self._query(subscription_allowance=StubAllowances(None)).query().records
+        )
+        self.assertIsNone(without_source.cost_kind)
+        self.assertIsNone(with_silent_source.cost_kind)
+
+    def test_summary_keeps_the_three_kinds_apart(self) -> None:
+        settled_run, settled_session = _ids()
+        allowance_run, allowance_session = _ids()
+        estimated_run, estimated_session = _ids()
+        self.record_case.record(
+            _event(
+                settled_run,
+                settled_session,
+                0,
+                settled_amount=0.5,
+                currency="USD",
+                units=10.0,
+            )
+        )
+        self.record_case.record(
+            _event(
+                estimated_run,
+                estimated_session,
+                0,
+                provider_model_id="openai/gpt-x",
+                units=1000.0,
+            )
+        )
+        self.record_case.record(
+            _event(
+                allowance_run,
+                allowance_session,
+                0,
+                provider_model_id="openai/gpt-y",
+                units=7.0,
+            )
+        )
+
+        class OnlyGptY(StubAllowances):
+            def allowance_for(self, record):
+                if record.provider_model_id == "openai/gpt-y":
+                    return ALLOWANCE
+                return None
+
+        summary = SummarizeUsageUseCase(
+            self._query(prices=StubPrices(_price()), subscription_allowance=OnlyGptY())
+        ).summarize()
+        wire = summary.to_wire()
+        validate_schema_ref(USAGE_SUMMARY_RESULT_REF, wire)
+        totals = {total["cost_kind"]: total for total in wire["totals"]}
+        self.assertEqual(len(wire["totals"]), 3)
+        self.assertEqual(
+            totals["provider_settled"],
+            {
+                "cost_kind": "provider_settled",
+                "amount": 0.5,
+                "currency": "USD",
+                "units": 10.0,
+                "record_count": 1,
+            },
+        )
+        self.assertEqual(totals["estimated"]["amount"], 1.0)
+        self.assertEqual(totals["estimated"]["currency"], "USD")
+        self.assertIsNone(totals["subscription_allowance"]["amount"])
+        self.assertIsNone(totals["subscription_allowance"]["currency"])
+        self.assertEqual(totals["subscription_allowance"]["units"], 7.0)
+
+    def test_summary_reports_unknown_and_mixed_currency_totals_as_null(self) -> None:
+        run_id, session_id = _ids()
+        settled = UsageRecord.from_wire(
+            _usage(run_id, session_id, settled_amount=0.5, currency="USD")
+        )
+        # A provider-reported row whose amount has not settled yet keeps its
+        # kind and makes the total unknown rather than a partial sum.
+        unknown = UsageRecord.from_wire(
+            _usage(
+                run_id,
+                session_id,
+                cost_kind="provider_settled",
+                settled_amount=None,
+                currency="USD",
+            )
+        )
+        euro = UsageRecord.from_wire(
+            _usage(run_id, session_id, settled_amount=0.25, currency="EUR")
+        )
+        no_currency = UsageRecord.from_wire(
+            _usage(run_id, session_id, settled_amount=0.25, currency=None)
+        )
+        labelled = [project_cost_kind(record) for record in (settled, unknown)]
+        self.assertEqual({record.cost_kind for record in labelled}, {"provider_settled"})
+        for name, group in {
+            "unknown amount": (settled, unknown),
+            "mixed currency": (settled, euro),
+            "no currency": (settled, no_currency),
+        }.items():
+            with self.subTest(name=name):
+                summary = SummarizeUsageUseCase(
+                    StubUsageQuery(*(project_cost_kind(row) for row in group))
+                ).summarize()
+                validate_schema_ref(USAGE_SUMMARY_RESULT_REF, summary.to_wire())
+                (total,) = summary.totals
+                self.assertIsNone(total.amount)
+                self.assertIsNone(total.currency)
+                self.assertEqual(total.record_count, 2)
+
+    def test_summary_leaves_unlabelled_records_to_usage_query(self) -> None:
+        run_id, session_id = _ids()
+        plain = UsageRecord.from_wire(_usage(run_id, session_id))
+        summary = SummarizeUsageUseCase(StubUsageQuery(plain)).summarize()
+        self.assertEqual(summary.to_wire(), {"totals": []})
+        validate_schema_ref(USAGE_SUMMARY_RESULT_REF, summary.to_wire())
+
+    def test_summary_validates_its_window(self) -> None:
+        summarize = SummarizeUsageUseCase(self._query()).summarize
+        with self.assertRaises(UsageQueryValidationError):
+            summarize(since="not-a-date")
+        with self.assertRaises(UsageQueryValidationError):
+            summarize(since="2026-09-13T00:00:00Z", until="2026-09-12T00:00:00Z")
 
 
 if __name__ == "__main__":

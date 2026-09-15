@@ -6,7 +6,24 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
+from model_deck.engine.evidence.ports import (
+    PriceRecord,
+    SourceProvenance,
+    SubscriptionAllowance,
+)
+
 USAGE_QUERY_MAX_RECORDS = 1000
+
+# The three kinds of money, from the frozen cost_kind vocabulary. They are never
+# summed together and never share a field.
+COST_KIND_ESTIMATED = "estimated"
+COST_KIND_PROVIDER_SETTLED = "provider_settled"
+COST_KIND_SUBSCRIPTION_ALLOWANCE = "subscription_allowance"
+COST_KINDS: tuple[str, ...] = (
+    COST_KIND_PROVIDER_SETTLED,
+    COST_KIND_ESTIMATED,
+    COST_KIND_SUBSCRIPTION_ALLOWANCE,
+)
 
 UNIT_KINDS: frozenset[str] = frozenset(
     {
@@ -23,6 +40,7 @@ UNIT_KINDS: frozenset[str] = frozenset(
 _OPTIONAL_USAGE_FIELDS = (
     "registration_id", "connection_id", "provider_model_id",
     "settled_amount", "currency", "estimate_amount",
+    "cost_kind", "provenance",
 )
 _REQUIRED_USAGE_FIELDS = ("run_id", "session_id", "observed_at", "units", "unit_kind")
 
@@ -40,14 +58,21 @@ class UsageRecord:
     settled_amount: float | None = None
     currency: str | None = None
     estimate_amount: float | None = None
+    cost_kind: str | None = None
+    provenance: SourceProvenance | None = None
     _present_optional_fields: frozenset[str] = field(default_factory=frozenset, repr=False)
 
     @classmethod
     def from_wire(cls, payload: Mapping[str, Any]) -> UsageRecord:
         """Preserve both values and optional-field presence from validated input."""
+        optional: dict[str, Any] = {
+            name: payload.get(name) for name in _OPTIONAL_USAGE_FIELDS
+        }
+        if optional["provenance"] is not None:
+            optional["provenance"] = SourceProvenance.from_wire(optional["provenance"])
         return cls(
             **{name: payload[name] for name in _REQUIRED_USAGE_FIELDS},
-            **{name: payload.get(name) for name in _OPTIONAL_USAGE_FIELDS},
+            **optional,
             _present_optional_fields=frozenset(
                 name for name in _OPTIONAL_USAGE_FIELDS if name in payload
             ),
@@ -58,7 +83,9 @@ class UsageRecord:
         for name in _OPTIONAL_USAGE_FIELDS:
             value = getattr(self, name)
             if name in self._present_optional_fields or value is not None:
-                payload[name] = value
+                payload[name] = (
+                    value.to_wire() if isinstance(value, SourceProvenance) else value
+                )
         return payload
 
 
@@ -76,12 +103,75 @@ class QueryUsageResult:
         return {"records": [record.to_wire() for record in self.records]}
 
 
+@dataclass(frozen=True, slots=True)
+class UsageTotal:
+    """Totals for one cost_kind. Unknown stays null rather than collapsing to zero."""
+
+    cost_kind: str
+    amount: float | None
+    currency: str | None
+    units: float | None
+    record_count: int
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "cost_kind": self.cost_kind,
+            "amount": self.amount,
+            "currency": self.currency,
+            "units": self.units,
+            "record_count": self.record_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SummarizeUsageResult:
+    totals: tuple[UsageTotal, ...]
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"totals": [total.to_wire() for total in self.totals]}
+
+
 @runtime_checkable
 class UsageRepository(Protocol):
     def store(self, record: UsageRecord, sequence: int) -> RecordUsageResult:
         ...
 
     def query(self, since: str | None, until: str | None) -> QueryUsageResult:
+        ...
+
+
+@runtime_checkable
+class UsageQueryPort(Protocol):
+    """A bounded chronological usage read, reconciled or direct."""
+
+    def query(
+        self, since: str | None = None, until: str | None = None
+    ) -> QueryUsageResult:
+        ...
+
+
+@runtime_checkable
+class PriceLookupPort(Protocol):
+    """Cached price lookup for read-time estimates. Never fetches."""
+
+    def price_for(
+        self,
+        *,
+        provider_model_id: str | None,
+        registration_id: str | None = None,
+    ) -> PriceRecord | None:
+        ...
+
+
+@runtime_checkable
+class SubscriptionAllowancePort(Protocol):
+    """Provider-reported allowance a usage record draws on.
+
+    Returns None for unknown, which is also the answer when no source is
+    composed at all: the engine never infers allowance consumption.
+    """
+
+    def allowance_for(self, record: UsageRecord) -> SubscriptionAllowance | None:
         ...
 
 
@@ -95,6 +185,10 @@ class UsageEventMismatchError(ValueError):
 
 class UsageQueryValidationError(ValueError):
     pass
+
+
+class UsageCostProjectionError(ValueError):
+    """A read-time cost label would have contradicted the frozen cost rules."""
 
 
 class UsageResourceExhaustedError(ValueError):

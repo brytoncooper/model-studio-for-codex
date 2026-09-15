@@ -7,9 +7,19 @@
     "benchmarks": {
       "type": "array",
       "items": {
-        "type": "object"
+        "$ref": "../vocabulary.schema.json#/definitions/benchmark_record"
       },
-      "maxItems": 256
+      "maxItems": 2048,
+      "description": "Matching cached benchmark records. Each carries its own provenance, which may be older than the snapshot when that feed last refreshed earlier."
+    },
+    "snapshot": {
+      "$ref": "../vocabulary.schema.json#/definitions/source_provenance",
+      "description": "Provenance of the benchmark cache as a whole at the moment it was read, so a caller can tell how old the cache is and why the last refresh failed even when benchmarks is empty."
+    },
+    "cached": {
+      "type": "boolean",
+      "const": true,
+      "description": "Always true: this answer is served from the cache. A read path never triggers a hidden network fetch; refreshing is an explicit benchmarks.refresh job."
     }
   },
   "required": [
