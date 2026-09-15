@@ -87,15 +87,71 @@ PROVIDER_TEST_DIRECTORIES = (
     "tests/providers_continuation",
 )
 EXTENSION_TEST_DIRECTORIES = ("tests/plugins",)
-MIGRATION_SOURCE_DIRECTORIES = ("tests/engine", "tests/integrations")
-MIGRATION_FILENAME_KEYWORDS = (
-    "repository",
-    "outbox",
-    "projection",
-    "migration",
-    "recovery",
-    "schema",
-    "upgrade",
+# G4 runs a named manifest, not a filename keyword rule. Every module is listed
+# under the VERIFICATION.md section 1 evidence item it proves, so the selection
+# can be audited line by line and a missing entry is a loud failure rather than
+# a silently smaller run. Overlap with G2 is intentional. The host-projection
+# rendering tests -- tests.engine.test_projection_policy,
+# test_conditional_projection_files, test_model_projection_invalidation and
+# test_projection_dependency_expansions -- are deliberately absent: they prove
+# how a projection is rendered, not migration, CAS or recovery bookkeeping, and
+# G2 already runs them.
+MIGRATION_EVIDENCE_MODULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "V2 authority/outbox recovery",
+        (
+            "tests.engine.test_plugin_authority",
+            "tests.engine.test_sqlite_projection_outbox",
+            "tests.engine.test_sqlite_projection_intents",
+            "tests.engine.test_sqlite_projection_receipts",
+            "tests.engine.test_projection_dependency_recovery",
+            "tests.integrations.hosts.codex.test_projection_consumer",
+            "tests.integrations.hosts.codex.test_projection_full_path",
+        ),
+    ),
+    (
+        "CAS conflicts",
+        (
+            "tests.contracts.test_model_revision_cas",
+            "tests.engine.test_repository_conformance",
+            "tests.engine.test_sqlite_model_repository",
+            "tests.engine.test_sqlite_connection_repository",
+            "tests.engine.test_sqlite_plugin_data",
+            "tests.engine.test_sqlite_extension_lifecycle",
+        ),
+    ),
+    (
+        "schema-version bookkeeping",
+        (
+            "tests.engine.test_plugin_data_versioning_contract",
+            "tests.engine.test_sqlite_versioned_plugin_data",
+            "tests.engine.test_sqlite_projection_receipts",
+        ),
+    ),
+    (
+        "transactional upgrades",
+        (
+            "tests.engine.test_extension_lifecycle_versioned_data",
+            "tests.engine.test_sqlite_plugin_jobs",
+            "tests.engine.test_sqlite_versioned_plugin_data",
+        ),
+    ),
+    (
+        "newer-schema refusal",
+        (
+            "tests.engine.test_sqlite_projection_receipts",
+            "tests.engine.test_sqlite_session_run_repository",
+        ),
+    ),
+    (
+        "V2 data recovery",
+        (
+            "tests.engine.test_run_startup_recovery",
+            "tests.engine.test_sqlite_session_run_repository",
+            "tests.engine.test_sqlite_extension_lifecycle",
+            "tests.integrations.hosts.codex.test_migration_preview",
+        ),
+    ),
 )
 
 SWIFT_PACKAGE_DIRECTORY = "macos"
@@ -204,19 +260,31 @@ def discover_test_modules(package_root: Path, relative_directory: str) -> tuple[
     return tuple(modules)
 
 
-def is_migration_module(module_name: str) -> bool:
-    """True when the module filename names migration/recovery bookkeeping."""
-    filename = module_name.rsplit(".", 1)[-1].lower()
-    return any(keyword in filename for keyword in MIGRATION_FILENAME_KEYWORDS)
+def migration_test_modules() -> tuple[str, ...]:
+    """Every module in the G4 manifest, deduplicated, in manifest order.
 
-
-def migration_test_modules(package_root: Path) -> tuple[str, ...]:
+    A module may prove more than one evidence item; it is still run once.
+    """
     selected: list[str] = []
-    for relative_directory in MIGRATION_SOURCE_DIRECTORIES:
-        for module in discover_test_modules(package_root, relative_directory):
-            if is_migration_module(module):
+    for _evidence, modules in MIGRATION_EVIDENCE_MODULES:
+        for module in modules:
+            if module not in selected:
                 selected.append(module)
     return tuple(selected)
+
+
+def module_source_path(package_root: Path, module_name: str) -> Path:
+    """The `test_*.py` file a dotted module name resolves to under `python/`."""
+    return package_root.joinpath(*module_name.split(".")).with_suffix(".py")
+
+
+def missing_migration_modules(package_root: Path) -> tuple[str, ...]:
+    """Manifest entries with no file on disk: a renamed or deleted test."""
+    return tuple(
+        module
+        for module in migration_test_modules()
+        if not module_source_path(package_root, module).is_file()
+    )
 
 
 def example_test_targets(root: Path) -> tuple[tuple[str, Path, tuple[str, ...]], ...]:
@@ -480,16 +548,37 @@ def run_migration(
         socket_root=socket_root,
     )
     package_root = root / PYTHON_PACKAGE_DIRECTORY
-    modules = migration_test_modules(package_root)
+    modules = migration_test_modules()
     print(
-        "verify: migration selects modules whose filename contains "
-        + ", ".join(MIGRATION_FILENAME_KEYWORDS),
+        "verify: migration runs an explicit module manifest, "
+        "one group per G4 evidence item",
+        flush=True,
+    )
+    for evidence, evidence_modules in MIGRATION_EVIDENCE_MODULES:
+        print(f"verify:   evidence={evidence}", flush=True)
+        for module in evidence_modules:
+            print(f"verify:     {module}", flush=True)
+    print(
+        f"verify: migration selected {len(modules)} modules "
+        "(a module proving two evidence items runs once)",
         flush=True,
     )
     for module in modules:
         print(f"verify:   selected {module}", flush=True)
     if not modules:
         return report_gate(summarize("migration", [missing_directory_step("migration")]))
+    missing = missing_migration_modules(package_root)
+    if missing:
+        for module in missing:
+            print(
+                f"verify: migration manifest names {module}, which no longer "
+                "exists; update MIGRATION_EVIDENCE_MODULES",
+                file=sys.stderr,
+                flush=True,
+            )
+        return report_gate(
+            summarize("migration", [missing_directory_step("migration manifest")])
+        )
     step = run_unittest_step(
         "migration modules", cwd=package_root, modules=modules, env=env
     )
