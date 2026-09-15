@@ -1,0 +1,5 @@
+{
+  "data": [
+    {"model_permaslug": "vendor/x", "source": "wrong-source", "intelligence_index": 10}
+  ]
+}

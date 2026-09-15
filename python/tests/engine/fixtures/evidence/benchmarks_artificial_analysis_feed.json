@@ -1,0 +1,23 @@
+{
+  "data": [
+    {
+      "model_permaslug": "openai/gpt-5",
+      "source": "artificial-analysis",
+      "intelligence_index": 71.0,
+      "coding_index": 65.0
+    },
+    {
+      "model_permaslug": "vendor/x",
+      "source": "wrong-source",
+      "intelligence_index": 10
+    },
+    {
+      "model_permaslug": null,
+      "intelligence_index": 5
+    }
+  ],
+  "meta": {
+    "as_of": "2026-09-10",
+    "source_url": "https://artificialanalysis.ai/models/gpt-5"
+  }
+}

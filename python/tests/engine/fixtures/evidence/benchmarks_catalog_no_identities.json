@@ -1,0 +1,6 @@
+{
+  "data": [
+    {"not_an_id_field": true},
+    {"id": "", "name": "blank id does not count as an identity"}
+  ]
+}
