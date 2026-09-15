@@ -52,7 +52,7 @@ Common outcomes:
 
 - Exit **2** — unsupported worker invocation (fix arguments).
 - Exit **4** — inconclusive (timeout/output cap/busy): stop and defer to the finalizer; do not split or retry the same batch to evade limits.
-- `verify: all-local incomplete` — only `development-guard` ran; other gates are not implemented yet.
+- `verify: gate package status=pending (B26)` — `all-local` ran G0–G6; the package gate is not implemented yet.
 
 ## Parent links
 

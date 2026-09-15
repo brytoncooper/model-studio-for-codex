@@ -10,9 +10,29 @@ Status: planned checks. No application test, build, installation, migration or l
 
 One independent finalizer owns aggregate evidence; the lead owns final diff review. Implementation workers use only a repository-approved Editing wrapper on <=3 exact owned files with a 30-second total deadline including children and bounded output. The wrapper does not yet exist. Timeout/busy/unsupported is inconclusive, not pass; do not split or retry batches to evade limits. After two failed repairs, consolidate diagnosis with one capable owner and return to the same finalizer.
 
-The proposed entrypoint is `python3 scripts/verify.py <gate> --state-root <temporary> --artifact-root <temporary>` with fixed supported gates below. It must validate temporary roots before executing any code. This entrypoint is to be implemented in B00/B03 and must not be run as if it exists today. No arbitrary command forwarding. Existing Python unittest files, Swift self-test cases and VERIFICATION.md provide the starting regression inventory; discover actual counts rather than hard-coding 246 as a future expected total.
+The entrypoint is `python3 scripts/verify.py <gate> --state-root <temporary> --artifact-root <temporary> [--socket-root <temporary>]` with the fixed supported gates below. It validates the temporary roots before executing any code; the roots must be absolute, disjoint, outside the source tree and free of user-created symlink parent aliases (the macOS `/tmp` → `/private/tmp` and `/var` → `/private/var` aliases are the only permitted ones). No arbitrary command forwarding. G0–G6 are implemented; G7 `package` stays pending B26 and `all-local` reports it as pending rather than passing it. Counts are discovered from the tree at run time, never hard-coded.
 
-| Gate | Proposed subcommand | Required evidence |
+### Environment contract
+
+Every Python gate runs from `python/` with the engine reached through `PYTHONPATH=<repo>/python/src` and **no installed or editable `model-deck` distribution**. The process-isolation fixtures (external extension transport, `tests/plugins/*`, the notebook update tests and the `examples/session-notebook` worker) spawn `sys.executable -I -c ...` children and refuse to run when `importlib.util.find_spec("model_deck")` is not `None`; that refusal is the B18 acceptance proof that external code runs without private engine imports, so an editable install turns it into `malformed_eof` child failures rather than a weaker test. `python/pyproject.toml` therefore declares `[tool.uv] package = false`, so `uv sync --project python` installs only `jsonschema[format]==4.23.0` and `tomlkit==0.13.3`. No gate requires pytest; every Python gate uses the stdlib `unittest` runner. Run `scripts/verify.py` with that environment's interpreter (`python/.venv/bin/python`), because every gate child is spawned as `sys.executable` and needs the two runtime dependencies. The gates also need a symlink-free temporary directory, because the Codex migration-preview fixtures reject a fixture root containing a symlink: the runner sets `TMPDIR` to the real path of the isolated temporary directory produced by `isolated_subprocess_env`, and `python/tests/__init__.py` repeats both checks at import (raising with the remediation command `uv pip uninstall --python python/.venv/bin/python model-deck`). G2, G4, G5 and G6 run the same pre-flight first and exit 2 with that remediation text when the interpreter can still see the engine.
+
+### Exact command per gate
+
+| Gate | Command | What it runs |
+|---|---|---|
+| G0 | `python3 scripts/verify.py development-guard --state-root <s> --artifact-root <a>` | `python -m unittest test_development_guard test_editing_check` from the repository root |
+| G1 | `python3 scripts/verify.py contracts --state-root <s> --artifact-root <a>` | `python scripts/generate_contracts.py --check` |
+| G2 | `python3 scripts/verify.py engine --state-root <s> --artifact-root <a>` | one `python -m unittest` subprocess per directory over `tests/engine`, `tests/kernel`, `tests/contracts`, `tests/scripts`, `tests/host_codex`, `tests/integrations`, then `python scripts/architecture_check.py` (section 2) |
+| G3 | `python3 scripts/verify.py swift --state-root <s> --artifact-root <a>` | `swift test --package-path macos` (`shutil.which("swift")`, else `/usr/bin/swift`); a missing toolchain is recorded explicitly as `status=unavailable` and exits 3 rather than passing |
+| G4 | `python3 scripts/verify.py migration --state-root <s> --artifact-root <a>` | the modules under `tests/engine` and `tests/integrations` whose filename contains `repository`, `outbox`, `projection`, `migration`, `recovery`, `schema` or `upgrade`; the selected list is printed so it can be audited, and overlap with G2 is intentional |
+| G5 | `python3 scripts/verify.py providers --state-root <s> --artifact-root <a>` | `tests/provider_openai_compatible`, `tests/provider_cursor`, `tests/providers_continuation` |
+| G6 | `python3 scripts/verify.py extensions --state-root <s> --artifact-root <a>` | `tests/plugins`, then every `examples/*/tests` directory that exists, each run from its own example directory |
+| G7 | pending B26 | not implemented; `all-local` prints it as pending |
+| all-local | `python3 scripts/verify.py all-local --state-root <s> --artifact-root <a> --socket-root <k>` | G0, G1, G2, G3, G4, G5, G6 in that order, every gate run even after a failure, then the summary table |
+
+Each gate prints one summary line — gate name, tests run, failures, errors, seconds — and `all-local` repeats them as a table before exiting nonzero if any gate failed. Unix socket paths must stay short, so keep the roots shallow, for example `--state-root /private/tmp/md-gate/state --artifact-root /private/tmp/md-gate/artifacts --socket-root /private/tmp/md-gate/sockets`.
+
+| Gate | Subcommand | Required evidence |
 |---|---|---|
 | G0 | `development-guard` | Protected path/symlink refusal, worker wrapper boundaries, fixture child timeout cleanup |
 | G1 | `contracts` | JSON schemas, valid/invalid examples, Swift/Python round-trip, version compatibility and import-negative fixtures |
@@ -24,7 +44,7 @@ The proposed entrypoint is `python3 scripts/verify.py <gate> --state-root <tempo
 | G7 | `package` | Immutable staged output, signed helper identity, resource inventory, no private source import requirement |
 | G8 | separate scheduled qualification | Actual installed host/provider/macOS behavior; explicit operational authorization required |
 
-G0–G7 are intended isolated local/CI checks. They are not automatically harmless before the protected-path guard exists. Fixture substitution proves architectural independence; it is not qualification of an unimplemented host or operating system. Proposed `all-local` runs applicable implemented gates once after final integration; record unavailable platform/tool checks explicitly.
+G0–G7 are intended isolated local/CI checks. They are not automatically harmless before the protected-path guard exists. Fixture substitution proves architectural independence; it is not qualification of an unimplemented host or operating system. `all-local` runs the implemented gates once after final integration; unavailable platform/tool checks are recorded explicitly instead of being counted as passes.
 
 ## 2. Architecture rejection tests
 

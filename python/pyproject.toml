@@ -17,3 +17,9 @@ model-deck = "model_deck.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/model_deck", "src/model_deck_contracts", "src/model_deck_root_guard"]
+
+[tool.uv]
+# The process-isolation fixtures spawn `sys.executable -I -c ...` children that
+# must not be able to import `model_deck`. `uv sync` therefore installs the
+# runtime dependencies only; the engine itself is reached through PYTHONPATH=src.
+package = false
