@@ -82,7 +82,9 @@ class EngineRPC:
             self._authenticate(session)
             response = session.call({"jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": method, "params": params})
         if "error" in response:
-            raise RuntimeError("engine request failed")
+            error = response.get("error")
+            message = error.get("message") if isinstance(error, dict) else None
+            raise RuntimeError(f"engine request failed: {message or 'unknown engine error'}")
         return response.get("result")
 
     def subscribe_events(self, run_id: str) -> Iterator[dict[str, Any]]:
@@ -95,7 +97,11 @@ class EngineRPC:
                 "params": {"topics": [f"run:{run_id}"], "initial_credit": 256},
             })
             if "error" in response:
-                raise RuntimeError("engine event subscription failed")
+                error = response.get("error")
+                message = error.get("message") if isinstance(error, dict) else None
+                raise RuntimeError(
+                    f"engine event subscription failed: {message or 'unknown engine error'}"
+                )
             while True:
                 notification = session.read_notification()
                 params = notification.get("params")
@@ -286,7 +292,8 @@ class CodexResponsesBridge:
         descriptor = {
             "schema_version": 1, "base_url": base_url, "provider_id": self.profile.provider_id,
             "model": self.profile.provider_model_id, "billing_description": self.profile.billing_description,
-            "token_path": str(self.token_path),
+            "token_path": str(self.token_path), "registration_id": self.registration_id,
+            "connection_id": self.profile.connection_id, "display_name": self.profile.display_name,
         }
         self._write_private_json(self.descriptor_path, descriptor)
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
@@ -385,7 +392,11 @@ class CodexResponsesBridge:
             if resumed_call_id is not None:
                 self._forget_pending(resumed_call_id)
         except (CodexInputNormalizationError, ToolConversionError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
-            print(f"Codex bridge rejected request at {stage}: {type(error).__name__}", file=sys.stderr, flush=True)
+            print(
+                f"Codex bridge rejected request at {stage}: {type(error).__name__}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
             if stage == "tool-conversion" and isinstance(locals().get("body"), dict):
                 advertised = body.get("tools")
                 if isinstance(advertised, list):
@@ -403,7 +414,8 @@ class CodexResponsesBridge:
         except (BrokenPipeError, ConnectionError, TimeoutError):
             if run_id is not None:
                 self._cancel_once(run_id)
-        except RuntimeError:
+        except RuntimeError as error:
+            print(f"Codex bridge engine failure at {stage}: {error}", file=sys.stderr, flush=True)
             if run_id is not None:
                 self._cancel_once(run_id)
             if response_started:

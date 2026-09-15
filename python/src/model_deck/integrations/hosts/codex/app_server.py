@@ -259,6 +259,11 @@ class AppServerBridge:
             return None
         registered = self.registry.load_models()
         if model in registered:
+            desktop_route = getattr(self.registry, 'desktop_route', None)
+            if desktop_route is not None:
+                custom_route = desktop_route(model)
+                if custom_route is not None:
+                    return custom_route
             endpoint = registered[model].get('endpoint') or {}
             billing = 'cursor' if endpoint.get('cursor') else 'openrouter'
             return {'provider': 'openai', 'billing': billing}
@@ -312,7 +317,9 @@ class AppServerBridge:
             return
         provider = await self.provider_for_thread(thread_id)
         if not self.is_legacy_provider(provider):
-            return  # Router-backed tasks can switch freely; billing follows the model name.
+            if route.get('provider') != provider:
+                raise BridgeError('This task is tied to its saved provider. Start a new task to change providers.')
+            return  # Same-provider model changes keep the task's established billing boundary.
         legacy = self.legacy_route(model)
         if legacy is None or legacy['provider'] != provider:
             raise BridgeError('This older task is tied to its saved OpenRouter route. Start a new task to change models.')
@@ -398,9 +405,16 @@ class AppServerBridge:
             route = self.route(model)
             if route:
                 explicit_provider = params.get('modelProvider')
-                if explicit_provider not in (None, 'openai'):
+                expected_provider = route['provider']
+                if explicit_provider not in (None, expected_provider):
                     raise BridgeError('This task uses another explicit provider; mixed-provider routing was not applied.')
                 params['model'] = model
+                if expected_provider != 'openai':
+                    params['modelProvider'] = expected_provider
+                    config = params.get('config') or {}
+                    definitions = route.get('config', {}).get('model_providers', {})
+                    config['model_providers'] = dict(config.get('model_providers') or {}, **definitions)
+                    params['config'] = config
             instructions = params.get('developerInstructions')
             if instructions is None:
                 effective = await self.request('config/read', {'cwd': params.get('cwd'), 'includeLayers': False})
@@ -416,8 +430,8 @@ class AppServerBridge:
                 await asyncio.to_thread(wait_for_catalog, 8)
             result = await self.request(method, params)
             self.remember(result)
-            if route and result.get('modelProvider') not in (None, 'openai'):
-                raise BridgeError('Codex did not use the OpenAI connection, so the model router was not applied. No turn was started.')
+            if route and result.get('modelProvider') not in (None, route['provider']):
+                raise BridgeError('Codex did not use the expected model provider. No turn was started.')
             return result
         if method == 'thread/resume':
             params = copy.deepcopy(params)
@@ -426,6 +440,14 @@ class AppServerBridge:
                 await self.validate_existing_selection(thread_id, params['model'])
             # Tasks created before the router still carry their command-auth provider definition.
             provider = await self.provider_for_thread(thread_id)
+            desktop_route_for_provider = getattr(self.registry, 'desktop_route_for_provider', None)
+            desktop_route = desktop_route_for_provider(provider) if desktop_route_for_provider is not None else None
+            if desktop_route is not None:
+                config = params.get('config') or {}
+                definitions = desktop_route['config']['model_providers']
+                config['model_providers'] = dict(config.get('model_providers') or {}, **definitions)
+                params['config'] = config
+                params['modelProvider'] = provider
             if self.is_legacy_provider(provider):
                 models = self.registry.load_models()
                 if not models:

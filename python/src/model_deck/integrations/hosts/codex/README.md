@@ -66,16 +66,22 @@ public socket composition, all compatibility states, unknown-version refusal,
 catalog projection, event/method parity, cancellation ownership, approvals,
 per-process overrides, and host-bound subscription behavior.
 
-## Limitations
+## V2 Desktop attachment
 
-This acceptance does not itself launch, attach to, or reload Codex Desktop. It
-proves the independently testable adapter and preparation boundary.
+`desktop_attachment.py` is the V2 composition boundary. It validates explicit
+isolated engine rendezvous, credential, and bridge descriptor files; reads the
+active registration through public engine RPC; and supplies a per-thread
+`model_deck_v2` provider definition to this package's existing
+`AppServerBridge`. It does not treat managed agent TOML as Desktop discovery.
 
-The isolated qualification on 2026-09-14 established the boundary observed in
-Codex Desktop 26.903.71938 with embedded Codex 0.153.4: V2 could register and
-project an OpenRouter model, but the native app server did not include it in
-`model/list`. Managed agent TOML is therefore not a primary Desktop
-model-catalog registration mechanism in that version. V2 does not yet compose
-this package's `AppServerBridge` into a Desktop attachment, so it cannot replace
-the prototype for Desktop model access. See the
-[qualification record](../../../../../../docs/plans/plugin-architecture/CODEX-DESKTOP-QUALIFICATION-2026-09-14.md).
+Every Desktop `model/list` request reloads the public registered-model catalog.
+Native `gpt-*` models remain on Codex's host-owned OpenAI subscription route;
+only the exact configured V2 registration uses the authenticated loopback
+Responses bridge. Codex continues to own tools, approvals, history, and the
+agent loop.
+
+The [updated qualification record](../../../../../../docs/plans/plugin-architecture/CODEX-DESKTOP-QUALIFICATION-2026-09-14.md)
+documents installed-app-server discovery, selection, a real disposable coding
+edit/test, same-thread continuation, registration reload, routing/billing, and
+clean shutdown. Visible Electron UI interaction, installation, and live cutover
+remain separate operational boundaries.

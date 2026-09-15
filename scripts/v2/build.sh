@@ -92,6 +92,8 @@ chmod 755 "$application/Contents/MacOS/ModelDeckV2"
   "$application/Contents/Resources/python/src/"
 /usr/bin/ditto "$runtime_checker" "$application/Contents/Resources/python/check_python_runtime.py"
 /usr/bin/ditto "$repository_root/python/pyproject.toml" "$application/Contents/Resources/python/pyproject.toml"
+/usr/bin/ditto "$repository_root/scripts/v2/CodexDesktopBridge" "$application/Contents/Resources/CodexDesktopBridge"
+chmod 755 "$application/Contents/Resources/CodexDesktopBridge"
 
 for bundle_name in ModelDeck_ModelDeckContracts.bundle ModelDeck_ModelDeckPresentation.bundle; do
   bundle_source="$binary_root/$bundle_name"

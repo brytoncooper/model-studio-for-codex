@@ -268,19 +268,17 @@ version; failures remain visible as `Error: ...`.
 This is an unsigned local development artifact. Its configured Python
 interpreter must remain available and continue to pass the retained runtime
 check. Moving the app does not move or freeze that interpreter environment.
-The coding composition supports one configured
-OpenAI-compatible route and serial tool calls only; parallel tool-call responses
-are rejected rather than truncated. Codex Desktop UI integration,
-live-provider opaque reasoning/compaction qualification, provider-reported cost, marketplace,
-signing, distribution, bundled Python, and live-app cutover are not qualified.
-An isolated Codex Desktop qualification was run on 2026-09-14. V2 registration
-and host projection reached `ready`, but the installed native app server's
-`model/list` did not include the projected OpenRouter model. Initial Desktop
-execution, continuation, and registration reload therefore remain unqualified,
-and V2 cannot yet replace the prototype for Desktop model access. B10's
-fake-app-server acceptance still verifies the isolated adapter and launch
-preparation; V2 must additionally compose that bridge into a real Desktop
-attachment. See the [qualification record](../../../docs/plans/plugin-architecture/CODEX-DESKTOP-QUALIFICATION-2026-09-14.md).
+The coding composition supports one configured OpenAI-compatible route and
+serial tool calls only; parallel tool-call responses are rejected rather than
+truncated. The staged application packages `Resources/CodexDesktopBridge`,
+which reuses B10's `AppServerBridge` behind V2's explicit engine/catalog and
+authenticated loopback boundaries. The [updated isolated qualification](../../../docs/plans/plugin-architecture/CODEX-DESKTOP-QUALIFICATION-2026-09-14.md)
+proves installed app-server discovery and selection, a disposable coding edit
+with passing tests, same-thread continuation, registration reload, correct
+route/billing attribution, and clean owned-process shutdown. Visible Electron
+UI interaction, live-provider opaque compaction, provider-reported monetary
+cost, marketplace, signing, distribution, bundled Python, installation, and
+live cutover are not qualified.
 Normal quit drains and reaps the engine and extension workers. The final
 SIGKILL fallback is deliberately scoped to the known engine PID; a deliberately
 nonresponsive extension that survives closed stdio could require a future exact

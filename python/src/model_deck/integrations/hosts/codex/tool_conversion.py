@@ -42,13 +42,18 @@ def convert_tools(tools: Any) -> tuple[list[dict[str, Any]], dict[str, tuple[str
         if description is not None:
             if not isinstance(description, str):
                 raise ToolConversionError("function description must be text")
-            engine_tool["description"] = description
+            engine_tool["description"] = description[:4096]
         converted.append(engine_tool)
 
     for tool in tools:
         if not isinstance(tool, dict):
             raise ToolConversionError("tool must be an object")
         kind = tool.get("type")
+        if kind == "web_search":
+            # Codex advertises its provider-native search capability even when
+            # the active sandbox disables network access. V2 providers cannot
+            # execute that built-in; omit it while retaining host-run functions.
+            continue
         if kind == "function":
             append_function(tool, tool.get("namespace"))
             continue

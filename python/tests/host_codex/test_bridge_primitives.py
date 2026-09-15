@@ -67,6 +67,20 @@ class BridgePrimitiveTests(unittest.TestCase):
         with self.assertRaises(ToolConversionError):
             convert_tools([{"type": "custom", "name": "x"}])
 
+    def test_provider_native_web_search_is_not_forwarded_to_v2(self) -> None:
+        tools, aliases = convert_tools([
+            {"type": "web_search", "external_web_access": False},
+            {"type": "function", "name": "shell"},
+        ])
+        self.assertEqual([tool["name"] for tool in tools], ["shell"])
+        self.assertEqual(aliases, {"shell": (None, "shell")})
+
+    def test_desktop_tool_description_is_bounded_for_engine_admission(self) -> None:
+        tools, _ = convert_tools([
+            {"type": "function", "name": "spawn_agent", "description": "x" * 5000},
+        ])
+        self.assertEqual(len(tools[0]["description"]), 4096)
+
     def test_state_atomic_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "state.json"

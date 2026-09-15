@@ -341,7 +341,7 @@ reaches the same projection; absent paths retain the legacy rollback route.
 - **Stop condition:** Any public host-contract expansion returns to the primary
   agent.
 
-### D1a - V2-owned Codex Desktop attachment — newly identified
+### D1a - V2-owned Codex Desktop attachment — qualified 2026-09-15
 
 - **Outcome:** A V2-owned isolated launch/attachment composes the delivered
   `AppServerBridge` so V2 catalog entries appear in native Desktop `model/list`
@@ -354,8 +354,9 @@ reaches the same projection; absent paths retain the legacy rollback route.
   entrypoint, and real-host acceptance fixtures. Do not change provider or
   application storage ownership.
 - **Evidence:** The [2026-09-14 isolated qualification](CODEX-DESKTOP-QUALIFICATION-2026-09-14.md)
-  proved that managed agent projection reached `ready` while the installed
-  native app server omitted the V2 model from `model/list`.
+  now records real installed-app-server discovery, V2 selection and routing,
+  a disposable edit with passing tests, same-thread continuation, public
+  registration reload, billing/tool ownership, and exact owned-process cleanup.
 - **Dependencies:** Delivered D1 adapter/bridge and current V2 public catalog,
   router, and authenticated loopback contracts.
 - **Acceptance:** A clean staged artifact exposes the V2 model alongside
@@ -366,6 +367,8 @@ reaches the same projection; absent paths retain the legacy rollback route.
   provider architecture, or claiming an unsupported Codex discovery API.
 - **Stop condition:** A required Desktop contract is unavailable or the design
   would bypass application-owned catalog/router ports.
+- **Status:** Complete for isolated D1a acceptance. Installation and live
+  cutover remain separately authorized B27 work.
 
 ### D2 - Removed: prototype migration
 

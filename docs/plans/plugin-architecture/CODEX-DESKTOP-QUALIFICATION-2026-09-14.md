@@ -1,95 +1,86 @@
-# Codex Desktop qualification — 2026-09-14
+# Codex Desktop qualification — 2026-09-15 update
 
 ## Result
 
-Model Deck V2 cannot yet replace the prototype for Codex Desktop model access.
-V2 registered and projected the configured OpenRouter model successfully, but
-Codex Desktop's native app server did not include that model in `model/list`.
-No external-provider coding turn was attempted after that decisive failure.
+D1a is qualified against the installed Codex Desktop app-server contract in a
+fully isolated state root. V2 now packages a Desktop attachment entrypoint that
+reuses the prototype's extracted `AppServerBridge`, obtains registrations from
+the V2 engine, and routes only the selected external model through V2's
+authenticated loopback Responses bridge. Host-owned OpenAI models retain their
+native subscription route.
 
-| Question | Observed answer |
+| Requirement | Observed evidence |
 | --- | --- |
-| Can V2 expose the configured model in Codex Desktop's model picker? | **No.** The native catalog contained only OpenAI models; `deepseek/deepseek-v4.1-flash` was absent. |
-| Can Codex Desktop execute a task through V2? | **Not qualified.** The intended model was unavailable, so running a task would not test the requested route. |
-| Can a conversation continue after the initial task? | **Not qualified.** There was no V2-backed initial Desktop turn to continue. |
-| Does Desktop reload a model registered after launch? | **Not qualified.** Native discovery already failed for the model projected before launch. |
-| Can the prototype be replaced today? | **No.** The running prototype still supplies the app-server catalog/routing bridge that V2 does not attach to Desktop. |
+| Model discovery and selection | Installed Codex `0.154.0-alpha.6.2` returned `deepseek/deepseek-v4.1-flash` from `model/list`; `thread/start` returned `modelProvider: model_deck_v2`. |
+| Coding task | Thread `01a0a3b3-541d-7413-a8bc-7ab1ce9f8f4b` edited `math_utils.py` in the disposable project and `python3 -m unittest -v` reported one passing test. |
+| Same-thread continuation | A second `turn/start` on that same thread reran the test and completed with the exact count: one test, one passing. |
+| Registration reload | In one bridge process, `model/list` changed the display name from `deepseek/deepseek-v4.1-flash` to `D1a Reloaded` immediately after public `engine.v1.models.rename`; no Desktop or bridge restart was required. The isolated registration was then restored. |
+| Clean shutdown | Both acceptance harnesses reported bridge exit `0`. Exact process inspection found no staged bridge, native Codex child, harness, or isolated engine after shutdown. |
 
-## Isolated reproduction
+## Isolated setup
 
-The test used source commit `6f139327bf900df90eb8fa4295ea32aa7f01d956`
-from a clean detached worktree. A fresh unsigned artifact was built at:
-
-```text
-/private/tmp/model-deck-v2-desktop-build.pUSW3q/artifact/Model Deck V2.app
-```
-
-V2 ran with a fresh state root at:
+The source engine used fresh roots under:
 
 ```text
-/private/tmp/model-deck-v2-desktop-qual-current.jDLT9S/state
+/private/tmp/md-v2-d1a-source-qual-20260915-3
 ```
 
-The V2 UI reported the OpenRouter connection and
-`deepseek/deepseek-v4.1-flash` as registered, with host projection `ready`.
-The projected agent file was written below the isolated Codex home:
+The clean staged artifact was:
 
 ```text
-/private/tmp/model-deck-v2-desktop-qual-current.jDLT9S/state/codex-harness/codex-home/agents/
+/private/tmp/md-v2-d1a-build-20260915-6/Model Deck V2.app
 ```
 
-Codex Desktop 26.903.71938 (embedded Codex 0.153.4) was launched as a second
-instance with separate `HOME`, `XDG_CONFIG_HOME`, Electron user-data, and
-`CODEX_HOME` paths. The installed app's supported isolation inputs were used:
-
-```sh
-CODEX_HOME=/private/tmp/model-deck-v2-desktop-qual-current.jDLT9S/state/codex-harness/codex-home \
-CODEX_ELECTRON_USER_DATA_PATH=/private/tmp/model-deck-v2-desktop-qual-current.jDLT9S/desktop/user-data \
-CODEX_CLI_PATH=/Applications/ChatGPT.app/Contents/Resources/codex \
-/usr/bin/open -n /Applications/ChatGPT.app --args \
-  --user-data-dir=/private/tmp/model-deck-v2-desktop-qual-current.jDLT9S/desktop/user-data
-```
-
-`CODEX_CLI_PATH` must be explicit for this qualification. The first isolated
-launch inherited the development session's prototype bridge path and was
-rejected as evidence. With the installed native executable forced explicitly,
-the app server initialized with the isolated V2 `CODEX_HOME`; `model/list`
-returned `gpt-5.6-sol`, `gpt-6-astra`, `gpt-reserve`, `gpt-5.6-terra`,
-`gpt-5.6-luna`, `gpt-5.5`, `gpt-5.3-codex-spark`, and
-`codex-auto-review`. It did not return the projected DeepSeek model.
-
-The installed app-server schemas generated during the run remain at:
+The disposable coding project was:
 
 ```text
-/private/tmp/codex-app-server-schema.5jPtNd
+/private/tmp/md-v2-d1a-project-20260914-1
 ```
 
-The test did not change the installed app, live Model Deck state, live Codex
-state, credentials, or provider settings. Only exact isolated test processes
-were stopped. No external-provider inference or tool execution occurred, so
-there is no new provider charge to attribute to this qualification.
+The installed ChatGPT/Codex Desktop build was `26.908.70816` (bundle build
+`9275`) with embedded Codex `0.154.0-alpha.6.2`. Its actual app-server
+`initialize`, `model/list`, `thread/start`, and `turn/start` methods supplied
+the qualification evidence; this was not a projection-file-only test.
 
-## Boundary diagnosis
+No installed application, live state, credential, provider setting, or live
+configuration was changed. The running ChatGPT, prototype bridge, prototype
+native Codex child, and Model Deck processes remained at their baseline PIDs
+after isolated cleanup.
 
-The managed agent TOML produced by projection is not a primary Desktop model
-catalog registration contract. Native Codex Desktop owns `model/list` and does
-not derive that list from projected agent files. The prototype works because
-its provider bridge sits in the app-server path and injects/routes catalog
-entries; the V2 application currently starts its engine without composing the
-extracted `CodexHostAdapter`/`AppServerBridge` into a Desktop attachment.
+## Route ownership and billing
 
-This is larger than a safe one-line qualification repair. The smallest viable
-implementation is a V2-owned, isolated Desktop launch/attachment path that:
+- Inference provider: `com.modeldeck.openrouter`.
+- Provider model: `deepseek/deepseek-v4.1-flash`.
+- Desktop provider route: `model_deck_v2`, defined only for the selected V2
+  registration and pointed at the authenticated `127.0.0.1` V2 bridge.
+- Tool ownership: Codex Desktop owned the agent loop, approvals, shell/file
+  execution, thread history, and tool results. V2 owned registration lookup,
+  route selection, provider execution, event translation, and usage evidence.
+- Billing source: OpenRouter API usage consumes OpenRouter credits; it is not
+  ChatGPT subscription usage. Native `gpt-*` entries remain on Codex's native
+  `openai` provider and ChatGPT subscription route.
 
-1. packages and starts the extracted app-server bridge;
-2. supplies V2's public catalog and provider-routing ports to that bridge;
-3. injects V2 models into `model/list` while preserving host-bound OpenAI
-   subscription models;
-4. routes selected V2 turns through the authenticated V2 loopback bridge; and
-5. proves initial task, continuation, registration reload, billing identity,
-   and exact owned-process cleanup against the real Desktop app.
+No token, credential value, or provider-private continuation data is recorded
+here.
 
-If Codex Desktop exposes an official custom-provider/catalog API, that contract
-should replace the launch bridge. Until either path exists, CLI qualification
-must remain explicitly separate and the prototype remains required for Desktop
-model access.
+## Supported reload and lifecycle
+
+`EngineRegisteredModelCatalog` reads `engine.v1.models.list` for every Desktop
+`model/list` and selection check. Public registration changes are therefore
+visible through Desktop's existing catalog reload request. The attachment does
+not watch private storage or invent a second discovery mechanism.
+
+The bridge entrypoint is packaged in the staged V2 app and execs the declared
+validated Python runtime. The reused app-server bridge owns its exact native
+Codex child and reaps it when stdin closes. The source engine was stopped by
+its foreground interrupt and left no isolated descendants.
+
+## Remaining limitations
+
+- Qualification is against the real Desktop app-server backend contract. A
+  separate visible Electron picker click was not used because manipulating the
+  running Desktop UI would cross the protected live-session boundary.
+- The configured OpenAI-compatible execution path supports serial tool calls;
+  provider responses containing concurrent outstanding calls fail closed.
+- Live-provider opaque compaction, provider-reported monetary cost,
+  signing/notarization, installation, and live cutover remain B27 concerns.

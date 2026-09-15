@@ -1,0 +1,14 @@
+#!/bin/zsh
+# V2-owned Codex Desktop attachment bridge. The staged V2 app locates the
+# declared Python interpreter via Contents/Resources/config/runtime.plist
+# (key: python_executable) and the bundled engine source under
+# Contents/Resources/python/src on PYTHONPATH, then exec's
+# ``model_deck.integrations.hosts.codex.desktop_attachment`` with the
+# argv supplied by the host. No secrets, configuration or subprocess
+# state are stored in this wrapper.
+set -euo pipefail
+bridge_directory="${0:A:h}"
+runtime_plist="$bridge_directory/config/runtime.plist"
+bridge_python="$(/usr/libexec/PlistBuddy -c 'Print :python_executable' "$runtime_plist")"
+export PYTHONPATH="$bridge_directory/python/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "$bridge_python" -B -m model_deck.integrations.hosts.codex.desktop_attachment "$@"

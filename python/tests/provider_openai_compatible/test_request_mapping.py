@@ -476,6 +476,54 @@ class ApplyContinuationItemsTests(unittest.TestCase):
         self.assertEqual(restored[0]["encrypted_content"], "opaque-first")
         self.assertEqual(restored[2]["signature"], "synthetic-signature")
 
+    def test_responses_restore_codex_omitted_message_beside_same_response_call(self) -> None:
+        visible_call = {
+            "type": "function_call",
+            "name": "exec_command",
+            "call_id": "call-1",
+            "arguments": "{\"cmd\":\"python3 -m unittest -v\"}",
+        }
+        body = {"model": "m", "input": [copy.deepcopy(visible_call)]}
+        omitted_message = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Running the tests."}],
+        }
+        records = (
+            (
+                omitted_message,
+                {"raw_item": {**omitted_message, "id": "msg-provider"}},
+                "resp-1",
+            ),
+            (
+                visible_call,
+                {"raw_item": {**visible_call, "id": "call-provider"}},
+                "resp-1",
+            ),
+        )
+
+        result = apply_continuation_items(body, records, wire="responses")
+
+        self.assertEqual(result, ApplyResult(matched=2, unmatched=0))
+        self.assertEqual(
+            [item["id"] for item in body["input"]],
+            ["msg-provider", "call-provider"],
+        )
+
+    def test_responses_do_not_restore_message_without_same_response_anchor(self) -> None:
+        body = self._body()
+        omitted_message = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "not in host history"}],
+        }
+        records = ((omitted_message, {"raw_item": omitted_message}, "resp-orphan"),)
+
+        result = apply_continuation_items(body, records, wire="responses")
+
+        self.assertEqual(result, ApplyResult(matched=0, unmatched=1))
+        self.assertEqual(len(body["input"]), 2)
+
     def test_responses_disambiguate_repeated_visible_messages_by_record_order(self) -> None:
         visible = {
             "type": "message",

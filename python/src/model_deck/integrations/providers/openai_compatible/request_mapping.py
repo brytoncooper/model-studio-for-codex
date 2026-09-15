@@ -219,9 +219,10 @@ def apply_continuation_items(
 
     Matching is done by visible identity inside the trusted wire body — never
     by item_ref, because Codex/engine normalization strips host/provider
-    item IDs. Records that match a wire item are merged in place; records
-    that do not match are counted as ``unmatched`` and **never** prepended
-    to the body, because doing so would duplicate replayed history.
+    item IDs. Records that match a wire item are merged in place. Codex-omitted
+    reasoning or intermediate assistant messages are restored only beside a
+    visible item from the same provider response. Other records that do not
+    match are counted as ``unmatched`` and never prepended globally.
 
     Required metadata per item kind:
 
@@ -261,7 +262,9 @@ def apply_continuation_items(
         matched_response_ids: set[str] = set()
         matched_positions: dict[str, int] = {}
         used_positions: set[int] = set()
-        missing_reasoning: list[tuple[Mapping[str, Any], Mapping[str, Any], str | None]] = []
+        missing_provider_items: list[
+            tuple[Mapping[str, Any], Mapping[str, Any], str | None]
+        ] = []
         for visible_item, metadata, response_id in normalized_records:
             try:
                 record_identity = _sibling_item_identity(dict(visible_item))
@@ -286,31 +289,32 @@ def apply_continuation_items(
                     applied = True
                     break
             if not applied:
-                if record_kind == "reasoning":
-                    missing_reasoning.append((visible_item, metadata, response_id))
+                if record_kind in {"message", "reasoning"} and response_id is not None:
+                    missing_provider_items.append((visible_item, metadata, response_id))
                 else:
                     unmatched += 1
-        # The normalized engine history intentionally omits reasoning items.
-        # Reinsert an ordered group only beside a visible item from the same
-        # response; never prepend opaque reasoning globally.
-        reasoning_groups: dict[str, list[dict[str, Any]]] = {}
-        for _visible_item, metadata, response_id in missing_reasoning:
+        # Codex intentionally omits reasoning and intermediate assistant
+        # messages from normalized history. Restore those provider-owned items
+        # only beside a visible item from the same response; never prepend
+        # unmatched provider state globally.
+        provider_item_groups: dict[str, list[dict[str, Any]]] = {}
+        for _visible_item, metadata, response_id in missing_provider_items:
             if response_id is None or response_id not in matched_response_ids:
                 unmatched += 1
                 continue
             raw_item = metadata.get("raw_item")
             if not isinstance(raw_item, Mapping):
                 _reject()
-            reasoning_groups.setdefault(response_id, []).append(
+            provider_item_groups.setdefault(response_id, []).append(
                 copy.deepcopy(dict(raw_item))
             )
         for response_id in sorted(
-            reasoning_groups,
+            provider_item_groups,
             key=lambda value: matched_positions[value],
             reverse=True,
         ):
             insert_at = matched_positions[response_id]
-            group = reasoning_groups[response_id]
+            group = provider_item_groups[response_id]
             items[insert_at:insert_at] = group
             matched += len(group)
         return ApplyResult(matched=matched, unmatched=unmatched)
