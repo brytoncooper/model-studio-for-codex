@@ -45,6 +45,19 @@ operation/event descriptors, then pass it with its handler map into `compose`.
 No dispatch, bootstrap, engine, provider, host, storage, or transport imports
 are allowed in the kernel.
 
+## Built-in descriptors
+
+`model_deck.engine.builtins` holds the engine's own features as descriptors:
+`capabilities.py` defines the capability vocabulary, the `BuiltinAvailability`
+record and `build_capability_map`; `descriptors.py` declares one descriptor per
+feature group plus `select_available_builtins`, which drops groups whose
+required capabilities are unsupported along with the groups that depend on them;
+`handlers.py` defines `BuiltinHandlerAdapter` and the explicit
+`BuiltinHandlerRegistry` that binds a feature's operations to collaborators.
+A new built-in adds its capability to the vocabulary and availability record,
+declares a `modeldeck.builtin.*` descriptor, and has its handler adapter
+registered where the concrete ports are known, which is bootstrap.
+
 ## Tests
 
 From the Architecture `python` directory:
@@ -102,3 +115,10 @@ lifecycle or service locator in the kernel. Events remain metadata only; existin
 static features have not all been re-expressed as descriptors. External schema
 installation and external-principal authentication are not implemented by this
 integration. No global registry singleton.
+
+A specialized provider port is therefore not a kernel port. It is represented in
+the engine composition layer as a feature descriptor that declares the capability
+IDs it provides, such as `provider.execution` and `provider.routes`, and the
+operations it serves. The concrete port objects stay injected by bootstrap and the
+CLI and reach the kernel through handler adapters, so the kernel still sees only
+operation IDs, capability IDs and handlers.

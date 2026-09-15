@@ -24,6 +24,7 @@ class ArchitectureGraphTests(unittest.TestCase):
     def test_layer_mapping_for_planned_packages(self):
         self.assertEqual(layer_for_module("model_deck.kernel.registry").value, "kernel")
         self.assertEqual(layer_for_module("model_deck.engine.model_library.use_cases").value, "engine")
+        self.assertEqual(layer_for_module("model_deck.engine.builtins.descriptors").value, "engine")
         self.assertEqual(
             layer_for_module("model_deck.integrations.providers.openrouter.client").value,
             "providers",
@@ -138,6 +139,15 @@ class ArchitectureCheckerFixtureTests(unittest.TestCase):
         checker, result = self._check_fixture(
             "negative/cross_feature_private.py",
             "model_deck.engine.model_library.use_cases",
+        )
+        failing = checker.failing_violations(result)
+        rules = {v.rule_id for v in failing}
+        self.assertTrue({"cross_feature_private", "private_import"} & rules)
+
+    def test_negative_builtin_descriptor_private_engine_fails(self):
+        checker, result = self._check_fixture(
+            "negative/builtin_private_engine.py",
+            "model_deck.engine.builtins.descriptors",
         )
         failing = checker.failing_violations(result)
         rules = {v.rule_id for v in failing}

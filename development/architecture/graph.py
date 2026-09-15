@@ -23,6 +23,10 @@ class Layer(str, Enum):
 CONTRACTS_PREFIXES = ("model_deck_contracts.", "model_deck_contracts")
 KERNEL_PREFIX = "model_deck.kernel"
 ENGINE_PREFIX = "model_deck.engine"
+# Built-in feature descriptors are an engine feature like any other: they obey the
+# engine import rules and may not reach adapters, integrations or providers.
+ENGINE_BUILTINS_PREFIX = "model_deck.engine.builtins"
+ENGINE_PREFIXES = (ENGINE_PREFIX, ENGINE_BUILTINS_PREFIX)
 ADAPTERS_PREFIX = "model_deck.adapters"
 INTEGRATIONS_PREFIX = "model_deck.integrations"
 PROVIDERS_PREFIX = "model_deck.integrations.providers"
@@ -95,8 +99,9 @@ def layer_for_module(module_name: str) -> Layer:
         return Layer.CONTRACTS
     if name == KERNEL_PREFIX or name.startswith(KERNEL_PREFIX + "."):
         return Layer.KERNEL
-    if name == ENGINE_PREFIX or name.startswith(ENGINE_PREFIX + "."):
-        return Layer.ENGINE
+    for prefix in ENGINE_PREFIXES:
+        if name == prefix or name.startswith(prefix + "."):
+            return Layer.ENGINE
     if name == ADAPTERS_PREFIX or name.startswith(ADAPTERS_PREFIX + "."):
         return Layer.ADAPTERS
     if name == PROVIDERS_PREFIX or name.startswith(PROVIDERS_PREFIX + "."):
