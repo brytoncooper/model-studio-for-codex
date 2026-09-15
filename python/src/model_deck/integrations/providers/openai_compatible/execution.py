@@ -422,6 +422,18 @@ class OpenAICompatibleExecutionPort:
             return "1970-01-01T00:00:00Z"
         return value if type(value) is str and value else "1970-01-01T00:00:00Z"
 
+    def _safe_log(self, message: str) -> None:
+        """Log a diagnostic without leaking any user/model content.
+
+        The message must not include prompt or response payloads, provider
+        secrets, or any field carried inside the continuation records. The
+        logger is the standard library; callers do not see stack traces
+        here (the originating error was swallowed by design).
+        """
+        import logging
+
+        logging.getLogger(__name__).warning(message)
+
     def _release(self, handle: OpenAICompatibleRunHandle) -> None:
         with self._lock:
             self._handles.discard(handle)
@@ -880,9 +892,10 @@ class OpenAICompatibleRunHandle:
         try:
             store.save_response(scope, response_id, saved)
         except ContinuationError:
-            raise OpenAICompatibleExecutionError(
-                "The local continuation store could not be saved."
-            ) from None
+            # A local continuation-store write failure must not corrupt
+            # run.completed. Log a safe diagnostic and continue so the engine
+            # can advance; the in-flight run still terminates cleanly.
+            self._owner._safe_log("continuation save failed (responses wire)")
 
     def _save_chat_continuation(self, chat: ChatStreamTranslator) -> None:
         store = self._owner._continuation_store
@@ -914,9 +927,9 @@ class OpenAICompatibleRunHandle:
         try:
             store.save_response(scope, chat.response_id, items)
         except ContinuationError:
-            raise OpenAICompatibleExecutionError(
-                "The local continuation store could not be saved."
-            ) from None
+            # A local continuation-store write failure must not corrupt
+            # run.completed; see _save_responses_continuation for rationale.
+            self._owner._safe_log("continuation save failed (chat wire)")
 
     def _open_response(
         self,

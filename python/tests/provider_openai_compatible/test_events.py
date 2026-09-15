@@ -585,9 +585,14 @@ class RawProviderItemsAccumulationTests(unittest.TestCase):
         # Raw preserves them so a continuation record can round-trip them.
         raw = translator.raw_provider_items
         self.assertEqual(len(raw), 2)
+        # Positive assertions: every provider-private field lives on the raw
+        # view (the property the round-trip relies on), not just on the
+        # canonical view.
+        self.assertIn("reasoning_details", raw[0])
         self.assertEqual(
             raw[0]["reasoning_details"], [{"type": "summary", "text": "leaked"}]
         )
+        self.assertIn("encrypted_function_args", raw[1])
         self.assertEqual(raw[1]["encrypted_function_args"], "encrypted-args")
         # Canonical view passed to events has no provider-private fields.
         for canonical in translator.completed_output_items:
@@ -657,3 +662,61 @@ class RawProviderItemsAccumulationTests(unittest.TestCase):
             raw[1]["reasoning_details"], [{"type": "summary", "text": "leaked"}]
         )
         self.assertEqual(raw[2]["encrypted_function_args"], "args-2")
+
+    def test_raw_provider_items_are_byte_for_byte_preserved_with_private_fields(self) -> None:
+        """The raw view must preserve the exact provider item shape so a
+        continuation record round-trips opaque fields (``encrypted_content``,
+        ``encrypted_function_args``, ``reasoning_details``, ``signature``)
+        back to the provider unchanged. The canonical view strips those
+        fields, so engine consumers never see opaque provider state.
+
+        B15 mandates the round-trip, so the assertions must be positive
+        (``assertIn`` on raw items) and byte-for-byte (``assertEqual``),
+        not just an exclusion check on canonical.
+        """
+        translator = _translator(_identity())
+        translator.translate({"type": "response.created", "response": {}})
+
+        message_item = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "hello"}],
+            "encrypted_content": "opaque-message-blob",
+            "reasoning_details": [{"type": "summary", "text": "leaked"}],
+        }
+        function_item = {
+            "type": "function_call",
+            "call_id": "call-1",
+            "name": "lookup",
+            "arguments": '{"city":"Oslo"}',
+            "encrypted_function_args": "encrypted-args",
+            "signature": "sig-1",
+        }
+        translator.translate(
+            {"type": "response.output_item.done", "output_index": 0, "item": message_item}
+        )
+        translator.translate(
+            {"type": "response.output_item.done", "output_index": 1, "item": function_item}
+        )
+
+        raw = translator.raw_provider_items
+        # Byte-for-byte preservation (deep equality) — every key, every value.
+        self.assertEqual(raw[0], message_item)
+        self.assertEqual(raw[1], function_item)
+        # Positive membership checks for every provider-private field on raw.
+        for field in ("encrypted_content", "reasoning_details"):
+            self.assertIn(field, raw[0])
+        for field in ("encrypted_function_args", "signature"):
+            self.assertIn(field, raw[1])
+
+        # Per-item positive preservation: the provider-private fields must
+        # live on the matching raw item exactly where the provider emitted
+        # them. The canonical-stripping invariant is owned by
+        # test_raw_provider_items_preserve_provider_private_fields_canonical_strips;
+        # this test asserts only B15 (raw round-trip).
+        self.assertEqual(raw[0].get("encrypted_content"), "opaque-message-blob")
+        self.assertEqual(
+            raw[0]["reasoning_details"], [{"type": "summary", "text": "leaked"}]
+        )
+        self.assertEqual(raw[1]["encrypted_function_args"], "encrypted-args")
+        self.assertEqual(raw[1]["signature"], "sig-1")

@@ -9,6 +9,12 @@ This package decodes provider stream bytes and checks normalized run-event
 ordering. It does not make HTTP requests, resolve credentials, translate host
 history, choose fallback protocols, or prove live provider compatibility.
 
+See `EXECUTION.md` for the `execution.py` port that does make those HTTP
+requests, resolve credentials, and choose fallback protocols. There, a local
+continuation-store write failure is logged and swallowed rather than failing
+the run: `run.completed` still fires, so the next turn cannot restore private
+continuation state for that response.
+
 ## Public contracts
 
 `SseDecoder(max_event_bytes=...)` accepts byte chunks through `feed` and returns

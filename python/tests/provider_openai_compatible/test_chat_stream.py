@@ -578,3 +578,48 @@ class ChatStreamOrderingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ChatStreamFreshInstanceTests(unittest.TestCase):
+    """A fresh ChatStreamTranslator instance must not inherit any state from
+    another translator instance. ``assistant_fields`` is the only mutable
+    accumulator that survives a chunk's atomic save (others are reset in
+    ``__init__``) and it must start empty on a brand-new instance — never
+    copy a prior translator's accumulated reasoning payload onto a new
+    response.
+    """
+
+    def test_fresh_chat_stream_has_empty_assistant_fields(self) -> None:
+        # First translator accumulates assistant_fields from a stream that
+        # actually emits reasoning metadata.
+        first = ChatStreamTranslator(new_id=_fixed_id)
+        first.feed(
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "reasoning_content": "thinking-once",
+                            "extra_content": {"signature": "sig-A"},
+                        },
+                    }
+                ]
+            }
+        )
+        first.feed({"choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}]})
+        first.finish()
+        # Confirm the first translator actually accumulated.
+        self.assertTrue(first.assistant_fields)
+        self.assertIn("reasoning_content", first.assistant_fields)
+
+        # A fresh instance on the same module must start with empty
+        # accumulator; it never reads state from another translator.
+        second = ChatStreamTranslator(new_id=_fixed_id)
+        self.assertEqual(second.assistant_fields, {})
+        # Confirm by streaming a non-reasoning chunk that nothing leaks in.
+        events = second.feed({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+        self.assertEqual(second.assistant_fields, {})
+        # Only the synthetic response.created fires; no reasoning deltas.
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["response.created"],
+        )

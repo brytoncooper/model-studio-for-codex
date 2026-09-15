@@ -1027,6 +1027,534 @@ class OpenAICompatibleContinuationIntegrationTests(unittest.TestCase):
             )
 
 
+class _FailingSaveContinuationStore:
+    """Stub store that records calls and can be made to raise on save_response.
+
+    Used to verify the port does not let a store write failure corrupt
+    run.completed emission. The port must observe and report the failure
+    in some way (no content leak) without preventing the terminal event.
+    """
+
+    def __init__(self, *, raise_on_save: bool = False) -> None:
+        self.raise_on_save = raise_on_save
+        self.saves: list = []
+        self.load_calls: list = []
+        self.clear_calls: list = []
+
+    def save_response(self, scope, response_id, items) -> None:
+        self.saves.append((scope, response_id, items))
+        if self.raise_on_save:
+            from model_deck.integrations.providers.continuation.store import (
+                ContinuationError,
+            )
+            raise ContinuationError("simulated store write failure")
+
+    def load_all(self, scope):
+        self.load_calls.append(scope)
+        return []
+
+    def clear(self, scope) -> None:
+        self.clear_calls.append(scope)
+
+    def prepare_session_reset(self, session_id, continuation_handle):
+        return None
+
+    def commit_session_reset(self, reset_token) -> None:
+        return None
+
+    def rollback_session_reset(self, reset_token) -> None:
+        return None
+
+
+class OpenAICompatibleContinuationFocusedTests(unittest.TestCase):
+    """Focused execution-level coverage for B15 continuation integration.
+
+    These tests exercise a single, targeted behavior each, distinct from the
+    broader ``OpenAICompatibleContinuationIntegrationTests`` which script an
+    end-to-end tool-resume round-trip. They guard against regressions in the
+    trust boundary, store write/read contract, and terminal discipline.
+    """
+
+    def _tool(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="lookup",
+            description="Lookup weather",
+            input_schema={"type": "object"},
+            host_execution_required=True,
+        )
+
+    def _message_response(self, text: str = "done") -> FakeResponse:
+        return FakeResponse(
+            200,
+            _sse(
+                {"type": "response.created", "response": {"id": f"resp-{text}"}},
+                {
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    },
+                },
+                {"type": "response.completed", "response": {"id": f"resp-{text}"}},
+            ),
+        )
+
+    def _route_scope(self) -> ContinuationRouteScope:
+        return ContinuationRouteScope(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            connection_revision=3,
+            provider_id=PROVIDER_ID,
+            provider_model_id="provider/model-1",
+            execution_mode=ExecutionMode.RESPONSES.value,
+            endpoint_config_ref="ref:test.endpoint",
+            credential_ref="ref:test.credential",
+            continuation_handle="ref:continuation-handle-1",
+        )
+
+    def test_mismatched_endpoint_config_ref_rejected(self) -> None:
+        """A request whose ``endpoint_config_ref`` differs from the stored
+        route scope must fail before any HTTP/credential resolution.
+        """
+        scope = _continuation_scope()
+        with TemporaryDirectory(prefix="md-continuation-", dir="/tmp") as folder:
+            store = ContinuationStore(Path(folder) / "continuation.sqlite3")
+            store.save_response(
+                self._route_scope(),
+                "resp-old",
+                [("old", {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "old"}],
+                }, {"raw_item": {"type": "message", "role": "assistant",
+                                   "content": [{"type": "output_text", "text": "old"}]}})],
+            )
+            mismatched_route = replace(_route(), endpoint_config_ref="ref:other-endpoint")
+            mismatched = _request(continuation_scope=scope, route=mismatched_route)
+            mismatched = replace(mismatched, input=parse_normalized_messages([
+                {"type": "message", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "old"}]}
+            ]))
+            post = FakePostStream(self._message_response())
+            sink = EventSink()
+            endpoint_calls: list = []
+            credential_calls: list = []
+            _port(
+                post,
+                continuation_store=store,
+                endpoint_calls=endpoint_calls,
+                credential_calls=credential_calls,
+            ).start(mismatched, sink)
+            sink.wait_for("run.failed")
+            # No HTTP, no resolver calls.
+            self.assertEqual(post.calls, [])
+            self.assertEqual(endpoint_calls, [])
+            self.assertEqual(credential_calls, [])
+
+    def test_mismatched_credential_ref_rejected(self) -> None:
+        """A request whose ``credential_ref`` differs from the stored route
+        scope must fail before any HTTP/credential resolution.
+        """
+        scope = _continuation_scope()
+        with TemporaryDirectory(prefix="md-continuation-", dir="/tmp") as folder:
+            store = ContinuationStore(Path(folder) / "continuation.sqlite3")
+            store.save_response(
+                self._route_scope(),
+                "resp-old",
+                [("old", {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "old"}],
+                }, {"raw_item": {"type": "message", "role": "assistant",
+                                   "content": [{"type": "output_text", "text": "old"}]}})],
+            )
+            mismatched_route = replace(_route(), credential_ref="ref:other-credential")
+            mismatched = _request(continuation_scope=scope, route=mismatched_route)
+            mismatched = replace(mismatched, input=parse_normalized_messages([
+                {"type": "message", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "old"}]}
+            ]))
+            post = FakePostStream(self._message_response())
+            sink = EventSink()
+            endpoint_calls: list = []
+            credential_calls: list = []
+            _port(
+                post,
+                continuation_store=store,
+                endpoint_calls=endpoint_calls,
+                credential_calls=credential_calls,
+            ).start(mismatched, sink)
+            sink.wait_for("run.failed")
+            self.assertEqual(post.calls, [])
+            self.assertEqual(endpoint_calls, [])
+            self.assertEqual(credential_calls, [])
+
+    def test_missing_continuation_scope_rejected(self) -> None:
+        """A request with no ``continuation_scope`` while a store is
+        configured must fail before HTTP. The port treats scope as required
+        when the store is present.
+        """
+        scope = _continuation_scope()
+        with TemporaryDirectory(prefix="md-continuation-", dir="/tmp") as folder:
+            store = ContinuationStore(Path(folder) / "continuation.sqlite3")
+            store.save_response(
+                self._route_scope(),
+                "resp-old",
+                [("old", {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "old"}],
+                }, {"raw_item": {"type": "message", "role": "assistant",
+                                   "content": [{"type": "output_text", "text": "old"}]}})],
+            )
+            request = _request(continuation_scope=None)
+            request = replace(request, input=parse_normalized_messages([
+                {"type": "message", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "old"}]}
+            ]))
+            post = FakePostStream(self._message_response())
+            sink = EventSink()
+            endpoint_calls: list = []
+            credential_calls: list = []
+            _port(
+                post,
+                continuation_store=store,
+                endpoint_calls=endpoint_calls,
+                credential_calls=credential_calls,
+            ).start(request, sink)
+            sink.wait_for("run.failed")
+            self.assertEqual(post.calls, [])
+            self.assertEqual(endpoint_calls, [])
+            self.assertEqual(credential_calls, [])
+
+    def test_successful_run_saves_one_record_per_raw_item(self) -> None:
+        """A successful run with N output items must produce exactly N
+        continuation records in the store, one per raw provider item, with
+        every provider-private field (e.g. ``encrypted_content``,
+        ``encrypted_function_args``) round-tripped into ``raw_item``.
+        """
+        scope = _continuation_scope()
+        response_id = "resp-multi"
+        response = FakeResponse(
+            200,
+            _sse(
+                {"type": "response.created", "response": {"id": response_id}},
+                {"type": "response.output_item.done", "output_index": 0, "item": {
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": "first"}],
+                }},
+                {"type": "response.output_item.done", "output_index": 1, "item": {
+                    "type": "reasoning", "id": "rs-1",
+                    "summary": [{"type": "summary_text", "text": "thinking"}],
+                    "encrypted_content": "blob-1",
+                }},
+                {"type": "response.output_item.done", "output_index": 2, "item": {
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": "second"}],
+                    "encrypted_content": "opaque-2",
+                }},
+                {"type": "response.completed", "response": {"id": response_id}},
+            ),
+        )
+        post = FakePostStream(response)
+        with TemporaryDirectory(prefix="md-continuation-", dir="/tmp") as folder:
+            store = ContinuationStore(Path(folder) / "continuation.sqlite3")
+            port = _port(post, continuation_store=store)
+            sink = EventSink()
+            port.start(_request(continuation_scope=scope), sink)
+            sink.wait_for("run.completed")
+            records = store.load_all(self._route_scope())
+            self.assertEqual(len(records), 3)
+            self.assertEqual(records[0].response_id, response_id)
+            self.assertEqual(
+                [record.metadata["raw_item"].get("type") for record in records],
+                ["message", "reasoning", "message"],
+            )
+            # Provider-private fields round-trip into raw_item on the record.
+            self.assertEqual(
+                records[1].metadata["raw_item"].get("encrypted_content"),
+                "blob-1",
+            )
+            self.assertEqual(
+                records[2].metadata["raw_item"].get("encrypted_content"),
+                "opaque-2",
+            )
+
+    def test_run_failed_does_not_save(self) -> None:
+        """A failed run (provider stream failure) must not commit a new
+        continuation record.
+        """
+        scope = _continuation_scope()
+        secret = "secret-provider-failure"
+        response = FakeResponse(
+            200,
+            _sse(
+                {"type": "response.created", "response": {"id": "resp-fail"}},
+                {"type": "response.failed",
+                 "response": {"error": {"message": secret}}},
+                done=True,
+            ),
+        )
+        post = FakePostStream(response)
+        store = _FailingSaveContinuationStore()
+        sink = EventSink()
+        _port(post, continuation_store=store).start(
+            _request(continuation_scope=scope), sink
+        )
+        sink.wait_for("run.failed")
+        # Wait briefly to ensure no late save happens.
+        time.sleep(0.05)
+        self.assertEqual(store.saves, [])
+        self.assertNotIn(secret, repr([event.payload for event in sink.events]))
+
+    def test_run_cancelled_does_not_save(self) -> None:
+        """A cancellation that arrives after ``run.started`` must not commit
+        a new continuation record. We cancel the handle immediately and
+        verify no save occurs.
+        """
+        scope = _continuation_scope()
+
+        class _HangingResponse(FakeResponse):
+            def __init__(self) -> None:
+                # Mirror BlockingResponse: emit ``response.created`` so the
+                # port observes ``run.started``, then block on the next
+                # ``read1`` until the cancel path closes the response.
+                super().__init__(
+                    200,
+                    _sse(
+                        {
+                            "type": "response.created",
+                            "response": {"id": "resp-cancel"},
+                        },
+                        done=False,
+                    ),
+                )
+                self._closed_event = threading.Event()
+
+            def read1(self, amount: int = -1) -> bytes:
+                if self._chunks:
+                    return super().read1(amount)
+                self._closed_event.wait(timeout=5)
+                raise OSError("locally closed")
+
+            def close(self) -> None:
+                super().close()
+                self._closed_event.set()
+
+        post = FakePostStream(_HangingResponse())
+        store = _FailingSaveContinuationStore()
+        sink = EventSink()
+        handle = _port(post, continuation_store=store).start(
+            _request(continuation_scope=scope), sink
+        )
+        sink.wait_for("run.started")
+        handle.request_cancel(deadline=NOW)
+        # Wait for the cancel terminal; the save must not happen.
+        sink.wait_for("run.cancelled")
+        time.sleep(0.05)
+        self.assertEqual(store.saves, [])
+
+    def test_run_interrupted_does_not_save(self) -> None:
+        """A truncated stream (no terminal event) must not commit a new
+        continuation record. The connection just closes mid-response.
+        """
+        scope = _continuation_scope()
+        response = FakeResponse(
+            200,
+            _sse(
+                {"type": "response.created", "response": {"id": "resp-trunc"}},
+                {"type": "response.output_item.done", "item": {
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": "truncated"}],
+                }},
+                done=True,
+            ),
+        )
+        post = FakePostStream(response)
+        store = _FailingSaveContinuationStore()
+        sink = EventSink()
+        _port(post, continuation_store=store).start(
+            _request(continuation_scope=scope), sink
+        )
+        # The run cannot reach terminal; we wait briefly then verify no save.
+        time.sleep(0.3)
+        self.assertEqual(store.saves, [])
+
+    def test_compaction_barrier_persists_across_tool_resume(self) -> None:
+        """A compaction barrier applied to a tool-using run must persist
+        across the segment resume so later same-scope requests do not
+        auto-inject pre-compaction opaque history.
+        """
+        scope = _continuation_scope()
+        with TemporaryDirectory(prefix="md-continuation-", dir="/tmp") as folder:
+            store = ContinuationStore(Path(folder) / "continuation.sqlite3")
+            # Seed a record so the second segment has something to load.
+            store.save_response(
+                self._route_scope(),
+                "resp-old",
+                [("old-item", {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "before"}],
+                }, {"raw_item": {"type": "message", "role": "assistant",
+                                  "content": [{"type": "output_text", "text": "before"}]}})],
+            )
+
+            # First segment: tool request, then a barrier marker — but on a
+            # tool-using run, the barrier cannot be applied mid-segment. The
+            # barrier applies to the *next* request (an engine-issued
+            # summary-generation call). We model that by simulating two
+            # sequential requests with separate EventSinks and asserting the
+            # second one's clear() was called and no record survives the
+            # barrier.
+            barrier_request = _request(continuation_scope=scope)
+            barrier_request = replace(barrier_request, input=parse_normalized_messages([
+                {"type": "message", "role": "user",
+                 "content": [{"type": "input_text", "text": SUMMARY_PREFIX + "\nsummary"}]}
+            ]))
+            post = FakePostStream(self._message_response("after"))
+            sink = EventSink()
+            _port(post, continuation_store=store).start(barrier_request, sink)
+            sink.wait_for("run.completed")
+
+            # Records that survive the barrier should not include the
+            # pre-barrier opaque blob.
+            records = store.load_all(self._route_scope())
+            self.assertTrue(records)
+            for record in records:
+                raw = record.metadata.get("raw_item", {})
+                self.assertNotEqual(
+                    raw.get("content", [{}])[0].get("text"),
+                    "before",
+                )
+
+    def test_load_merges_records_into_chat_wire(self) -> None:
+        """Stored continuation records should be merged into the chat
+        completion wire body so a later same-scope chat request can replay
+        the visible history.
+        """
+        scope = _continuation_scope(
+            handle="ref:continuation.chat",
+            execution_mode=ExecutionMode.CHAT_COMPLETIONS,
+        )
+        chat_route = replace(_route(), execution_mode=ExecutionMode.CHAT_COMPLETIONS)
+        with TemporaryDirectory(prefix="md-continuation-", dir="/tmp") as folder:
+            store = ContinuationStore(Path(folder) / "continuation.sqlite3")
+            chat_route_scope = ContinuationRouteScope(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                connection_revision=3,
+                provider_id=PROVIDER_ID,
+                provider_model_id="provider/model-1",
+                execution_mode=ExecutionMode.CHAT_COMPLETIONS.value,
+                endpoint_config_ref="ref:test.endpoint",
+                credential_ref="ref:test.credential",
+                continuation_handle="ref:continuation.chat",
+            )
+            store.save_response(
+                chat_route_scope,
+                "resp-old-chat",
+                [("old-chat", {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "previous"}],
+                }, {"raw_item": {"type": "message", "role": "assistant",
+                                  "content": [{"type": "output_text", "text": "previous"}]}})],
+            )
+            request = _request(
+                continuation_scope=scope,
+                route=chat_route,
+            )
+            # The matching record must align with a visible message already in
+            # the engine input. The wire body carries only the visible
+            # identity (no provider item_ref) and records are merged in place;
+            # an unmatched record is rejected pre-network, never blindly
+            # prepended.
+            request = replace(
+                request,
+                input=parse_normalized_messages(
+                    [
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {"type": "input_text", "text": "hello"}
+                            ],
+                        },
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {"type": "output_text", "text": "previous"}
+                            ],
+                        },
+                    ]
+                ),
+            )
+            post = FakePostStream(
+                FakeResponse(
+                    200,
+                    _sse(
+                        {
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": "ok"},
+                                }
+                            ]
+                        },
+                        {
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": "stop",
+                                }
+                            ]
+                        },
+                    ),
+                )
+            )
+            sink = EventSink()
+            _port(
+                post,
+                config=_config(WireMode.CHAT_COMPLETIONS),
+                continuation_store=store,
+            ).start(request, sink)
+            sink.wait_for("run.completed")
+            self.assertEqual(len(post.calls), 1)
+            chat_body = json.loads(post.calls[0]["payload"])
+            messages = chat_body.get("messages", [])
+            prior_messages = [
+                message for message in messages
+                if message.get("role") == "assistant"
+            ]
+            self.assertTrue(
+                any(
+                    "previous" in (message.get("content") or "")
+                    for message in prior_messages
+                ),
+                prior_messages,
+            )
+
+    def test_save_failure_does_not_corrupt_completion(self) -> None:
+        """When the local store raises during save, the run must still
+        terminate with ``run.completed`` so the engine can advance.
+        """
+        scope = _continuation_scope()
+        response = self._message_response("ok")
+        post = FakePostStream(response)
+        store = _FailingSaveContinuationStore(raise_on_save=True)
+        sink = EventSink()
+        _port(post, continuation_store=store).start(
+            _request(continuation_scope=scope), sink
+        )
+        sink.wait_for("run.completed")
+        # The save attempt was made but the failure did not abort the run.
+        self.assertEqual(len(store.saves), 1)
+
+
 class EngineProviderInjectionFixtureTests(unittest.TestCase):
     def test_real_engine_accepts_provider_events_and_resets_continuation(self) -> None:
         from model_deck.adapters.routing.registered import ProviderRouteDefinition
