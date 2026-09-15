@@ -28,6 +28,13 @@ _EVENT_OPERATION_IDS = {
     "engine.v1.events.unsubscribe",
 }
 
+# Bootstrap imports the deterministic provider inside its fixture-run branch so a
+# minimal engine loads no provider adapter at all, so a patch has to land on the
+# defining module rather than on bootstrap.
+_FIXTURE_PROVIDER_CLASS = (
+    "model_deck.adapters.providers.deterministic.DeterministicProviderExecutionPort"
+)
+
 _CANONICAL_UNDERSCORE_OPERATION_IDS = (
     "engine.v1.sessions.select_model",
     "engine.v1.runs.submit_tool_result",
@@ -264,7 +271,7 @@ class EngineEventDispatchTests(unittest.TestCase):
     def test_authenticated_tool_notification_uses_frozen_nested_wire_shape(self) -> None:
         provider = DeterministicProviderExecutionPort(auto_advance=True, script=(
             EmitStarted(), EmitToolRequested("call_fixture", "lookup", {"q": "fixture"})))
-        with mock.patch("model_deck.bootstrap.DeterministicProviderExecutionPort", return_value=provider), \
+        with mock.patch(_FIXTURE_PROVIDER_CLASS, return_value=provider), \
                 mock.patch("model_deck.bootstrap.CapabilityFeature",
                            return_value=CapabilityFeature("tools", CapabilityTriState.SUPPORTED)):
             runtime = self._start_runtime()
@@ -438,7 +445,7 @@ class EngineEventDispatchTests(unittest.TestCase):
         credential = runtime.enrollment.credential_path.read_text(encoding="utf-8").strip()
         client = UnixSocketEngineClient(descriptor.socket_path)
         with mock.patch(
-            "model_deck.bootstrap.DeterministicProviderExecutionPort.start",
+            f"{_FIXTURE_PROVIDER_CLASS}.start",
             autospec=True,
         ) as start_mock:
             with client.session() as session:

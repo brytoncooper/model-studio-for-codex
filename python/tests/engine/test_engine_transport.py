@@ -11,6 +11,7 @@ from model_deck.adapters.transport.rendezvous import load_rendezvous_file
 from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
 from model_deck.bootstrap import build_engine_server
 from model_deck.engine.server import EngineServer
+from model_deck.integrations.hosts.codex.legacy_models import LegacyCodexModelRepository
 from model_deck_contracts.paths import repo_root
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -44,6 +45,12 @@ class EngineTransportTests(unittest.TestCase):
             default_connection_id=CONNECTION,
             source_root=root,
             catalog_cache_path=catalog_cache_path,
+            # Without an application database the caller owns the registered
+            # models; these tests serve the legacy Codex fixtures.
+            model_repository=LegacyCodexModelRepository(
+                FIXTURES / "legacy_agent",
+                default_connection_id=CONNECTION,
+            ),
         )
         runtime.server.start()
         self.addCleanup(runtime.server.stop)

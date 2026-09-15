@@ -27,6 +27,17 @@ _B07_OPERATION_EFFECTS = {
     "engine.v1.connections.save": "write",
 }
 
+# Application state alone composes the evidence cache and the first-party job
+# directory, so these operations are advertised with or without run wiring.
+_APPLICATION_STATE_OPERATION_IDS = {
+    "engine.v1.prices.query",
+    "engine.v1.prices.refresh",
+    "engine.v1.benchmarks.query",
+    "engine.v1.benchmarks.refresh",
+    "engine.v1.jobs.get",
+    "engine.v1.jobs.cancel",
+}
+
 _BASE_OPERATION_IDS = {
     "engine.v1.hello",
     "engine.v1.health",
@@ -128,7 +139,12 @@ class EngineStateDispatchTests(unittest.TestCase):
             )
         self.assertIn("result", response)
         by_id = {entry["operation_id"]: entry for entry in response["result"]["operations"]}
-        self.assertEqual(set(by_id.keys()), _BASE_OPERATION_IDS | set(_B07_OPERATION_EFFECTS.keys()))
+        self.assertEqual(
+            set(by_id.keys()),
+            _BASE_OPERATION_IDS
+            | set(_B07_OPERATION_EFFECTS.keys())
+            | _APPLICATION_STATE_OPERATION_IDS,
+        )
         for operation_id, effect in _B07_OPERATION_EFFECTS.items():
             self.assertEqual(by_id[operation_id]["effect"], effect)
 

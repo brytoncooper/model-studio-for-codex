@@ -8,6 +8,7 @@ import unittest
 from model_deck.adapters.transport.rendezvous import load_rendezvous_file
 from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
 from model_deck.bootstrap import build_engine_server
+from model_deck.engine.builtins import FEATURE_CORE, builtin_descriptor
 from model_deck.engine.kernel_composition import KernelComposition, KernelInvocationError
 from model_deck.kernel import CompositionError, FeatureDescriptor, KernelApiVersion, OperationDescriptor, compose
 from model_deck_contracts.paths import repo_root
@@ -220,6 +221,49 @@ class KernelSocketCompositionTests(unittest.TestCase):
             listing = self.call(session, "engine.v1.operations.list")["result"]["operations"]
             self.assertNotIn(OPERATION, [row["operation_id"] for row in listing])
             self.assertEqual(self.call(session)["error"]["data"]["code"], "unsupported_capability")
+
+    def test_builtin_discovery_is_served_from_the_composed_descriptors(self):
+        """The built-ins the engine composed describe themselves; nothing is listed twice."""
+        core = builtin_descriptor(FEATURE_CORE)
+        with self.connection(None) as session:
+            listing = self.call(session, "engine.v1.operations.list")["result"]["operations"]
+        rows = {row["operation_id"]: row for row in listing}
+        self.assertEqual(len(rows), len(listing))
+        self.assertEqual(set(rows), {item.operation_id for item in core.operations})
+        for item in core.operations:
+            # required_grants only reaches the wire from a composed descriptor:
+            # the static dispatch table has no such column.
+            self.assertEqual(rows[item.operation_id], {
+                "operation_id": item.operation_id,
+                "input_schema_id": item.input_schema_id,
+                "output_schema_id": item.output_schema_id,
+                "effect": item.effect,
+                "required_grants": [],
+            })
+
+    def test_caller_composition_is_listed_beside_the_static_residue(self):
+        composition = KernelComposition(fixture_kernel(lambda params, grants: {"status": "ok"}),
+                                        operator_grants=(GRANT,))
+        with self.connection(composition) as session:
+            listing = self.call(session, "engine.v1.operations.list")["result"]["operations"]
+        operation_ids = [row["operation_id"] for row in listing]
+        self.assertEqual(len(operation_ids), len(set(operation_ids)))
+        self.assertIn(OPERATION, operation_ids)
+        self.assertIn("engine.v1.models.list", operation_ids)
+
+    def test_caller_composition_lists_exactly_the_preexisting_operations(self):
+        """The escape hatch composes no built-ins, so discovery is the static residue plus the caller's."""
+        core = builtin_descriptor(FEATURE_CORE)
+        composition = KernelComposition(fixture_kernel(lambda params, grants: {"status": "ok"}),
+                                        operator_grants=(GRANT,))
+        with self.connection(composition) as session:
+            listing = self.call(session, "engine.v1.operations.list")["result"]["operations"]
+        operation_ids = [row["operation_id"] for row in listing]
+        self.assertEqual(len(operation_ids), len(set(operation_ids)))
+        self.assertEqual(
+            set(operation_ids),
+            {item.operation_id for item in core.operations} | {OPERATION},
+        )
 
     def test_combined_discovery_limit_fails_before_serving(self):
         operations = tuple(OperationDescriptor(f"com.example.fixture.op{index}", INPUT_SCHEMA, OUTPUT_SCHEMA, "read")

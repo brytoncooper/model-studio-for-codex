@@ -29,6 +29,17 @@ _B07_OPERATION_IDS = {
     "engine.v1.connections.save",
 }
 
+# Application state alone composes the evidence cache and the first-party job
+# directory, so these operations are advertised with or without run wiring.
+_APPLICATION_STATE_OPERATION_IDS = {
+    "engine.v1.prices.query",
+    "engine.v1.prices.refresh",
+    "engine.v1.benchmarks.query",
+    "engine.v1.benchmarks.refresh",
+    "engine.v1.jobs.get",
+    "engine.v1.jobs.cancel",
+}
+
 _B12_OPERATION_IDS = {
     "engine.v1.sessions.create",
     "engine.v1.sessions.get",
@@ -129,7 +140,10 @@ class EngineRunDispatchTests(unittest.TestCase):
                 }
             )
             operation_ids = {entry["operation_id"] for entry in response["result"]["operations"]}
-            self.assertEqual(operation_ids, _BASE_OPERATION_IDS | _B07_OPERATION_IDS)
+            self.assertEqual(
+                operation_ids,
+                _BASE_OPERATION_IDS | _B07_OPERATION_IDS | _APPLICATION_STATE_OPERATION_IDS,
+            )
             unsupported = session.call(
                 {
                     "jsonrpc": "2.0",
@@ -161,8 +175,15 @@ class EngineRunDispatchTests(unittest.TestCase):
                 }
             )
         operation_ids = {entry["operation_id"] for entry in response["result"]["operations"]}
-        self.assertEqual(operation_ids, _BASE_OPERATION_IDS | _B07_OPERATION_IDS | _B12_OPERATION_IDS
-                         | {"engine.v1.usage.query"})
+        self.assertEqual(
+            operation_ids,
+            _BASE_OPERATION_IDS
+            | _B07_OPERATION_IDS
+            | _B12_OPERATION_IDS
+            | _APPLICATION_STATE_OPERATION_IDS
+            # Usage totals are composed with the runs that produce them.
+            | {"engine.v1.usage.query", "engine.v1.usage.summary"},
+        )
 
     def test_fixture_run_lifecycle_completes_with_fixture_text(self) -> None:
         runtime = self._start_runtime(enable_application_state=True, enable_fixture_runs=True)

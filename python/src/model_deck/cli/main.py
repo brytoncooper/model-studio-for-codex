@@ -6,7 +6,9 @@ import math
 import sys
 import threading
 import uuid
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 from model_deck.adapters.transport.framing import (
     MAX_FRAME_BYTES,
@@ -44,6 +46,57 @@ def _stderr(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+# Every composer takes the same three arguments — the profile document's path,
+# the serve arguments a profile may need, and the route definition type — and
+# returns (profile, execution port, route definitions).
+ProviderProfileComposer = Callable[[Path, argparse.Namespace, Any], tuple[Any, Any, Mapping[str, Any]]]
+
+
+def _compose_cursor_provider(profile_path: Path, args: argparse.Namespace, route_definition_factory):
+    """Load the Cursor profile and compose its execution port and routes."""
+    from model_deck.integrations.providers.cursor.configuration import (
+        CursorProfile,
+        compose_cursor_profile,
+    )
+
+    profile = CursorProfile.load(profile_path)
+    execution, routes = compose_cursor_profile(
+        profile,
+        route_definition_factory=route_definition_factory,
+    )
+    return profile, execution, routes
+
+
+def _compose_openai_compatible_provider(profile_path: Path, args: argparse.Namespace, route_definition_factory):
+    """Load an OpenAI-compatible profile and compose its execution port and routes."""
+    from model_deck.integrations.providers.openai_compatible.configuration import (
+        OpenAICompatibleProfile,
+        compose_openai_compatible_profile,
+    )
+
+    profile = OpenAICompatibleProfile.load(profile_path)
+    execution, routes = compose_openai_compatible_profile(
+        profile,
+        route_definition_factory=route_definition_factory,
+        continuation_store_path=(
+            Path(args.state_root) / "engine" / "provider-continuation.sqlite3"
+        ).resolve(),
+    )
+    return profile, execution, routes
+
+
+def _provider_profile_composers() -> dict[str, ProviderProfileComposer]:
+    """Provider ID to the composer that knows that provider's profile document.
+
+    Built inside the function so ``engine serve`` without ``--provider-config``
+    never loads a provider integration. A provider ID with no entry is served by
+    the OpenAI-compatible composer, which accepts any reverse-domain provider ID.
+    """
+    from model_deck.integrations.providers.cursor.coordinator import CURSOR_PROVIDER_ID
+
+    return {CURSOR_PROVIDER_ID: _compose_cursor_provider}
+
+
 def _cmd_engine_serve(args: argparse.Namespace) -> int:
     from model_deck.bootstrap import build_engine_server
 
@@ -59,6 +112,16 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
         "enable_application_state": args.enable_application_state,
         "enable_fixture_runs": args.enable_fixture_runs,
     }
+    if not args.enable_application_state:
+        # Without an application database the engine has no registered models of
+        # its own, so the composition root supplies the legacy Codex reader the
+        # CLI has always served from --legacy-agents-dir.
+        from model_deck.integrations.hosts.codex.legacy_models import LegacyCodexModelRepository
+
+        forward_kwargs["model_repository"] = LegacyCodexModelRepository(
+            Path(args.legacy_agents_dir),
+            default_connection_id=args.default_connection_id,
+        )
     if getattr(args, "enable_extensions", False):
         if not args.enable_application_state:
             _stderr(
@@ -118,34 +181,20 @@ def _cmd_engine_serve(args: argparse.Namespace) -> int:
             from model_deck.adapters.routing.registered import ProviderRouteDefinition
 
             profile_document = json.loads(provider_config_path.read_text(encoding="utf-8"))
-            if (
-                isinstance(profile_document, dict)
-                and profile_document.get("provider_id") == "com.modeldeck.provider.cursor"
+            configured_provider_id = None
+            if isinstance(profile_document, dict) and isinstance(
+                profile_document.get("provider_id"), str
             ):
-                from model_deck.integrations.providers.cursor.configuration import (
-                    CursorProfile,
-                    compose_cursor_profile,
-                )
-
-                profile = CursorProfile.load(provider_config_path)
-                provider_execution, provider_routes = compose_cursor_profile(
-                    profile,
-                    route_definition_factory=ProviderRouteDefinition,
-                )
-            else:
-                from model_deck.integrations.providers.openai_compatible.configuration import (
-                    OpenAICompatibleProfile,
-                    compose_openai_compatible_profile,
-                )
-
-                profile = OpenAICompatibleProfile.load(provider_config_path)
-                provider_execution, provider_routes = compose_openai_compatible_profile(
-                    profile,
-                    route_definition_factory=ProviderRouteDefinition,
-                    continuation_store_path=(
-                        Path(args.state_root) / "engine" / "provider-continuation.sqlite3"
-                    ).resolve(),
-                )
+                configured_provider_id = profile_document["provider_id"]
+            compose_provider = _provider_profile_composers().get(
+                configured_provider_id,
+                _compose_openai_compatible_provider,
+            )
+            profile, provider_execution, provider_routes = compose_provider(
+                provider_config_path,
+                args,
+                ProviderRouteDefinition,
+            )
         except (OSError, RuntimeError, TypeError, ValueError):
             _stderr("engine serve: provider configuration is unavailable")
             return 1

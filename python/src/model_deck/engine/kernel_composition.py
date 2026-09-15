@@ -95,6 +95,22 @@ class KernelComposition:
     def operations(self) -> tuple[OperationDescriptor, ...]:
         return tuple(self._operations.values())
 
+    def operation_owners(self) -> dict[str, str]:
+        """Each composed operation ID mapped to the feature that declared it.
+
+        Callers use this to tell an engine built-in apart from a foreign feature
+        composed alongside it, without learning anything about the handlers.
+        """
+        return {
+            operation.operation_id: feature.feature_id
+            for feature in self._kernel.features()
+            for operation in feature.operations
+        }
+
+    def degraded_optional_capabilities(self) -> tuple[tuple[str, str], ...]:
+        """Sorted (feature ID, capability) pairs whose optional capability is absent."""
+        return self._kernel.unavailable_optional_capabilities()
+
     def catalog(self) -> list[dict[str, Any]]:
         return [{**asdict(descriptor), "required_grants": list(descriptor.required_grants)}
                 for descriptor in self._operations.values()]
