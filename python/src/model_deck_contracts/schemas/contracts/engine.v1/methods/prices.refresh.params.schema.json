@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/prices.refresh.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "idempotency_key": {
+      "$ref": "../../common/types.schema.json#/definitions/idempotency_key",
+      "description": "Repeating a refresh with the same key returns the same job_id instead of starting a second fetch."
+    }
+  },
+  "required": [
+    "idempotency_key"
+  ],
+  "description": "Start an explicit price refresh. This is the only way a price fetch reaches the network; read paths never fetch on their own."
+}

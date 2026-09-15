@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/usage.summary.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "totals"
+  ],
+  "properties": {
+    "totals": {
+      "type": "array",
+      "items": {
+        "$ref": "../vocabulary.schema.json#/definitions/usage_total"
+      },
+      "maxItems": 3,
+      "description": "One entry per cost_kind present in the window, at most one per kind. Estimated, provider-settled and subscription-allowance totals stay in separate entries and are never added together; a total whose inputs are not all known is reported as null rather than as a partial sum. Records with no recorded cost_kind are not represented here and are read through usage.query instead."
+    }
+  }
+}

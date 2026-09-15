@@ -1,0 +1,13 @@
+{
+  "provider_model_id": "openrouter/foo/bar",
+  "currency": "USD",
+  "unit_prices": {
+    "input_tokens": 0.000003,
+    "output_tokens": 0.000015
+  },
+  "provenance": {
+    "source_id": "com.modeldeck.source.openrouter",
+    "fetched_at": "2026-09-15T09:00:00Z",
+    "stale": false
+  }
+}

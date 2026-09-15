@@ -1,0 +1,14 @@
+{
+  "source_model_ref": "some-model-the-engine-has-not-mapped",
+  "provider_model_id": null,
+  "source_id": "com.modeldeck.source.artificialanalysis",
+  "feed": "quality-index",
+  "metric": "quality_index",
+  "score": null,
+  "provenance": {
+    "source_id": "com.modeldeck.source.artificialanalysis",
+    "fetched_at": "2026-09-15T09:00:00Z",
+    "stale": true,
+    "last_refresh_error": "refresh failed: source returned no rows"
+  }
+}

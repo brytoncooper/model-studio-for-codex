@@ -1,0 +1,23 @@
+{
+  "benchmarks": [
+    {
+      "source_model_ref": "foo-bar-2026",
+      "provider_model_id": "openrouter/foo/bar",
+      "source_id": "com.modeldeck.source.artificialanalysis",
+      "feed": "quality-index",
+      "metric": "quality_index",
+      "score": 61.5,
+      "provenance": {
+        "source_id": "com.modeldeck.source.artificialanalysis",
+        "fetched_at": "2026-09-15T09:00:00Z",
+        "stale": false
+      }
+    }
+  ],
+  "snapshot": {
+    "source_id": "com.modeldeck.source.artificialanalysis",
+    "fetched_at": "2026-09-15T09:00:00Z",
+    "stale": false
+  },
+  "cached": true
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/prices.query.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "registration_id": {
+      "$ref": "../../common/types.schema.json#/definitions/uuid",
+      "description": "Restrict the answer to prices scoped to this registered model."
+    },
+    "provider_model_id": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Restrict the answer to this provider-side model identifier."
+    },
+    "include_stale": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true (the default) a cached price whose provenance is marked stale is still returned, so a failed refresh leaves the last good value visible. When false, stale records are omitted and the caller sees fewer records rather than an old price."
+    }
+  },
+  "description": "Read cached prices. This is a read path: it never performs a network fetch, so an empty or stale answer is resolved by running prices.refresh, not by retrying this call."
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/prices.refresh.result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identifier of the engine-owned refresh job, observable through jobs.get and stoppable through jobs.cancel. There is no public job-create operation; this method is the entry point that makes the job exist."
+    },
+    "job_kind": {
+      "$ref": "../vocabulary.schema.json#/definitions/job_kind",
+      "description": "The kind of job that was started; always \"com.modeldeck.engine.prices.refresh\" for this method."
+    },
+    "explicit_network": {
+      "type": "boolean",
+      "const": true,
+      "description": "Always true when present: this job reaches the network because the caller asked it to, never as a side effect of a read."
+    }
+  },
+  "required": [
+    "job_id"
+  ]
+}

@@ -662,7 +662,7 @@ Lanes: Lane 1 = kernel -> supervisor -> brokers -> lifecycle -> management UI (s
 - **Original workstreams covered:** B16.
 - **Ownership:** Usage/evidence use cases and adapters, refresh-job handlers, UI/MCP read consumers, focused tests.
 - **Reuse:** Existing usage ledger/reconciliation/query, A3's public job path, V2 usage client, legacy price/benchmark readers.
-- **Dependencies:** None blocking; A3's job path is delivered. Lane 3, starts now, parallel with C1-C2.
+- **Dependencies:** None blocking. A3 delivered only the public *observation* half of the job path — `jobs.get` and `jobs.cancel`; job creation is plugin-owned through the broker, and there is no public job-create operation. C8d therefore adds a reserved first-party job owner (the `com.modeldeck.engine.` plugin_id prefix with the engine's boot identity as activation_id) so `prices.refresh` and `benchmarks.refresh` can be the public entry points that return an observable `job_id`, rather than exposing job creation. Lane 3, starts now, parallel with C1-C2.
 - **Acceptance (G2/G5):** provenance/age-bearing cached queries; explicit refresh jobs on the public job path, never hidden refresh on request paths; UI/MCP consumers read the cache; cache-expiry and failed-refresh-with-stale-good-value proven; duplicated usage events handled; unknown provider monetary cost stays explicitly unknown; settled/estimate/subscription values stay separated.
 - **Non-goals:** Invented provider prices, billed live requests, dashboard redesign, account-wide subscription accounting.
 - **Parallelism:** Lane 3; fully parallel with Lane 1 (C1-C5) and Lane 2 (C7).

@@ -1,0 +1,4 @@
+{
+  "idempotency_key": "prices-refresh-1",
+  "force": true
+}

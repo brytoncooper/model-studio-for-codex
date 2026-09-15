@@ -1,0 +1,8 @@
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440010",
+  "session_id": "550e8400-e29b-41d4-a716-446655440011",
+  "observed_at": "2026-09-15T09:30:00Z",
+  "units": 1200,
+  "unit_kind": "input_tokens",
+  "cost_kind": "guessed"
+}

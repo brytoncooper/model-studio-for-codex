@@ -1,0 +1,16 @@
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440010",
+  "session_id": "550e8400-e29b-41d4-a716-446655440011",
+  "provider_model_id": "openrouter/foo/bar",
+  "observed_at": "2026-09-15T09:30:00Z",
+  "units": 1200,
+  "unit_kind": "input_tokens",
+  "settled_amount": 0.0036,
+  "currency": "USD",
+  "cost_kind": "provider_settled",
+  "provenance": {
+    "source_id": "com.modeldeck.source.openrouter",
+    "fetched_at": "2026-09-15T09:30:00Z",
+    "stale": false
+  }
+}

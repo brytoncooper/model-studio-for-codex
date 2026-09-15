@@ -778,7 +778,8 @@
           "type": [
             "number",
             "null"
-          ]
+          ],
+          "description": "Money the provider reported as actually billed for this record. An estimate must never appear here: a locally computed figure belongs in estimate_amount with cost_kind \"estimated\". Null means no settled amount is known yet, never zero."
         },
         "currency": {
           "type": [
@@ -791,9 +792,38 @@
           "type": [
             "number",
             "null"
-          ]
+          ],
+          "description": "Figure computed locally from a price_record. Never a provider-billed amount, and never promoted into settled_amount."
+        },
+        "cost_kind": {
+          "$ref": "#/definitions/cost_kind",
+          "description": "Which kind of money this record carries, so a consumer can tell estimated from provider-settled from subscription-allowance without guessing. Absent means the engine did not record a kind for this row."
+        },
+        "provenance": {
+          "$ref": "#/definitions/source_provenance",
+          "description": "Where the monetary figures on this record came from and how old that source is. Absent when the record carries no monetary figure."
         }
-      }
+      },
+      "allOf": [
+        {
+          "not": {
+            "type": "object",
+            "required": [
+              "cost_kind",
+              "settled_amount"
+            ],
+            "properties": {
+              "cost_kind": {
+                "const": "estimated"
+              },
+              "settled_amount": {
+                "type": "number"
+              }
+            }
+          },
+          "description": "An estimate must never appear in settled_amount: a record whose cost_kind is \"estimated\" may not carry a numeric settled_amount."
+        }
+      ]
     },
     "run_event_run_accepted": {
       "type": "object",
@@ -1367,6 +1397,334 @@
         }
       },
       "description": "Connection fields for connections.save; CAS uses top-level expected_revision, not revision inside this object"
+    },
+    "cost_kind": {
+      "type": "string",
+      "enum": [
+        "estimated",
+        "provider_settled",
+        "subscription_allowance"
+      ],
+      "description": "Which kind of money a monetary value represents. \"estimated\" is computed locally from a price_record and is never billed money. \"provider_settled\" is an amount the provider reported as actually billed. \"subscription_allowance\" is consumption drawn against a prepaid or included allowance rather than a per-request charge. The three kinds are never summed together and never share a field."
+    },
+    "source_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "fetched_at",
+        "stale"
+      ],
+      "properties": {
+        "source_id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id",
+          "description": "Reverse-domain id of the feed or adapter the value was read from."
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048,
+          "description": "Public location the value was read from, when the source has one."
+        },
+        "citation": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Short human-readable attribution for the source. Free text; carries no credentials."
+        },
+        "as_of": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "minLength": 10,
+          "maxLength": 10,
+          "description": "Calendar date (YYYY-MM-DD) the source itself says the value is effective for. Distinct from fetched_at, which is when this engine read it."
+        },
+        "fetched_at": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601",
+          "description": "When this engine last successfully read the source. Always present, so a consumer can compute age without a second call."
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "True when the cached value is past its freshness window or its most recent refresh failed. A stale-but-good value is still served; the consumer decides how to present it."
+        },
+        "last_refresh_error": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Payload-free summary of why the most recent refresh failed. Never contains request or response bodies, credentials, or a URL carrying a query string."
+        }
+      },
+      "description": "Where a cached price, benchmark or allowance value came from and how old it is. Every cached evidence value carries one of these."
+    },
+    "unit_price": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number",
+          "minimum": 0
+        }
+      ],
+      "description": "Price for one unit of a usage_record unit_kind, or null when the source publishes no price for it. Null means unknown and never zero; a consumer must surface it as unknown rather than substituting a guess."
+    },
+    "price_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_model_id",
+        "currency",
+        "unit_prices",
+        "provenance"
+      ],
+      "properties": {
+        "provider_model_id": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Provider-side model identifier the price applies to."
+        },
+        "registration_id": {
+          "$ref": "../common/types.schema.json#/definitions/uuid",
+          "description": "Present when the price is scoped to one registered model rather than to the provider model generally."
+        },
+        "currency": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "maxLength": 8
+            }
+          ],
+          "description": "ISO 4217 code every value in unit_prices is denominated in. Null when the source states no currency, which makes the prices unusable for money math; a consumer must then treat the derived cost as unknown."
+        },
+        "unit_prices": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "input_tokens",
+            "output_tokens",
+            "cached_tokens"
+          ],
+          "properties": {
+            "input_tokens": {
+              "$ref": "#/definitions/unit_price"
+            },
+            "output_tokens": {
+              "$ref": "#/definitions/unit_price"
+            },
+            "cached_tokens": {
+              "$ref": "#/definitions/unit_price"
+            }
+          },
+          "description": "Price per single unit, keyed by the usage_record unit_kind it prices. All three keys are required so an unpriced unit kind is an explicit null rather than a missing key a consumer could read as zero."
+        },
+        "provenance": {
+          "$ref": "#/definitions/source_provenance",
+          "description": "Source and age of this price."
+        }
+      },
+      "description": "One provider model's cached unit prices with the provenance of the source they came from."
+    },
+    "benchmark_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_model_ref",
+        "provider_model_id",
+        "source_id",
+        "feed",
+        "metric",
+        "score",
+        "provenance"
+      ],
+      "properties": {
+        "source_model_ref": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "The model identifier the benchmark source itself uses, kept verbatim so a later mapping correction can be applied without refetching the feed."
+        },
+        "provider_model_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "maxLength": 256
+            }
+          ],
+          "description": "Provider-side model identifier that source_model_ref was mapped to, or null when the engine has not mapped it. Null keeps an unmapped row visible instead of silently attaching it to the wrong model."
+        },
+        "source_id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id",
+          "description": "Reverse-domain id of the benchmark source."
+        },
+        "feed": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Named feed within the source, when one source publishes several leaderboards."
+        },
+        "metric": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Metric the score is measured on, as the feed names it."
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Score for this metric, or null when the feed lists the model but publishes no score for it."
+        },
+        "provenance": {
+          "$ref": "#/definitions/source_provenance",
+          "description": "Source and age of this score."
+        }
+      },
+      "description": "One benchmark score for one model from one feed, with the provenance of the source it came from."
+    },
+    "allowance_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601",
+          "description": "Inclusive start of the window."
+        },
+        "end": {
+          "$ref": "../common/types.schema.json#/definitions/iso8601",
+          "description": "Exclusive end of the window."
+        }
+      },
+      "description": "Half-open billing or quota window covering [start, end)."
+    },
+    "subscription_allowance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_id",
+        "window",
+        "allowance",
+        "used",
+        "provenance"
+      ],
+      "properties": {
+        "provider_id": {
+          "$ref": "../common/types.schema.json#/definitions/reverse_domain_id",
+          "description": "Provider whose subscription this allowance belongs to."
+        },
+        "window": {
+          "$ref": "#/definitions/allowance_window",
+          "description": "The billing or quota window the allowance applies to."
+        },
+        "allowance": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ],
+          "description": "Total the window grants, or null when the provider does not publish it. Null is unknown, never unlimited and never zero."
+        },
+        "used": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ],
+          "description": "How much of the window the provider reports as consumed, or null when unknown. Never filled in from local estimates."
+        },
+        "currency": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "maxLength": 8
+            }
+          ],
+          "description": "Set when allowance and used are money. Absent or null when they count units rather than money."
+        },
+        "provenance": {
+          "$ref": "#/definitions/source_provenance",
+          "description": "Source and age of the allowance figures."
+        }
+      },
+      "description": "A prepaid or included allowance for one provider over one window. Allowance consumption is reported as cost_kind \"subscription_allowance\" and is never mixed into settled or estimated money."
+    },
+    "usage_total": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cost_kind",
+        "amount",
+        "currency",
+        "units",
+        "record_count"
+      ],
+      "properties": {
+        "cost_kind": {
+          "$ref": "#/definitions/cost_kind",
+          "description": "The kind of money every record in this group carries. Groups are never merged across kinds."
+        },
+        "amount": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Sum of the monetary values in this group, or null when any contributing record's amount is unknown or the group spans more than one currency. A partial sum is never reported as a total."
+        },
+        "currency": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "maxLength": 8
+            }
+          ],
+          "description": "Currency of amount. Null whenever amount is null or the contributing records do not share a single currency."
+        },
+        "units": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ],
+          "description": "Sum of usage_record units in this group, or null when unknown."
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many usage records fell into this group, including records whose amount was unknown."
+        }
+      },
+      "description": "Totals for one cost_kind. Unknown stays null rather than collapsing to zero."
+    },
+    "job_kind": {
+      "type": "string",
+      "enum": [
+        "com.modeldeck.engine.prices.refresh",
+        "com.modeldeck.engine.benchmarks.refresh"
+      ],
+      "description": "Kinds of engine-owned refresh job. Each kind is created only by its own public entry point (prices.refresh, benchmarks.refresh) and is then observed and stopped through jobs.get and jobs.cancel; there is no public job-create operation. First-party jobs reuse the existing job owner shape with the reserved plugin_id namespace prefix \"com.modeldeck.engine.\" and the engine's boot identity as activation_id; an external plugin may never claim that prefix."
     }
   }
 }

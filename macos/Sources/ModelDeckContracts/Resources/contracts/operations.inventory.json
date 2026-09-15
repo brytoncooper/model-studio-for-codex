@@ -126,9 +126,25 @@
       "mutates": false
     },
     {
+      "method": "engine.v1.usage.summary",
+      "group": "usage_evidence",
+      "mutates": false
+    },
+    {
       "method": "engine.v1.catalog.refresh",
       "group": "usage_evidence",
       "mutates": true
+    },
+    {
+      "method": "engine.v1.prices.query",
+      "group": "usage_evidence",
+      "mutates": false
+    },
+    {
+      "method": "engine.v1.prices.refresh",
+      "group": "usage_evidence",
+      "mutates": true,
+      "idempotent": true
     },
     {
       "method": "engine.v1.benchmarks.query",

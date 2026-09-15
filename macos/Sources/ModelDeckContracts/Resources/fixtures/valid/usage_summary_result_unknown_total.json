@@ -1,0 +1,25 @@
+{
+  "totals": [
+    {
+      "cost_kind": "provider_settled",
+      "amount": 1.25,
+      "currency": "USD",
+      "units": 412000,
+      "record_count": 18
+    },
+    {
+      "cost_kind": "estimated",
+      "amount": null,
+      "currency": null,
+      "units": 96000,
+      "record_count": 4
+    },
+    {
+      "cost_kind": "subscription_allowance",
+      "amount": null,
+      "currency": null,
+      "units": null,
+      "record_count": 2
+    }
+  ]
+}

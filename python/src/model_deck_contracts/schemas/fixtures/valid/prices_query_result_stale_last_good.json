@@ -1,0 +1,26 @@
+{
+  "records": [
+    {
+      "provider_model_id": "openrouter/foo/bar",
+      "currency": null,
+      "unit_prices": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_tokens": null
+      },
+      "provenance": {
+        "source_id": "com.modeldeck.source.openrouter",
+        "fetched_at": "2026-09-10T09:00:00Z",
+        "stale": true,
+        "last_refresh_error": "refresh failed: source unreachable"
+      }
+    }
+  ],
+  "snapshot": {
+    "source_id": "com.modeldeck.source.openrouter",
+    "fetched_at": "2026-09-10T09:00:00Z",
+    "stale": true,
+    "last_refresh_error": "refresh failed: source unreachable"
+  },
+  "cached": true
+}

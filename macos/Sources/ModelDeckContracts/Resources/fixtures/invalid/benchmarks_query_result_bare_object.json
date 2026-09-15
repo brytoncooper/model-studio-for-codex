@@ -1,0 +1,8 @@
+{
+  "benchmarks": [
+    {
+      "model": "foo-bar-2026",
+      "score": 61.5
+    }
+  ]
+}

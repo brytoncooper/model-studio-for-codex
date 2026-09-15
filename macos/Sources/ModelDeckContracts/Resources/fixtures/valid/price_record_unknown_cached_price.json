@@ -1,0 +1,17 @@
+{
+  "provider_model_id": "openrouter/foo/bar",
+  "registration_id": "550e8400-e29b-41d4-a716-446655440003",
+  "currency": "USD",
+  "unit_prices": {
+    "input_tokens": 0.000003,
+    "output_tokens": 0.000015,
+    "cached_tokens": null
+  },
+  "provenance": {
+    "source_id": "com.modeldeck.source.openrouter",
+    "source_url": "https://openrouter.ai/api/v1/models",
+    "as_of": "2026-09-01",
+    "fetched_at": "2026-09-15T09:00:00Z",
+    "stale": false
+  }
+}

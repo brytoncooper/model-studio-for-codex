@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/usage.summary.params.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "since": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "until": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Window selector for usage totals, matching usage.query.params so the same window can be asked for as records or as totals."
+}

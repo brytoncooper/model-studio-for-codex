@@ -1,0 +1,10 @@
+{
+  "provider_id": "com.modeldeck.provider.codex",
+  "allowance": 1000,
+  "used": null,
+  "provenance": {
+    "source_id": "com.modeldeck.source.codex",
+    "fetched_at": "2026-09-15T09:00:00Z",
+    "stale": false
+  }
+}

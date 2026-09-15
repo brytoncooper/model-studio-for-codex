@@ -135,6 +135,58 @@
     {
       "file": "plugin_job_output_minimal.json",
       "schema": "contracts/plugin.v1/broker/jobs.complete.params.schema.json"
+    },
+    {
+      "file": "source_provenance_stale.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/source_provenance"
+    },
+    {
+      "file": "price_record_unknown_cached_price.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/price_record"
+    },
+    {
+      "file": "benchmark_record_minimal.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/benchmark_record"
+    },
+    {
+      "file": "benchmark_record_unmapped_model.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/benchmark_record"
+    },
+    {
+      "file": "subscription_allowance_unknown_used.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/subscription_allowance"
+    },
+    {
+      "file": "usage_record_settled_with_provenance.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/usage_record"
+    },
+    {
+      "file": "usage_record_estimated_without_settled.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/usage_record"
+    },
+    {
+      "file": "prices_query_params_include_stale.json",
+      "schema": "contracts/engine.v1/methods/prices.query.params.schema.json"
+    },
+    {
+      "file": "prices_query_result_cached.json",
+      "schema": "contracts/engine.v1/methods/prices.query.result.schema.json"
+    },
+    {
+      "file": "prices_query_result_stale_last_good.json",
+      "schema": "contracts/engine.v1/methods/prices.query.result.schema.json"
+    },
+    {
+      "file": "prices_refresh_result_job.json",
+      "schema": "contracts/engine.v1/methods/prices.refresh.result.schema.json"
+    },
+    {
+      "file": "benchmarks_query_result_cached.json",
+      "schema": "contracts/engine.v1/methods/benchmarks.query.result.schema.json"
+    },
+    {
+      "file": "usage_summary_result_unknown_total.json",
+      "schema": "contracts/engine.v1/methods/usage.summary.result.schema.json"
     }
   ],
   "invalid": [
@@ -281,6 +333,50 @@
     {
       "file": "plugin_job_output_over_nested.json",
       "schema": "contracts/plugin.v1/broker/jobs.complete.params.schema.json"
+    },
+    {
+      "file": "source_provenance_missing_fetched_at.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/source_provenance"
+    },
+    {
+      "file": "price_record_missing_provenance.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/price_record"
+    },
+    {
+      "file": "price_record_missing_cached_token_price.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/price_record"
+    },
+    {
+      "file": "usage_record_estimate_in_settled_amount.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/usage_record"
+    },
+    {
+      "file": "usage_record_unknown_cost_kind.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/usage_record"
+    },
+    {
+      "file": "subscription_allowance_missing_window.json",
+      "schema": "contracts/engine.v1/vocabulary.schema.json#/definitions/subscription_allowance"
+    },
+    {
+      "file": "prices_query_result_uncached.json",
+      "schema": "contracts/engine.v1/methods/prices.query.result.schema.json"
+    },
+    {
+      "file": "prices_query_result_missing_snapshot.json",
+      "schema": "contracts/engine.v1/methods/prices.query.result.schema.json"
+    },
+    {
+      "file": "prices_refresh_params_unknown_field.json",
+      "schema": "contracts/engine.v1/methods/prices.refresh.params.schema.json"
+    },
+    {
+      "file": "benchmarks_query_result_bare_object.json",
+      "schema": "contracts/engine.v1/methods/benchmarks.query.result.schema.json"
+    },
+    {
+      "file": "usage_summary_total_missing_currency.json",
+      "schema": "contracts/engine.v1/methods/usage.summary.result.schema.json"
     }
   ]
 }
