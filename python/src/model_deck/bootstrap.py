@@ -27,10 +27,12 @@ from model_deck.adapters.transport.rendezvous import build_rendezvous_payload, p
 from model_deck.adapters.transport.unix_server import UnixSocketEngineServer
 from model_deck.adapters.transport.framing import encode_frame
 from model_deck.engine.builtins import (
+    BUILTIN_FEATURE_IDS,
     CAPABILITY_SUPPORTED,
     COLLABORATOR_PROVIDER_EXECUTION,
     COLLABORATOR_PROVIDER_ROUTES,
     BuiltinAvailability,
+    BuiltinDispatchBinding,
     BuiltinHandlerAdapter,
     build_capability_map,
     builtin_feature_descriptors,
@@ -47,6 +49,10 @@ from model_deck.kernel import (
     compose,
 )
 from model_deck.plugins.external_host import ExternalExtensionHost, HostDependencies
+from model_deck.plugins.external_host.host import (
+    DEFAULT_WORKER_HEARTBEAT,
+    WorkerHeartbeatSettings,
+)
 from model_deck.engine.connections.use_cases import ListConnectionsUseCase, SaveConnectionUseCase
 from model_deck.engine.model_library.ports import ModelRepository
 from model_deck.engine.model_library.use_cases import (
@@ -262,6 +268,13 @@ class EngineRuntime:
     application_database_path: Path | None = None
     kernel_capabilities: Mapping[str, str] = field(default_factory=dict)
     degraded_optional_capabilities: tuple[tuple[str, str], ...] = ()
+    external_extension_host: Any | None = None
+    """The composed extension host, when external extensions were enabled.
+
+    Worker health, restart attempts and the shutdown report have no place on
+    the frozen `extensions.get` result schema, so this reference is the only
+    way an operator surface — or a test — reads them.
+    """
 
 
 def _snapshot_provider_routes(routes: Mapping[str, ProviderRouteDefinition]) -> dict[str, ProviderRouteDefinition]:
@@ -450,6 +463,7 @@ def _compose_engine_kernel(
     collaborators: Mapping[str, Any],
     additional: AdditionalEngineFeatures,
     operator_grants: Sequence[str],
+    builtin_binding: BuiltinDispatchBinding,
 ) -> tuple[KernelComposition, dict[str, str]]:
     """Compose the built-in descriptors, and any additional ones, at startup.
 
@@ -457,6 +471,10 @@ def _compose_engine_kernel(
     anything that depends on it; the rest still composes and still serves. A
     feature whose *optional* capability is missing composes in a degraded state,
     which ``KernelComposition.degraded_optional_capabilities`` reports.
+
+    ``builtin_binding`` is what makes the built-ins routable rather than merely
+    discoverable: the handlers it produces are the engine's own dispatch methods,
+    and the same binding is handed to the dispatch that claims it.
     """
     capabilities = _engine_capability_map(availability, additional)
     features = (
@@ -464,7 +482,7 @@ def _compose_engine_kernel(
         *additional.features,
     )
     _reject_unfit_engine_features(features, capabilities)
-    registry = builtin_handler_registry()
+    registry = builtin_handler_registry(builtin_binding)
     for feature_id, adapter in additional.handler_adapters.items():
         registry = registry.with_adapter(feature_id, adapter)
     # A wiring mistake raises BuiltinWiringError, which is already a precise,
@@ -472,7 +490,11 @@ def _compose_engine_kernel(
     handlers = registry.build_handlers(features, {**collaborators, **additional.collaborators})
     try:
         kernel = compose(features, capabilities, handlers)
-        composition = KernelComposition(kernel, operator_grants=operator_grants)
+        composition = KernelComposition(
+            kernel,
+            operator_grants=operator_grants,
+            dispatch_bound_features=BUILTIN_FEATURE_IDS,
+        )
     except CompositionError:
         raise EngineCompositionError("engine kernel composition failed") from None
     return composition, capabilities
@@ -518,6 +540,7 @@ def build_engine_server(
     enable_external_extensions: bool = False,
     extension_state_root: Path | None = None,
     extension_artifact_root: Path | None = None,
+    extension_worker_heartbeat: WorkerHeartbeatSettings = DEFAULT_WORKER_HEARTBEAT,
     evidence_transport: Callable[[str], bytes] | None = None,
     projection_root: Path | None = None,
     projection_resolver: ConnectionMetadataResolver | None = None,
@@ -816,6 +839,7 @@ def build_engine_server(
         external_extension_host = ExternalExtensionHost(
             extension_state_root,
             artifact_root=extension_artifact_root,
+            heartbeat=extension_worker_heartbeat,
             dependencies=HostDependencies(
                 lifecycle_repository=SQLiteExtensionLifecycleRepository,
                 jobs_repository=lambda path: SQLitePluginJobRepository(
@@ -885,6 +909,7 @@ def build_engine_server(
         COLLABORATOR_PROVIDER_EXECUTION: provider_execution,
         COLLABORATOR_PROVIDER_ROUTES: injected_routes,
     }
+    builtin_binding = BuiltinDispatchBinding()
     composition = kernel_composition
     if composition is not None:
         # The legacy escape hatch: the caller's kernel is served as it stands,
@@ -906,6 +931,7 @@ def build_engine_server(
             collaborators=collaborators,
             additional=additional,
             operator_grants=kernel_operator_grants,
+            builtin_binding=builtin_binding,
         )
 
     dispatch = EngineDispatch(
@@ -935,6 +961,7 @@ def build_engine_server(
         external_extension_host=external_extension_host,
         first_party_jobs=first_party_jobs,
         projection_coordinator=projection_coordinator,
+        builtin_binding=builtin_binding,
     )
 
     socket_path = socket_root / "engine.sock"
@@ -999,4 +1026,5 @@ def build_engine_server(
         application_database_path=application_database_path,
         kernel_capabilities=MappingProxyType(dict(kernel_capabilities)),
         degraded_optional_capabilities=composition.degraded_optional_capabilities(),
+        external_extension_host=external_extension_host,
     )

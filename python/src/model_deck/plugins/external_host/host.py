@@ -28,8 +28,13 @@ from model_deck.engine.extensions.ports import (
     LifecycleRequest,
 )
 from model_deck.engine.extensions.service import ExtensionLifecycleService
+from model_deck.engine.jobs.ports import ResumeInvocationRequest, ResumeTarget
 from model_deck.engine.jobs.service import PluginJobBroker
-from model_deck.engine.jobs.use_cases import CancelJobUseCase, GetJobUseCase
+from model_deck.engine.jobs.use_cases import (
+    CancelJobUseCase,
+    GetJobUseCase,
+    ResumeJobUseCase,
+)
 from model_deck.engine.jobs.wire import PluginJobWireAdapter
 from model_deck.engine.plugin_authority import (
     ActivationState, AuthorityContext, OperationAuthority, OriginState, PluginAuthority,
@@ -40,15 +45,94 @@ from model_deck.plugins.activation_authority import SQLiteActivationAuthorityCon
 from model_deck.plugins.activation_lifecycle import (
     ProcessExtensionActivationLifecycle, ResolvedArtifactLaunch,
 )
+from model_deck.plugins.activation_lifecycle.restart import (
+    ActivationRestartSupervisor,
+    DEFAULT_RESTART_POLICY,
+    ExtensionSupervisionReport,
+)
 from model_deck.plugins.artifact_store import stage_archive
 from model_deck.plugins.authoring.validation import validate_project_archive
 from model_deck.plugins.process_runtime import ProcessRuntimeConfig
+from model_deck.plugins.process_runtime.health import RestartPolicy
 from model_deck.plugins.panel_validation import validate_panel_semantics
 from model_deck.plugins.schema_bundle import PluginSchemaBundle
 from model_deck_contracts.validator import validate_schema_ref
 
 _STORED_INVOKE_RESULT_KEY = "__model_deck_invoke_result_v1__"
 _LIFECYCLE_RECOVERY_PAGE_SIZE = 256
+_SHUTDOWN_DEADLINE_MS = 1000
+
+SHUTDOWN_QUIESCED = "quiesced"
+SHUTDOWN_SETTLED = "settled"
+SHUTDOWN_FAILED = "failed"
+CHILD_REAPED = "reaped"
+CHILD_ABSENT = "absent"
+
+
+@dataclass(frozen=True, slots=True)
+class ExtensionShutdownEntry:
+    """What happened to one extension when the host closed.
+
+    `outcome` is quiesced when a live child was drained and reaped, settled
+    when there was no child left to ask and only its jobs needed interrupting,
+    and failed when quiesce raised — in which case `failure_code` names the
+    exception type. `child` says whether this shutdown actually reaped a child
+    process or found none. `jobs_interrupted` counts jobs moved out of
+    QUEUED/RUNNING; none of them are replayed.
+    """
+
+    extension_id: str
+    outcome: str
+    failure_code: str | None
+    jobs_interrupted: int
+    child: str
+
+
+@dataclass(frozen=True, slots=True)
+class ShutdownReport:
+    """Per-extension outcome of one host shutdown.
+
+    Deliberately a value, not a log line: the engine's shutdown callback can
+    retain it, and a test can assert on it, without this layer choosing a
+    logging story.
+    """
+
+    entries: tuple[ExtensionShutdownEntry, ...] = ()
+
+    def entry(self, extension_id: str) -> ExtensionShutdownEntry | None:
+        for candidate in self.entries:
+            if candidate.extension_id == extension_id:
+                return candidate
+        return None
+
+    @property
+    def jobs_interrupted(self) -> int:
+        return sum(entry.jobs_interrupted for entry in self.entries)
+
+    @property
+    def failed_extension_ids(self) -> tuple[str, ...]:
+        return tuple(
+            entry.extension_id
+            for entry in self.entries
+            if entry.outcome == SHUTDOWN_FAILED
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerHeartbeatSettings:
+    """How often each plugin worker is beaten at, and how long it may miss.
+
+    The defaults are the process runtime's own. A test that has to observe an
+    unresponsive worker inside a few seconds shortens them; nothing in
+    production does.
+    """
+
+    interval_s: float = 5.0
+    timeout_s: float = 2.0
+    max_missed: int = 3
+
+
+DEFAULT_WORKER_HEARTBEAT = WorkerHeartbeatSettings()
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +159,7 @@ _BROKER_METHODS = (
 _JOB_OPERATION_NAMES = (
     "create",
     "progress",
+    "checkpoint",
     "complete",
     "fail",
     "check_cancelled",
@@ -109,6 +194,17 @@ class _Contexts:
         with self._lock:
             return self._items.get(invocation_id)
 
+    def drop(self, invocation_id: str) -> None:
+        """Forget one captured context, which revokes the handle that names it.
+
+        `PluginAuthority` resolves every handle through this store, so a
+        context that is gone denies the handle permanently: invocation ids are
+        never reissued, and the handle cannot be re-captured.
+        """
+
+        with self._lock:
+            self._items.pop(invocation_id, None)
+
 
 class _Resolver:
     def __init__(self, host: "ExternalExtensionHost") -> None:
@@ -131,6 +227,9 @@ class _Resolver:
             ProcessRuntimeConfig(
                 argv=(sys.executable, "-I", "-B", str(artifact / entrypoint["path"])),
                 package_dir=str(artifact), timeout_s=self._host._timeout_s,
+                heartbeat_interval_s=self._host._heartbeat.interval_s,
+                heartbeat_timeout_s=self._host._heartbeat.timeout_s,
+                heartbeat_max_missed=self._host._heartbeat.max_missed,
             ),
             allowed_broker_methods=tuple(allowed),
         )
@@ -157,6 +256,7 @@ class _BrokerFactory:
             repository=self._host._jobs,
             grants=dict(_JOB_GRANTS),
             mutation_guard=self._host._data.mutation_barrier,
+            resumable_operations=self._host._operation_is_resumable,
         )
         job_wire = PluginJobWireAdapter(
             trusted_activation=identity,
@@ -177,6 +277,153 @@ class _BrokerFactory:
         return dispatch
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedResume:
+    """What one `prepare` installed, and therefore what `abandon` must undo."""
+
+    handle: str
+    invocation_id: str
+    resume_operation_id: str
+    serving: Any
+
+
+class _ResumeInvoker:
+    """Carry one interrupted job back to the plugin that owns it.
+
+    `prepare` has to do two things before the durable row moves: resolve the
+    activation that is serving right now, and capture a fresh invocation
+    authority for `"<operation>.resume"`. The repository rebinds the job to
+    both, so the resumed worker's first broker call authorizes against the new
+    activation rather than the dead one's.
+
+    That authority is live the moment `prepare` returns, while the durable row
+    has not moved yet, so every way out of the window between `prepare` and
+    `invoke` has to give it back. `begin_resume` raising (a lost idempotency
+    race, a job that turned out not to be resumable) is the ordinary case.
+    `abandon` is the explicit undo; `ExternalExtensionHost.job_resume` brackets
+    the whole use case so a resume that never reaches `invoke` is abandoned
+    even when it fails somewhere nobody thought to name.
+    """
+
+    def __init__(self, host: "ExternalExtensionHost") -> None:
+        self._host = host
+        self._lock = threading.Lock()
+        self._pending: dict[str, _PreparedResume] = {}
+        self._invoked_operation_ids: set[str] = set()
+        self._scope = threading.local()
+
+    def pending_job_ids(self) -> tuple[str, ...]:
+        """Jobs that are prepared but not yet invoked or abandoned."""
+
+        with self._lock:
+            return tuple(self._pending)
+
+    def begin_request(self) -> None:
+        """Open the bracket one `jobs.resume` call runs inside."""
+
+        self._scope.prepared = []
+
+    def end_request(self) -> None:
+        """Close the bracket, abandoning whatever never reached `invoke`."""
+
+        prepared = getattr(self._scope, "prepared", None)
+        self._scope.prepared = None
+        for job_id in prepared or ():
+            self._release(job_id)
+
+    def abandon(self, request: ResumeInvocationRequest) -> None:
+        """Undo a `prepare` whose resume will not happen after all."""
+
+        self._release(request.job_id)
+
+    def _release(self, job_id: str) -> None:
+        """Give back the authority one `prepare` installed for `job_id`.
+
+        Dropping the captured context is what actually revokes the handle.
+        The operation authority goes with it unless another resume still needs
+        it: a concurrent prepare for the same operation, or one that already
+        reached `invoke` and whose worker authorizes against it.
+        """
+
+        with self._lock:
+            prepared = self._pending.pop(job_id, None)
+            if prepared is None:
+                return
+            operation_id = prepared.resume_operation_id
+            still_needed = operation_id in self._invoked_operation_ids or any(
+                other.resume_operation_id == operation_id
+                for other in self._pending.values()
+            )
+        self._host._contexts.drop(prepared.invocation_id)
+        if not still_needed:
+            self._host._operations.pop(operation_id, None)
+
+    def prepare(self, request: ResumeInvocationRequest) -> ResumeTarget | None:
+        host = self._host
+        record = host._repository.get(request.plugin_id)
+        if record is None or record.status is not ExtensionStatus.ENABLED:
+            return None
+        serving = host._activation.serving(request.plugin_id)
+        if serving is None:
+            return None
+        deadline = datetime.now(timezone.utc) + timedelta(minutes=5)
+        grants = frozenset(record.selected.approved_scopes)
+        resume_operation = request.resume_operation_id
+        host._origins[request.origin_principal_id] = OriginState(
+            request.origin_principal_id, host._engine_id, host._audience,
+            frozenset({"read", "write"}), grants, grants, deadline, 0,
+        )
+        host._operations[resume_operation] = OperationAuthority(
+            resume_operation, frozenset({"read", "write"}), grants, grants,
+        )
+        handle = host._plugin_authority.issue(
+            serving.identity, request.origin_principal_id, resume_operation,
+            expires_at=deadline,
+        )
+        context = host._plugin_authority.capture(handle, serving.identity)
+        with self._lock:
+            self._pending[request.job_id] = _PreparedResume(
+                handle=handle,
+                invocation_id=context.invocation_id,
+                resume_operation_id=resume_operation,
+                serving=serving,
+            )
+        scope = getattr(self._scope, "prepared", None)
+        if isinstance(scope, list):
+            scope.append(request.job_id)
+        return ResumeTarget(
+            activation_id=serving.identity.activation_id,
+            invocation_id=context.invocation_id,
+        )
+
+    def invoke(self, request: ResumeInvocationRequest, target: ResumeTarget) -> None:
+        with self._lock:
+            prepared = self._pending.pop(request.job_id, None)
+            if prepared is not None:
+                # The durable row is already RUNNING and bound to this
+                # invocation, so the operation authority has to outlive this
+                # call whether or not the worker answers: a later abandon of
+                # the same operation must not deny the running worker.
+                self._invoked_operation_ids.add(prepared.resume_operation_id)
+        if prepared is None:
+            raise HostNotServingError(request.plugin_id)
+        handle, serving = prepared.handle, prepared.serving
+        state = self._host._authority.activation(serving.identity)
+        if state is None:
+            raise HostNotServingError(request.plugin_id)
+        serving.invocation_channel.invoke(
+            request.resume_operation_id,
+            request.invocation_params(),
+            {
+                "activation_id": serving.identity.activation_id,
+                "plugin_id": request.plugin_id,
+                "invocation_handle": handle,
+                "revocation_generation": state.revocation_generation,
+            },
+            timeout_s=self._host._timeout_s,
+        )
+
+
 class ExternalExtensionHost:
     """Own installation, activation, discovery, invocation, and retained data."""
 
@@ -186,6 +433,8 @@ class ExternalExtensionHost:
         *,
         artifact_root: Path | str | None = None,
         timeout_s: float = 5.0,
+        restart_policy: RestartPolicy = DEFAULT_RESTART_POLICY,
+        heartbeat: WorkerHeartbeatSettings = DEFAULT_WORKER_HEARTBEAT,
         dependencies: HostDependencies,
     ) -> None:
         self.root = Path(root).resolve()
@@ -200,6 +449,9 @@ class ExternalExtensionHost:
         self._artifact_root.mkdir(mode=0o700, exist_ok=True)
         self._db = self.root / "host.sqlite3"
         self._timeout_s = timeout_s
+        if not isinstance(heartbeat, WorkerHeartbeatSettings):
+            raise HostConflictError("heartbeat settings must be WorkerHeartbeatSettings")
+        self._heartbeat = heartbeat
         self._engine_id = str(uuid.uuid4())
         self._audience = "model-deck-external-extension"
         self._origins: dict[str, OriginState] = {}
@@ -210,6 +462,8 @@ class ExternalExtensionHost:
         self._jobs = dependencies.jobs_repository(self._db)
         self._get_job = GetJobUseCase(self._jobs)
         self._cancel_job = CancelJobUseCase(self._jobs)
+        self._resume_invoker = _ResumeInvoker(self)
+        self._resume_job = ResumeJobUseCase(self._jobs, invoker=self._resume_invoker)
         self._lock = dependencies.instance_lock(self.root / "instance.lock")
         if not self._lock.acquire(0.0):
             raise HostConflictError("host root is already owned")
@@ -241,20 +495,136 @@ class ExternalExtensionHost:
             repository=self._repository, data_lifecycle=self._data,
             activation_lifecycle=self._activation, engine_lease=self._lease,
         )
+        self._supervisor = ActivationRestartSupervisor(
+            lifecycle=self._activation,
+            record_reader=self._record_or_none,
+            policy=restart_policy,
+        )
+        self._activation.set_worker_loss_observer(self._supervisor)
+        self._closed = False
+        self.last_shutdown_report = ShutdownReport()
         self._recover_lifecycle_and_enabled_extensions()
 
-    def close(self) -> None:
-        for record in self.list_extensions():
-            serving = self._activation.serving(record.extension_id)
-            if serving is not None:
-                self._activation.quiesce(str(uuid.uuid4()), record, deadline_ms=1000)
-        self._lock.release()
+    def close(self) -> ShutdownReport:
+        """Quiesce every extension, settle orphaned jobs, and report per record.
+
+        One extension that fails to quiesce never skips the rest: each record
+        is isolated, and its failure becomes an entry rather than an exception.
+        A record whose worker already died has no serving activation to drain,
+        so its jobs are settled directly — otherwise they would stay RUNNING
+        forever.
+        """
+
+        if self._closed:
+            return self.last_shutdown_report
+        self._closed = True
+        entries: list[ExtensionShutdownEntry] = []
+        try:
+            self._supervisor.close()
+            try:
+                records = self.list_extensions()
+            except Exception:
+                records = ()
+            for record in records:
+                entries.append(self._shut_down_extension(record))
+            self._activation.close()
+        finally:
+            self.last_shutdown_report = ShutdownReport(tuple(entries))
+            self._lock.release()
+        return self.last_shutdown_report
+
+    def _shut_down_extension(self, record: ExtensionRecord) -> ExtensionShutdownEntry:
+        extension_id = record.extension_id
+        if self._activation.serving(extension_id) is None:
+            interrupted = 0
+            try:
+                interrupted = self._activation.settle_orphaned_jobs(record)
+            except Exception as error:
+                return ExtensionShutdownEntry(
+                    extension_id, SHUTDOWN_FAILED, type(error).__name__, 0, CHILD_ABSENT,
+                )
+            return ExtensionShutdownEntry(
+                extension_id, SHUTDOWN_SETTLED, None, interrupted, CHILD_ABSENT,
+            )
+        try:
+            self._activation.quiesce(
+                str(uuid.uuid4()), record, deadline_ms=_SHUTDOWN_DEADLINE_MS,
+            )
+        except Exception as error:
+            return ExtensionShutdownEntry(
+                extension_id,
+                SHUTDOWN_FAILED,
+                type(error).__name__,
+                self._activation.last_interrupted_job_count(extension_id),
+                CHILD_REAPED,
+            )
+        return ExtensionShutdownEntry(
+            extension_id,
+            SHUTDOWN_QUIESCED,
+            None,
+            self._activation.last_interrupted_job_count(extension_id),
+            CHILD_REAPED,
+        )
+
+    def supervision_report(self, extension_id: str) -> ExtensionSupervisionReport:
+        """Worker health, restart attempts, last failure code, and gave_up.
+
+        This is the only place the data is exposed. The frozen
+        `extensions.get` result schema is a closed object with no free-form
+        status or diagnostics member, so none of it can ride along on that
+        contract without a contract addition.
+        """
+
+        return self._supervisor.report(extension_id)
+
+    def supervision_reports(self) -> tuple[ExtensionSupervisionReport, ...]:
+        """One supervision report per catalogued extension."""
+
+        try:
+            records = self.list_extensions()
+        except Exception:
+            return ()
+        return tuple(
+            self._supervisor.report(record.extension_id) for record in records
+        )
+
+    def _record_or_none(self, extension_id: str) -> ExtensionRecord | None:
+        return self._repository.get(extension_id)
 
     def job_get(self, params: dict[str, Any], *, principal: str) -> dict[str, Any]:
         return self._get_job.execute(params, caller_principal_id=principal)
 
     def job_cancel(self, params: dict[str, Any], *, principal: str) -> dict[str, Any]:
         return self._cancel_job.execute(params, caller_principal_id=principal)
+
+    def job_resume(self, params: dict[str, Any], *, principal: str) -> dict[str, Any]:
+        """Resume one interrupted job, giving back the authority if it fails.
+
+        The bracket is the point: `prepare` issues a live invocation authority
+        before the durable row moves, and anything that raises after it —
+        `begin_resume` losing an idempotency race most of all — would otherwise
+        leave that authority installed with nothing left to use it.
+        """
+
+        self._resume_invoker.begin_request()
+        try:
+            return self._resume_job.execute(params, caller_principal_id=principal)
+        finally:
+            self._resume_invoker.end_request()
+
+    def _operation_is_resumable(self, operation_id: str) -> bool:
+        """Whether this operation's manifest declared its jobs resumable.
+
+        The manifest entry is spread into the catalog untouched, so the
+        optional `resumable` key arrives here exactly as the plugin author
+        wrote it. An operation that never claimed it creates jobs that
+        `jobs.resume` refuses, which is the safe direction.
+        """
+
+        return any(
+            item["id"] == operation_id and bool(item.get("resumable"))
+            for item in self.operation_catalog()
+        )
 
     def install(self, archive_path: Path | str, *, principal: str, idempotency_key: str,
                 expected_revision: int = 0) -> LifecycleReceipt | LifecycleOperation:
@@ -339,6 +709,9 @@ class ExternalExtensionHost:
             record.selected.executable.artifact_id,
         )
         permissions = tuple(manifest["document"].get("permissions", ()))
+        # Re-enabling is the operator's way to clear a degraded extension, so
+        # the ledger goes before the activation rather than after it.
+        self._supervisor.reset(extension_id)
         enabled = self._execute(LifecycleAction.ENABLE, extension_id, principal,
                                 idempotency_key, expected_revision)
         if (
@@ -360,8 +733,13 @@ class ExternalExtensionHost:
 
     def disable(self, extension_id: str, *, principal: str, idempotency_key: str,
                 expected_revision: int) -> LifecycleReceipt | LifecycleOperation:
-        return self._execute(LifecycleAction.DISABLE, extension_id, principal,
-                             idempotency_key, expected_revision)
+        # Drop any scheduled replacement first: a disable that raced a pending
+        # restart must not be followed by the extension coming back up.
+        self._supervisor.reset(extension_id)
+        disabled = self._execute(LifecycleAction.DISABLE, extension_id, principal,
+                                 idempotency_key, expected_revision)
+        self._supervisor.reset(extension_id)
+        return disabled
 
     def get_extension(self, extension_id: str) -> ExtensionRecord:
         record = self._repository.get(extension_id)
@@ -501,6 +879,13 @@ class ExternalExtensionHost:
 
     def _recover_lifecycle_and_enabled_extensions(self) -> None:
         records = self.list_extensions()
+        # Startup sweep. A previous engine process can only have ended while
+        # its plugin jobs were queued or running, and nothing will ever report
+        # on them again, so they are interrupted before anything is re-admitted.
+        # Doing it before the revocations below means a revoke that raises
+        # cannot leave a job showing as running.
+        for record in records:
+            self._activation.settle_orphaned_jobs(record)
         for record in records:
             prior_identity = self._authority.identity_for(record.selected)
             if prior_identity is not None:

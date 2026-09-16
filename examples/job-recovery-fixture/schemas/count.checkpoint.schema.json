@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/count.checkpoint.schema.json",
+  "title": "Job-recovery counting checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "next",
+    "target"
+  ],
+  "properties": {
+    "next": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The next 1-based step number this job has not yet performed."
+    },
+    "target": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The total step count (N) the job is counting to. Carried inside the checkpoint itself so a resumed activation is self-sufficient and never needs the original count.start params."
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "manifest_version": 1,
+  "id": "org.example.job-recovery",
+  "version": "1.0.0",
+  "plugin_api": {
+    "major": 1,
+    "minimum_minor": 0
+  },
+  "entrypoint": {
+    "runtime": "python",
+    "path": "plugin.py"
+  },
+  "permissions": [
+    "storage.own",
+    "jobs.own"
+  ],
+  "contributes": {
+    "operations": [
+      {
+        "id": "org.example.job-recovery.count.start",
+        "input_schema": "schemas/count.start.input.schema.json",
+        "output_schema": "schemas/count.start.output.schema.json",
+        "effect": "write",
+        "resumable": true
+      },
+      {
+        "id": "org.example.job-recovery.stream.start",
+        "input_schema": "schemas/stream.start.input.schema.json",
+        "output_schema": "schemas/stream.start.output.schema.json",
+        "effect": "write"
+      },
+      {
+        "id": "org.example.job-recovery.control",
+        "input_schema": "schemas/control.input.schema.json",
+        "output_schema": "schemas/control.output.schema.json",
+        "effect": "write"
+      }
+    ]
+  }
+}

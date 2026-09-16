@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/control.input.schema.json",
+  "title": "Test-only fault injection for the counting jobs",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode"
+  ],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": [
+        "normal",
+        "crash",
+        "hang"
+      ]
+    },
+    "after_step": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Required when mode is crash or hang: the absolute step number after which the fault fires."
+    }
+  }
+}

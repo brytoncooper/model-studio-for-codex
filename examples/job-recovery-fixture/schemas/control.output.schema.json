@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/control.output.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "applied"
+  ],
+  "properties": {
+    "applied": {
+      "type": "boolean"
+    }
+  }
+}

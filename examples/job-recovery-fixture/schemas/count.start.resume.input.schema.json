@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/count.start.resume.input.schema.json",
+  "title": "The resume convention for org.example.job-recovery.count.start",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "job_id",
+    "checkpoint_revision",
+    "checkpoint_schema_id",
+    "checkpoint"
+  ],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "checkpoint_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The compare-and-swap revision the checkpoint was read at."
+    },
+    "checkpoint_schema_id": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Must equal schemas/count.checkpoint.schema.json, the schema declared when the job was created."
+    },
+    "checkpoint": {
+      "$ref": "count.checkpoint.schema.json"
+    }
+  }
+}
