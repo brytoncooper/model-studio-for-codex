@@ -52,6 +52,20 @@ Cross-cutting collaborators (`sqlite_model_schema.py`) share model DDL between r
 - Recovery follows each subsystem's contract. Claimed provider runs are interrupted
   after restart; extension lifecycle operations retain restoration intent until
   explicit recovery completes. Never apply one subsystem's recovery policy to all.
+- Recovery is not resumption. `sqlite_plugin_jobs.py` marks a lost worker's jobs
+  interrupted and replays nothing; only an explicit `begin_resume` returns one to
+  running, and only a job created with the `resumable` flag its manifest declared.
+  That transition is one transaction covering the origin check, the idempotency
+  receipt and the state change; it preserves progress and the stored checkpoint
+  while rebinding the row to the live activation and invocation. A database
+  written before explicit resume existed migrates with both resume columns
+  defaulted to "not resumable", which is the only safe default.
+- A resume that commits but whose worker is never reached is taken back by
+  `rollback_resume`: one transaction returns the row to INTERRUPTED, decrements
+  `resume_count`, and deletes the idempotency receipt, so the job is resumable
+  again and no receipt claims a success that did not happen. A job that is no
+  longer RUNNING by then is returned untouched — the worker did get the call,
+  and its outcome outranks the caller's transport error.
 
 ## Adding adapter behavior
 

@@ -20,7 +20,9 @@ __all__ = [
 
 
 _METHOD_PREFIX = "plugin.v1.broker.jobs."
-_METHOD_NAMES = frozenset({"create", "progress", "complete", "fail", "check_cancelled"})
+_METHOD_NAMES = frozenset(
+    {"create", "progress", "checkpoint", "complete", "fail", "check_cancelled"}
+)
 
 
 class PluginJobWireConfigurationError(ValueError):
@@ -69,7 +71,7 @@ class PluginJobWireAdapter:
 
     The activation identity is supplied by supervisor composition. The runtime
     supplies only the activation id on each call; parameters can never
-    replace the bound identity. Five methods are supported and routed without
+    replace the bound identity. Six methods are supported and routed without
     coercion.
     """
 
@@ -136,6 +138,17 @@ class PluginJobWireAdapter:
                 self._trusted_activation,
                 job_id=params["job_id"],
                 progress=params["progress"],
+            )
+        if method_name == "checkpoint":
+            # expected_revision is required by the schema and may be an
+            # explicit null ("nothing saved yet"); schema_id is optional and
+            # absent means "the schema this job declared at create".
+            return self._broker.checkpoint(
+                self._trusted_activation,
+                job_id=params["job_id"],
+                checkpoint=params["checkpoint"],
+                expected_revision=params["expected_revision"],
+                schema_id=params["schema_id"] if "schema_id" in params else None,
             )
         if method_name == "complete":
             # 'output' in params (vs absent) encodes output_present, so the

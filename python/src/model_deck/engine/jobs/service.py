@@ -24,6 +24,8 @@ from .ports import (
     CreateJobCommand,
     FailJobCommand,
     GetJobCommand,
+    JobCheckpointConflictError,
+    JobCheckpointValidationError,
     JobNotFoundError,
     JobOwner,
     JobOwnershipMismatchError,
@@ -31,10 +33,21 @@ from .ports import (
     JobStateConflictError,
     JobTerminalConflictError,
     ReportProgressCommand,
+    SaveCheckpointCommand,
     validate_bounded_json_value,
 )
 
 _OPERATIONS = ("create", "progress", "complete", "fail", "check_cancelled")
+
+CHECKPOINT_OPERATION = "checkpoint"
+"""The optional sixth grant name.
+
+``checkpoint`` arrived after the first five, and every existing composition
+passes exactly those five. A grants dict may therefore leave it out, in which
+case it inherits the ``progress`` grant: saving a checkpoint is the same
+authority as reporting progress on the same job, a write the worker already
+holds for that job, so inheriting names it rather than widening it.
+"""
 
 _REVERSE_DOMAIN = re.compile(r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9_-]*)+$")
 class BrokerJobError(ValueError):
@@ -108,6 +121,15 @@ def _check_schema_id(value: object) -> str | None:
     return value
 
 
+def _check_expected_revision(value: object) -> int:
+    """null and 0 both mean "no checkpoint has been saved yet"."""
+    if value is None:
+        return 0
+    if type(value) is not int or value < 0:
+        raise BrokerJobInvalidRequestError()
+    return value
+
+
 def _check_progress(value: object) -> float:
     if type(value) is bool or not isinstance(value, (int, float)):
         raise BrokerJobInvalidRequestError()
@@ -173,12 +195,15 @@ class PluginJobBroker:
         repository: Any,
         grants: dict[str, tuple[str, str, str]],
         mutation_guard: Callable[[], AbstractContextManager[None]],
+        resumable_operations: Callable[[str], bool] | None = None,
     ) -> None:
         if not isinstance(authority, PluginAuthority):
             raise BrokerJobInvalidRequestError()
         if not hasattr(repository, "create") or not hasattr(repository, "get"):
             raise BrokerJobInvalidRequestError()
-        if type(grants) is not dict or set(grants) != set(_OPERATIONS):
+        if type(grants) is not dict or set(grants) - {CHECKPOINT_OPERATION} != set(
+            _OPERATIONS
+        ):
             raise BrokerJobInvalidRequestError()
         parsed: dict[str, tuple[str, str, str]] = {}
         for operation in _OPERATIONS:
@@ -189,12 +214,45 @@ class PluginJobBroker:
                 if type(part) is not str or not part:
                     raise BrokerJobInvalidRequestError()
             parsed[operation] = triple
+        checkpoint_grant = grants.get(CHECKPOINT_OPERATION, parsed["progress"])
+        if type(checkpoint_grant) is not tuple or len(checkpoint_grant) != 3:
+            raise BrokerJobInvalidRequestError()
+        for part in checkpoint_grant:
+            if type(part) is not str or not part:
+                raise BrokerJobInvalidRequestError()
+        parsed[CHECKPOINT_OPERATION] = checkpoint_grant
         if not callable(mutation_guard):
+            raise BrokerJobInvalidRequestError()
+        if resumable_operations is not None and not callable(resumable_operations):
             raise BrokerJobInvalidRequestError()
         self._authority = authority
         self._repository = repository
         self._grants = parsed
         self._mutation_guard = mutation_guard
+        self._resumable_operations = resumable_operations
+
+    def _declared_resumable(self, operation_id: str) -> bool:
+        """Ask composition whether this operation's manifest said resumable.
+
+        The worker never gets a say. With no lookup composed, nothing is
+        resumable, which is the safe answer: an unresumable job simply cannot
+        be restarted, while a wrongly resumable one would hand a worker a
+        checkpoint it never agreed to honor.
+
+        A lookup that is composed but *fails* is a different thing from one
+        that is absent, and it is not safe to answer False for it. False gets
+        written into the durable row as "this operation never declared itself
+        resumable", which outlives the transient failure, is indistinguishable
+        from the real thing, and makes the job answer ``resume_unavailable``
+        for the rest of its life. Failing the create is recoverable; a
+        silently unresumable job is not.
+        """
+        if self._resumable_operations is None:
+            return False
+        try:
+            return bool(self._resumable_operations(operation_id))
+        except Exception:
+            raise BrokerJobOperationError() from None
 
     def revocation_barrier(self) -> AbstractContextManager[None]:
         return self._guarded()
@@ -262,6 +320,10 @@ class PluginJobBroker:
                 )
             except AuthorityDeniedError:
                 raise BrokerJobDeniedError()
+            # Resolved before the repository call, not inside it: a failed
+            # lookup is an operation failure, not a malformed request, and
+            # the surrounding except would have mislabelled it.
+            resumable = self._declared_resumable(live.operation_id)
             try:
                 created = self._repository.create(
                     CreateJobCommand(
@@ -273,6 +335,7 @@ class PluginJobBroker:
                         operation_id=live.operation_id,
                         origin_principal_id=live.origin_principal_id,
                         checkpoint_schema_id=schema_id,
+                        resumable=resumable,
                     )
                 )
             except (ValueError, TypeError):
@@ -377,6 +440,66 @@ class PluginJobBroker:
             except (ValueError, TypeError):
                 raise BrokerJobInvalidRequestError()
         return {"accepted": True}
+
+    def checkpoint(
+        self,
+        authenticated_activation: ActivationIdentity,
+        *,
+        job_id: str,
+        checkpoint: Any,
+        expected_revision: int | None,
+        schema_id: str | None = None,
+    ) -> dict[str, int]:
+        """Save one resume checkpoint under compare-and-swap.
+
+        ``expected_revision`` is what the worker believes is stored; null and
+        0 both mean "nothing saved yet". A mismatch stores nothing and is a
+        conflict, so a worker that lost a race never silently overwrites the
+        newer state. The job must still be active and owned by this
+        activation.
+
+        ``schema_id`` is optional, exactly as the published params schema
+        says: omitting it keeps the schema the job declared at create, and
+        storage still validates the checkpoint against that declaration, so
+        an unlabelled save is never an unvalidated one. Supplying a schema_id
+        that is not the declared schema is what gets rejected. Refusing an
+        omitted schema_id here would break every worker that took the
+        contract at its word.
+        """
+        activation = _check_activation(authenticated_activation)
+        job_id = _check_job_id(job_id)
+        revision = _check_expected_revision(expected_revision)
+        requested_schema_id = _check_schema_id(schema_id)
+        _check_json_value(checkpoint)
+        with self._guarded():
+            record = self._trusted_followup(job_id, activation, CHECKPOINT_OPERATION)
+            try:
+                saved = self._repository.save_checkpoint(
+                    SaveCheckpointCommand(
+                        job_id=record.job_id,
+                        owner=self._owner_of(record),
+                        checkpoint=checkpoint,
+                        expected_revision=revision,
+                        schema_id=requested_schema_id,
+                    )
+                )
+            except JobNotFoundError:
+                raise BrokerJobNotFoundError()
+            except JobOwnershipMismatchError:
+                raise BrokerJobDeniedError()
+            except JobCheckpointConflictError:
+                raise BrokerJobConflictError()
+            except JobCheckpointValidationError:
+                raise BrokerJobInvalidRequestError()
+            except JobTerminalConflictError:
+                raise BrokerJobTerminalError()
+            except JobStateConflictError:
+                raise BrokerJobConflictError()
+            except BrokerJobError:
+                raise
+            except (ValueError, TypeError):
+                raise BrokerJobInvalidRequestError()
+        return {"revision": int(saved.checkpoint_revision)}
 
     def complete(
         self,

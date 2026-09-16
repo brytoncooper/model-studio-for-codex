@@ -28,12 +28,18 @@ from model_deck.engine.jobs.ports import (
     ClaimJobCommand,
     CompleteJobCommand,
     ConfirmCancelCommand,
+    CreateJobCommand,
     FailJobCommand,
     GetJobCommand,
     JobOwner,
+    JobResumeConflictError,
+    JobResumeUnsupportedError,
     JobState,
     JobTerminalConflictError,
     RequestCancelPublicCommand,
+    ResumeInvocationRequest,
+    ResumeTarget,
+    SaveCheckpointCommand,
 )
 from model_deck.engine.jobs.use_cases import (
     CancelJobUseCase,
@@ -42,7 +48,9 @@ from model_deck.engine.jobs.use_cases import (
     JobsInvalidArgumentError,
     JobsIdempotencyConflictError,
     JobsNotFoundError,
+    JobsPluginUnavailableError,
     JobsUnknownKeyError,
+    ResumeJobUseCase,
 )
 
 
@@ -437,3 +445,389 @@ def test_recovery_refuses_an_owner_outside_the_reserved_namespace(tmp_path):
     repo = make_repo(tmp_path)
     with pytest.raises(FirstPartyJobOwnerError):
         recover_first_party_jobs(repo, OWNER)
+
+
+# --- Explicit resume ---------------------------------------------------------
+# jobs.resume is the only way an interrupted job ever runs again. These cases
+# use the real SQLite repository and a recording invoker that stands in for the
+# supervisor transport, so the ordering of the checks is pinned exactly.
+
+
+RESUMABLE_OWNER = JobOwner(plugin_id="com.example.jobs", activation_id="act-1")
+
+
+class RecordingInvoker:
+    """Stands in for the host: hands out a live activation, records calls."""
+
+    def __init__(self, *, activation_id="act-2", invocation_id="inv-2"):
+        self.activation_id = activation_id
+        self.invocation_id = invocation_id
+        self.serving = True
+        self.fail = False
+        self.prepared: list[ResumeInvocationRequest] = []
+        self.invoked: list[tuple[ResumeInvocationRequest, ResumeTarget]] = []
+
+    def prepare(self, request):
+        self.prepared.append(request)
+        if not self.serving:
+            return None
+        return ResumeTarget(
+            activation_id=self.activation_id, invocation_id=self.invocation_id
+        )
+
+    def invoke(self, request, target):
+        self.invoked.append((request, target))
+        if self.fail:
+            raise RuntimeError("private plugin transport secret")
+
+
+def create_resumable(repo, *, origin="alice", checkpoint=True):
+    record = repo.create(
+        CreateJobCommand(
+            owner=RESUMABLE_OWNER,
+            invocation_id="inv-1",
+            operation_id="com.example.run",
+            origin_principal_id=origin,
+            checkpoint_schema_id="ckpt.v1",
+            resumable=True,
+        )
+    )
+    repo.claim(ClaimJobCommand(job_id=record.job_id, owner=RESUMABLE_OWNER))
+    if checkpoint:
+        repo.save_checkpoint(
+            SaveCheckpointCommand(
+                job_id=record.job_id,
+                owner=RESUMABLE_OWNER,
+                checkpoint={"next_index": 7},
+                expected_revision=0,
+                schema_id="ckpt.v1",
+            )
+        )
+    return record
+
+
+def interrupted_resumable(repo, **kwargs):
+    record = create_resumable(repo, **kwargs)
+    repo.mark_worker_crashed(RESUMABLE_OWNER)
+    return record
+
+
+def test_resume_returns_the_job_to_running_and_invokes_the_plugin(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    invoker = RecordingInvoker()
+    use_case = ResumeJobUseCase(repo, invoker=invoker)
+
+    result = use_case.execute(
+        {"job_id": record.job_id, "idempotency_key": "resume-1"},
+        caller_principal_id="alice",
+    )
+
+    assert result == {
+        "accepted": True,
+        "job_id": record.job_id,
+        "resumed_from_revision": 1,
+    }
+    stored = repo.get(GetJobCommand(job_id=record.job_id))
+    assert stored.state is JobState.RUNNING
+    assert stored.resume_count == 1
+    assert stored.activation_id == "act-2"
+    assert stored.invocation_id == "inv-2"
+
+
+def test_resume_hands_the_plugin_its_own_last_checkpoint(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    invoker = RecordingInvoker()
+    ResumeJobUseCase(repo, invoker=invoker).execute(
+        {"job_id": record.job_id, "idempotency_key": "resume-1"},
+        caller_principal_id="alice",
+    )
+
+    request, target = invoker.invoked[0]
+    # The sibling invocation, not a second contributed operation.
+    assert request.resume_operation_id == "com.example.run.resume"
+    assert request.invocation_params() == {
+        "job_id": record.job_id,
+        "checkpoint_revision": 1,
+        "checkpoint_schema_id": "ckpt.v1",
+        "checkpoint": {"next_index": 7},
+    }
+    assert target.activation_id == "act-2"
+    # The row is already RUNNING before the plugin is touched, so the worker's
+    # first progress call authorizes.
+    assert repo.get(GetJobCommand(job_id=record.job_id)).state is JobState.RUNNING
+
+
+def test_resume_without_a_checkpoint_reports_a_null_revision(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo, checkpoint=False)
+    invoker = RecordingInvoker()
+    result = ResumeJobUseCase(repo, invoker=invoker).execute(
+        {"job_id": record.job_id, "idempotency_key": "resume-1"},
+        caller_principal_id="alice",
+    )
+    assert result["resumed_from_revision"] is None
+    assert invoker.invoked[0][0].checkpoint is None
+
+
+def test_resume_repeat_with_the_same_key_does_not_resume_twice(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    invoker = RecordingInvoker()
+    use_case = ResumeJobUseCase(repo, invoker=invoker)
+    params = {"job_id": record.job_id, "idempotency_key": "resume-1"}
+
+    first = use_case.execute(params, caller_principal_id="alice")
+    again = use_case.execute(params, caller_principal_id="alice")
+
+    assert again == first
+    assert len(invoker.invoked) == 1
+    assert repo.get(GetJobCommand(job_id=record.job_id)).resume_count == 1
+
+
+def test_resume_with_a_different_key_while_active_is_a_conflict(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    invoker = RecordingInvoker()
+    use_case = ResumeJobUseCase(repo, invoker=invoker)
+    use_case.execute(
+        {"job_id": record.job_id, "idempotency_key": "resume-1"},
+        caller_principal_id="alice",
+    )
+    with pytest.raises(JobResumeConflictError):
+        use_case.execute(
+            {"job_id": record.job_id, "idempotency_key": "resume-2"},
+            caller_principal_id="alice",
+        )
+    assert len(invoker.invoked) == 1
+
+
+def test_resume_key_reused_for_another_job_is_a_conflict(tmp_path):
+    repo = make_repo(tmp_path)
+    first = interrupted_resumable(repo)
+    invoker = RecordingInvoker()
+    use_case = ResumeJobUseCase(repo, invoker=invoker)
+    use_case.execute(
+        {"job_id": first.job_id, "idempotency_key": "resume-1"},
+        caller_principal_id="alice",
+    )
+    second = create_resumable(repo)
+    with pytest.raises(JobResumeConflictError):
+        use_case.execute(
+            {"job_id": second.job_id, "idempotency_key": "resume-1"},
+            caller_principal_id="alice",
+        )
+
+
+def test_resume_refuses_a_job_that_never_declared_itself_resumable(tmp_path):
+    repo = make_repo(tmp_path)
+    record = create_with_origin(repo)
+    repo.mark_worker_crashed(OWNER)
+    invoker = RecordingInvoker()
+    with pytest.raises(JobResumeUnsupportedError):
+        ResumeJobUseCase(repo, invoker=invoker).execute(
+            {"job_id": record.job_id, "idempotency_key": "resume-1"},
+            caller_principal_id="alice",
+        )
+    assert invoker.prepared == []
+
+
+def test_resume_refuses_a_running_job(tmp_path):
+    repo = make_repo(tmp_path)
+    record = create_resumable(repo)
+    with pytest.raises(JobResumeUnsupportedError):
+        ResumeJobUseCase(repo, invoker=RecordingInvoker()).execute(
+            {"job_id": record.job_id, "idempotency_key": "resume-1"},
+            caller_principal_id="alice",
+        )
+
+
+def test_resume_refuses_a_completed_job(tmp_path):
+    repo = make_repo(tmp_path)
+    record = create_resumable(repo)
+    repo.complete(CompleteJobCommand(job_id=record.job_id, owner=RESUMABLE_OWNER))
+    with pytest.raises(JobResumeUnsupportedError):
+        ResumeJobUseCase(repo, invoker=RecordingInvoker()).execute(
+            {"job_id": record.job_id, "idempotency_key": "resume-1"},
+            caller_principal_id="alice",
+        )
+
+
+def test_resume_of_an_unknown_job_is_not_found(tmp_path):
+    repo = make_repo(tmp_path)
+    with pytest.raises(JobsNotFoundError):
+        ResumeJobUseCase(repo, invoker=RecordingInvoker()).execute(
+            {
+                "job_id": "00000000-0000-4000-8000-000000000000",
+                "idempotency_key": "resume-1",
+            },
+            caller_principal_id="alice",
+        )
+
+
+def test_resume_requires_the_originating_principal(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo, origin="alice")
+    invoker = RecordingInvoker()
+    with pytest.raises(JobsCallerMismatchError):
+        ResumeJobUseCase(repo, invoker=invoker).execute(
+            {"job_id": record.job_id, "idempotency_key": "resume-1"},
+            caller_principal_id="bob",
+        )
+    assert invoker.prepared == []
+    assert repo.get(GetJobCommand(job_id=record.job_id)).state is JobState.INTERRUPTED
+
+
+def test_resume_when_the_plugin_is_not_serving_leaves_the_job_interrupted(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    invoker = RecordingInvoker()
+    invoker.serving = False
+    with pytest.raises(JobsPluginUnavailableError):
+        ResumeJobUseCase(repo, invoker=invoker).execute(
+            {"job_id": record.job_id, "idempotency_key": "resume-1"},
+            caller_principal_id="alice",
+        )
+    assert repo.get(GetJobCommand(job_id=record.job_id)).state is JobState.INTERRUPTED
+    # Nothing was consumed, so the same key works once the plugin is back.
+    assert repo.read_resume_receipt("alice", "resume-1") is None
+
+
+def test_resume_reports_plugin_unavailable_without_leaking_transport_detail(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    invoker = RecordingInvoker()
+    invoker.fail = True
+    with pytest.raises(JobsPluginUnavailableError) as captured:
+        ResumeJobUseCase(repo, invoker=invoker).execute(
+            {"job_id": record.job_id, "idempotency_key": "resume-1"},
+            caller_principal_id="alice",
+        )
+    assert "secret" not in str(captured.value)
+
+
+def test_a_failed_invocation_is_taken_back_instead_of_wedging_the_job(tmp_path):
+    """begin_resume commits first, so a failed invoke has to be undone.
+
+    Left alone, the row would be RUNNING with no worker on it forever: no
+    activation died, so worker-loss recovery never fires, the same key would
+    replay the receipt as a false success, and any fresh key would see an
+    "already resumed" active job and conflict.
+    """
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    invoker = RecordingInvoker()
+    invoker.fail = True
+    with pytest.raises(JobsPluginUnavailableError):
+        ResumeJobUseCase(repo, invoker=invoker).execute(
+            {"job_id": record.job_id, "idempotency_key": "resume-1"},
+            caller_principal_id="alice",
+        )
+
+    rolled = repo.get(GetJobCommand(job_id=record.job_id))
+    assert rolled.state is JobState.INTERRUPTED
+    assert rolled.resume_count == 0
+    assert repo.read_resume_receipt("alice", "resume-1") is None
+
+    # And the job is genuinely resumable again, not just readable.
+    invoker.fail = False
+    result = ResumeJobUseCase(repo, invoker=invoker).execute(
+        {"job_id": record.job_id, "idempotency_key": "resume-2"},
+        caller_principal_id="alice",
+    )
+    assert result["accepted"] is True
+    after = repo.get(GetJobCommand(job_id=record.job_id))
+    assert after.state is JobState.RUNNING
+    assert after.resume_count == 1
+
+
+def test_a_repeat_of_a_failed_resume_key_does_not_report_false_success(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    invoker = RecordingInvoker()
+    invoker.fail = True
+    for _ in range(2):
+        with pytest.raises(JobsPluginUnavailableError):
+            ResumeJobUseCase(repo, invoker=invoker).execute(
+                {"job_id": record.job_id, "idempotency_key": "resume-1"},
+                caller_principal_id="alice",
+            )
+    # Two attempts, two honest failures, and the job is still resumable.
+    assert repo.get(GetJobCommand(job_id=record.job_id)).state is JobState.INTERRUPTED
+
+
+def test_resume_without_a_composed_invoker_is_unavailable(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    with pytest.raises(JobResumeUnsupportedError):
+        ResumeJobUseCase(repo).execute(
+            {"job_id": record.job_id, "idempotency_key": "resume-1"},
+            caller_principal_id="alice",
+        )
+
+
+def test_resume_validates_its_params(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    use_case = ResumeJobUseCase(repo, invoker=RecordingInvoker())
+    with pytest.raises(JobsUnknownKeyError):
+        use_case.execute(
+            {"job_id": record.job_id, "idempotency_key": "k", "extra": 1},
+            caller_principal_id="alice",
+        )
+    with pytest.raises(JobsInvalidArgumentError):
+        use_case.execute(
+            {"job_id": "not-a-uuid", "idempotency_key": "k"},
+            caller_principal_id="alice",
+        )
+    with pytest.raises(JobsInvalidArgumentError):
+        use_case.execute({"job_id": record.job_id}, caller_principal_id="alice")
+
+
+def test_get_reports_resumable_and_resume_count(tmp_path):
+    repo = make_repo(tmp_path)
+    record = interrupted_resumable(repo)
+    get = GetJobUseCase(repo)
+    before = get.execute({"job_id": record.job_id}, caller_principal_id="alice")
+    assert before["resumable"] is True
+    assert before["resume_count"] == 0
+    ResumeJobUseCase(repo, invoker=RecordingInvoker()).execute(
+        {"job_id": record.job_id, "idempotency_key": "resume-1"},
+        caller_principal_id="alice",
+    )
+    after = get.execute({"job_id": record.job_id}, caller_principal_id="alice")
+    assert after["resume_count"] == 1
+    assert after["state"] == "running"
+
+
+def test_first_party_jobs_are_never_resumable(tmp_path):
+    """The engine's own jobs die with the process; resume answers unavailable."""
+    repo = make_repo(tmp_path)
+    owner = first_party_owner("engine-instance-1")
+    use_case = CreateFirstPartyJobUseCase(repo, owner=owner)
+    start = use_case.create(JOB_KIND_PRICES_REFRESH, idempotency_key="refresh-1")
+    recover_first_party_jobs(repo, owner)
+    directory = FirstPartyJobDirectory(repo)
+
+    assert (
+        repo.get(GetJobCommand(job_id=start.job_id)).state is JobState.INTERRUPTED
+    )
+    with pytest.raises(JobResumeUnsupportedError):
+        directory.job_resume(
+            {"job_id": start.job_id, "idempotency_key": "resume-1"},
+            principal="anyone",
+        )
+
+
+def test_first_party_directory_reports_an_unknown_job_as_not_found(tmp_path):
+    """So dispatch keeps probing the next directory for that id."""
+    directory = FirstPartyJobDirectory(make_repo(tmp_path))
+    with pytest.raises(JobsNotFoundError):
+        directory.job_resume(
+            {
+                "job_id": "00000000-0000-4000-8000-000000000000",
+                "idempotency_key": "resume-1",
+            },
+            principal="anyone",
+        )

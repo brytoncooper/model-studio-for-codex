@@ -43,7 +43,11 @@ from model_deck.engine.jobs.ports import (
     PluginJobRepository,
     WorkerCrashResult,
 )
-from model_deck.engine.jobs.use_cases import CancelJobUseCase, GetJobUseCase
+from model_deck.engine.jobs.use_cases import (
+    CancelJobUseCase,
+    GetJobUseCase,
+    ResumeJobUseCase,
+)
 
 __all__ = [
     "CreateFirstPartyJobUseCase",
@@ -314,6 +318,12 @@ class FirstPartyJobDirectory:
     def __init__(self, repository: PluginJobRepository) -> None:
         self._get_job = GetJobUseCase(repository)
         self._cancel_job = CancelJobUseCase(repository)
+        # No invoker: an engine job's work lives in this process and dies with
+        # it, so there is nothing to hand a checkpoint back to. The use case
+        # still validates params, reports an unknown id as not found so
+        # dispatch keeps looking, and answers resume_unavailable for a job
+        # this directory does own.
+        self._resume_job = ResumeJobUseCase(repository)
 
     def job_get(self, params: Mapping[str, Any], *, principal: str) -> dict[str, Any]:
         return self._get_job.execute(
@@ -322,5 +332,15 @@ class FirstPartyJobDirectory:
 
     def job_cancel(self, params: Mapping[str, Any], *, principal: str) -> dict[str, Any]:
         return self._cancel_job.execute(
+            params, caller_principal_id=FIRST_PARTY_ORIGIN_PRINCIPAL
+        )
+
+    def job_resume(self, params: Mapping[str, Any], *, principal: str) -> dict[str, Any]:
+        """Always refuses: first-party jobs are not resumable in this wave.
+
+        They are created without the resumable flag, so the use case reaches
+        ``resume_unavailable`` on its own rather than by a special case here.
+        """
+        return self._resume_job.execute(
             params, caller_principal_id=FIRST_PARTY_ORIGIN_PRINCIPAL
         )

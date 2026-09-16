@@ -71,7 +71,9 @@ class FakeState:
         return self.operation_state
 
 
-class BrokerTests(unittest.TestCase):
+class BrokerFixture(unittest.TestCase):
+    """The real authority / SQLite / broker composition every case below uses."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.now = datetime(2026, 9, 12, tzinfo=timezone.utc)
@@ -128,6 +130,9 @@ class BrokerTests(unittest.TestCase):
             self.state.activation_state,
             revocation_generation=self.state.activation_state.revocation_generation + 1,
         )
+
+
+class BrokerTests(BrokerFixture):
 
     def test_create_persists_captured_invocation_and_owner(self):
         job_id = self._create()
@@ -426,6 +431,274 @@ class RepairTests(unittest.TestCase):
         finally:
             self.repo.complete = original
         self.assertEqual(self.repo.get(GetJobCommand(job_id)).state, JobState.RUNNING)
+
+
+class CheckpointTests(BrokerFixture):
+    """The sixth broker method: compare-and-swap resume state.
+
+    Inherits the real authority / SQLite / broker composition above, so every
+    assertion here runs against the same trusted path the worker uses.
+    """
+
+    def _schema_repo(self):
+        """A broker whose jobs declare a checkpoint schema at create time."""
+        return self.broker
+
+    def _create_with_schema(self, schema_id="ckpt.v1"):
+        return self.broker.create(
+            self.handle,
+            self.identity,
+            operation_id="jobs.run",
+            checkpoint_schema_id=schema_id,
+        )["job_id"]
+
+    def test_checkpoint_saves_and_advances_the_revision(self):
+        job_id = self._create()
+        first = self.broker.checkpoint(
+            self.identity, job_id=job_id, checkpoint={"index": 1}, expected_revision=0
+        )
+        self.assertEqual(first, {"revision": 1})
+        second = self.broker.checkpoint(
+            self.identity, job_id=job_id, checkpoint={"index": 2}, expected_revision=1
+        )
+        self.assertEqual(second, {"revision": 2})
+        stored = self.repo.get(GetJobCommand(job_id))
+        self.assertEqual(stored.checkpoint_revision, 2)
+        self.assertEqual(stored.checkpoint_json, '{"index":2}')
+
+    def test_null_expected_revision_means_nothing_saved_yet(self):
+        job_id = self._create()
+        self.assertEqual(
+            self.broker.checkpoint(
+                self.identity,
+                job_id=job_id,
+                checkpoint={"index": 1},
+                expected_revision=None,
+            ),
+            {"revision": 1},
+        )
+
+    def test_stale_revision_conflicts_and_stores_nothing(self):
+        job_id = self._create()
+        self.broker.checkpoint(
+            self.identity, job_id=job_id, checkpoint={"index": 1}, expected_revision=0
+        )
+        with self.assertRaises(BrokerJobConflictError):
+            self.broker.checkpoint(
+                self.identity,
+                job_id=job_id,
+                checkpoint={"index": 99},
+                expected_revision=0,
+            )
+        self.assertEqual(self.repo.get(GetJobCommand(job_id)).checkpoint_json, '{"index":1}')
+
+    def test_omitting_schema_id_keeps_the_schema_the_job_declared(self):
+        """The published params schema says schema_id is optional; it is.
+
+        Omitting it is the documented default, not a mistake. Storage keeps
+        the declared schema and validates the checkpoint against it, so an
+        unlabelled save is stored labelled and checked all the same. A worker
+        written from the contract calls exactly this way.
+        """
+        job_id = self._create_with_schema()
+        self.assertEqual(
+            self.broker.checkpoint(
+                self.identity,
+                job_id=job_id,
+                checkpoint={"index": 1},
+                expected_revision=0,
+            ),
+            {"revision": 1},
+        )
+        stored = self.repo.get(GetJobCommand(job_id))
+        self.assertEqual(stored.checkpoint_schema_id, "ckpt.v1")
+        self.assertEqual(stored.checkpoint_json, '{"index":1}')
+
+    def test_a_declared_schema_cannot_be_replaced_by_another(self):
+        job_id = self._create_with_schema()
+        with self.assertRaises(BrokerJobInvalidRequestError):
+            self.broker.checkpoint(
+                self.identity,
+                job_id=job_id,
+                checkpoint={"index": 1},
+                expected_revision=0,
+                schema_id="ckpt.v2",
+            )
+        self.assertIsNone(self.repo.get(GetJobCommand(job_id)).checkpoint_json)
+        self.assertEqual(
+            self.broker.checkpoint(
+                self.identity,
+                job_id=job_id,
+                checkpoint={"index": 1},
+                expected_revision=0,
+                schema_id="ckpt.v1",
+            ),
+            {"revision": 1},
+        )
+
+    def test_schema_id_cannot_be_introduced_where_none_was_declared(self):
+        job_id = self._create()
+        with self.assertRaises(BrokerJobInvalidRequestError):
+            self.broker.checkpoint(
+                self.identity,
+                job_id=job_id,
+                checkpoint={"index": 1},
+                expected_revision=0,
+                schema_id="ckpt.v1",
+            )
+        self.assertIsNone(self.repo.get(GetJobCommand(job_id)).checkpoint_json)
+
+    def test_checkpoint_requires_the_owning_activation(self):
+        job_id = self._create()
+        stranger = replace(self.identity, activation_id="act-2")
+        with self.assertRaises(BrokerJobDeniedError):
+            self.broker.checkpoint(
+                stranger, job_id=job_id, checkpoint={"index": 1}, expected_revision=0
+            )
+        self.assertIsNone(self.repo.get(GetJobCommand(job_id)).checkpoint_json)
+
+    def test_revoked_activation_cannot_checkpoint(self):
+        job_id = self._create()
+        self._bump_activation()
+        with self.assertRaises(BrokerJobDeniedError):
+            self.broker.checkpoint(
+                self.identity, job_id=job_id, checkpoint={"index": 1}, expected_revision=0
+            )
+        self.assertIsNone(self.repo.get(GetJobCommand(job_id)).checkpoint_json)
+
+    def test_terminal_job_cannot_checkpoint(self):
+        job_id = self._create()
+        self.broker.complete(self.identity, job_id=job_id)
+        with self.assertRaises((BrokerJobConflictError, BrokerJobTerminalError)):
+            self.broker.checkpoint(
+                self.identity, job_id=job_id, checkpoint={"index": 1}, expected_revision=0
+            )
+
+    def test_oversized_checkpoint_is_refused_and_stores_nothing(self):
+        job_id = self._create()
+        with self.assertRaises(BrokerJobInvalidRequestError):
+            self.broker.checkpoint(
+                self.identity,
+                job_id=job_id,
+                checkpoint={"blob": "x" * (1024 * 1024 + 8)},
+                expected_revision=0,
+            )
+        self.assertIsNone(self.repo.get(GetJobCommand(job_id)).checkpoint_json)
+
+    def test_malformed_requests_are_refused(self):
+        job_id = self._create()
+        for expected_revision in (-1, 1.5, True, "1"):
+            with self.assertRaises(BrokerJobInvalidRequestError):
+                self.broker.checkpoint(
+                    self.identity,
+                    job_id=job_id,
+                    checkpoint={"index": 1},
+                    expected_revision=expected_revision,
+                )
+        with self.assertRaises(BrokerJobInvalidRequestError):
+            self.broker.checkpoint(
+                self.identity,
+                job_id="not-a-uuid",
+                checkpoint={"index": 1},
+                expected_revision=0,
+            )
+        with self.assertRaises(BrokerJobInvalidRequestError):
+            self.broker.checkpoint(
+                self.identity,
+                job_id=job_id,
+                checkpoint={"bad": float("nan")},
+                expected_revision=0,
+            )
+
+    def test_unknown_job_is_not_found(self):
+        with self.assertRaises(BrokerJobNotFoundError):
+            self.broker.checkpoint(
+                self.identity,
+                job_id=MISSING_UUID,
+                checkpoint={"index": 1},
+                expected_revision=0,
+            )
+
+    def test_an_explicit_checkpoint_grant_is_accepted(self):
+        broker = PluginJobBroker(
+            authority=self.authority,
+            repository=self.repo,
+            grants={**GRANTS, "checkpoint": WRITE},
+            mutation_guard=self.guard,
+        )
+        job_id = self._create()
+        self.assertEqual(
+            broker.checkpoint(
+                self.identity, job_id=job_id, checkpoint={"index": 1}, expected_revision=0
+            ),
+            {"revision": 1},
+        )
+
+    def test_a_denied_checkpoint_grant_refuses_the_save(self):
+        """The grant is real authority, not decoration."""
+        broker = PluginJobBroker(
+            authority=self.authority,
+            repository=self.repo,
+            grants={**GRANTS, "checkpoint": ("write", "jobs.private", "not.granted")},
+            mutation_guard=self.guard,
+        )
+        job_id = self._create()
+        with self.assertRaises(BrokerJobDeniedError):
+            broker.checkpoint(
+                self.identity, job_id=job_id, checkpoint={"index": 1}, expected_revision=0
+            )
+
+
+class ResumableFlagTests(BrokerFixture):
+    """Only the manifest can make a job resumable, through composition."""
+
+    def test_jobs_are_not_resumable_without_a_lookup(self):
+        job_id = self._create()
+        self.assertIs(self.repo.get(GetJobCommand(job_id)).resumable, False)
+
+    def test_create_persists_what_the_lookup_says(self):
+        seen = []
+
+        def lookup(operation_id):
+            seen.append(operation_id)
+            return operation_id == "jobs.run"
+
+        broker = PluginJobBroker(
+            authority=self.authority,
+            repository=self.repo,
+            grants=dict(GRANTS),
+            mutation_guard=self.guard,
+            resumable_operations=lookup,
+        )
+        job_id = broker.create(self.handle, self.identity, operation_id="jobs.run")["job_id"]
+        self.assertIs(self.repo.get(GetJobCommand(job_id)).resumable, True)
+        # The operation asked about is the one the trusted context settled on,
+        # never a value the worker supplied.
+        self.assertEqual(seen, ["jobs.run"])
+
+    def test_a_failing_lookup_fails_the_create_instead_of_guessing(self):
+        """A broken lookup must not be written down as "never declared".
+
+        Answering False would put a durable, permanent lie in the row: the
+        job would report resume_unavailable for life, indistinguishable from
+        an operation that really never declared the flag. Failing the create
+        is recoverable; a silently unresumable job is not.
+        """
+
+        def lookup(operation_id):
+            raise RuntimeError("private manifest secret")
+
+        broker = PluginJobBroker(
+            authority=self.authority,
+            repository=self.repo,
+            grants=dict(GRANTS),
+            mutation_guard=self.guard,
+            resumable_operations=lookup,
+        )
+        with self.assertRaises(BrokerJobOperationError) as captured:
+            broker.create(self.handle, self.identity, operation_id="jobs.run")
+        # The lookup's own words stay inside the engine.
+        self.assertNotIn("secret", str(captured.exception))
 
 
 if __name__ == "__main__":

@@ -88,6 +88,12 @@ class JobRecord:
     output: Any | None = None
     output_present: bool = False
     failure_code: str | None = None
+    resumable: bool = False
+    """The operation declared itself resumable, so an INTERRUPTED run may be
+    restarted from its last checkpoint. Default False: a job is not resumable
+    unless its contributed operation said so."""
+    resume_count: int = 0
+    """How many times ``begin_resume`` has moved this job back to RUNNING."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +112,8 @@ class JobPublicView:
     progress: float
     output_present: bool = False
     output: Any = None
+    resumable: bool = False
+    resume_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +123,12 @@ class CreateJobCommand:
     operation_id: str
     origin_principal_id: str
     checkpoint_schema_id: str | None = None
+    resumable: bool = False
+    """The contributing manifest declared this operation ``resumable: true``.
+
+    Supplied by the supervisor from the manifest, never by the worker: a
+    plugin cannot make its own job resumable by asking.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +164,34 @@ class RequestCancelPublicCommand:
     job_id: str
     caller_principal_id: str
     idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeJobCommand:
+    """Public request to restart one interrupted, resumable job.
+
+    Same shape as ``RequestCancelPublicCommand``: the caller is the
+    originating principal and the idempotency key is durable per principal,
+    so an exact replay returns the stored outcome rather than resuming twice.
+    """
+
+    job_id: str
+    caller_principal_id: str
+    idempotency_key: str
+    activation_id: str | None = None
+    """The plugin's CURRENT serving activation, from the supervisor.
+
+    The interrupted run's activation is gone, so the durable row is rebound to
+    the activation that will actually do the work. None leaves the recorded
+    activation untouched (the first-party path, which resumes nothing).
+    """
+    invocation_id: str | None = None
+    """The invocation authority captured for the resume call.
+
+    Worker follow-ups (progress / checkpoint / complete / fail) re-authorize
+    against the row's ``invocation_id``, and the original one belongs to an
+    activation that no longer exists, so resume rebinds it too.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +239,86 @@ class WorkerCrashResult:
     interrupted_job_ids: tuple[str, ...]
 
 
+RESUME_OPERATION_SUFFIX = ".resume"
+"""How a resumable operation names its resume entry point.
+
+A manifest operation ``"<op>"`` that declares ``resumable: true`` must also
+implement the sibling invocation ``"<op>.resume"``. It is not a second
+contributed operation: it is never listed, never publicly invocable, and only
+the supervisor ever calls it, with the params in
+``ResumeInvocationRequest.invocation_params``.
+"""
+
+
+def resume_operation_id(operation_id: str) -> str:
+    """The sibling invocation the plugin must implement for ``operation_id``."""
+    if not isinstance(operation_id, str) or not operation_id:
+        raise ValueError("operation_id must be a non-empty string")
+    return operation_id + RESUME_OPERATION_SUFFIX
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeInvocationRequest:
+    """Everything the supervisor needs to hand one job back to its plugin.
+
+    ``checkpoint`` is the DECODED last checkpoint (or None when the job was
+    interrupted before saving one); the use case decodes and revalidates the
+    stored encoding, so nothing downstream sees a storage representation.
+    """
+
+    job_id: str
+    plugin_id: str
+    operation_id: str
+    origin_principal_id: str
+    checkpoint_revision: int | None = None
+    checkpoint_schema_id: str | None = None
+    checkpoint: Any = None
+
+    @property
+    def resume_operation_id(self) -> str:
+        return resume_operation_id(self.operation_id)
+
+    def invocation_params(self) -> dict[str, Any]:
+        """The exact input the plugin's ``"<op>.resume"`` receives."""
+        return {
+            "job_id": self.job_id,
+            "checkpoint_revision": self.checkpoint_revision,
+            "checkpoint_schema_id": self.checkpoint_schema_id,
+            "checkpoint": self.checkpoint,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeTarget:
+    """The live activation and invocation authority a resume will run under."""
+
+    activation_id: str
+    invocation_id: str
+
+
+@runtime_checkable
+class JobResumeInvoker(Protocol):
+    """Supervisor-side transport for handing an interrupted job back.
+
+    Two steps on purpose. ``prepare`` resolves the plugin's *current* serving
+    activation and captures a fresh invocation authority for
+    ``"<op>.resume"``; the durable row is rebound to that pair before anything
+    is invoked, so the worker's first progress call already authorizes.
+    ``invoke`` then runs the plugin. Neither step lives in the engine: the
+    engine only names the seam.
+    """
+
+    def prepare(self, request: ResumeInvocationRequest) -> ResumeTarget | None:
+        """Bind the current serving activation, or None when not serving."""
+        ...
+
+    def invoke(
+        self, request: ResumeInvocationRequest, target: ResumeTarget
+    ) -> None:
+        """Invoke ``request.resume_operation_id`` on that activation."""
+        ...
+
+
 @runtime_checkable
 class PluginJobRepository(Protocol):
     def create(self, command: CreateJobCommand) -> JobRecord: ...
@@ -214,6 +336,67 @@ class PluginJobRepository(Protocol):
     def get_public(self, command: GetPublicCommand) -> JobPublicView: ...
     def list_active_for_activation(self, owner: JobOwner) -> list[JobRecord]: ...
     def mark_worker_crashed(self, owner: JobOwner) -> WorkerCrashResult: ...
+    def read_checkpoint(
+        self, owner: JobOwner, job_id: str
+    ) -> tuple[int, str | None, str | None] | None:
+        """Return ``(revision, schema_id, checkpoint_json)`` or None.
+
+        None means the job exists and is owned by ``owner`` but has never
+        saved a checkpoint. ``checkpoint_json`` is the stored encoding, not a
+        decoded value: the domain never sees storage encodings, so the caller
+        decodes and revalidates it. A job that does not exist, or that belongs
+        to another owner, raises rather than returning None.
+        """
+        ...
+
+    def begin_resume(self, command: ResumeJobCommand) -> JobRecord:
+        """Atomically move one INTERRUPTED resumable job back to RUNNING.
+
+        In a single transaction: verify the caller is the originating
+        principal, verify the job is INTERRUPTED and ``resumable``, set
+        ``state`` to RUNNING, increment ``resume_count`` by one, and keep the
+        owning ``plugin_id``/``activation_id`` and the stored checkpoint
+        exactly as they are. Progress and checkpoint revision are preserved;
+        nothing is replayed here.
+
+        Raises ``JobResumeUnsupportedError`` when the job is not resumable or
+        is not INTERRUPTED, and ``JobResumeConflictError`` when the
+        idempotency key was already bound to a different request.
+        """
+        ...
+
+    def rollback_resume(
+        self, job_id: str, caller_principal_id: str, idempotency_key: str
+    ) -> JobRecord:
+        """Undo one ``begin_resume`` whose plugin invocation never landed.
+
+        ``begin_resume`` commits before the worker is touched, because the
+        worker's first call has to authorize against a RUNNING row. When the
+        invocation then fails, that committed row describes a job nobody is
+        working on, and no worker ever dies to make recovery notice it. This
+        is how the caller's failed attempt is taken back.
+
+        In one transaction: verify the caller is the originating principal,
+        and if the job is still RUNNING from that resume, return it to
+        INTERRUPTED, decrement ``resume_count`` back, and delete the
+        ``(principal, idempotency_key)`` receipt so the failure is not
+        replayed as a success. A job that is no longer RUNNING is left
+        exactly as it is and returned unchanged: the worker evidently did
+        receive the invocation, and its outcome outranks the transport error.
+        """
+        ...
+
+    def read_resume_receipt(
+        self, caller_principal_id: str, idempotency_key: str
+    ) -> tuple[str, int | None] | None:
+        """Return ``(job_id, resumed_from_revision)`` for a settled resume.
+
+        The durable record of what one ``(principal, idempotency_key)`` pair
+        already did, so an exact replay answers with the original outcome
+        instead of resuming a second time. None when that pair has never
+        resumed anything.
+        """
+        ...
 
 
 class JobNotFoundError(LookupError):
@@ -246,6 +429,23 @@ class JobCheckpointConflictError(ValueError):
 
 class JobCheckpointValidationError(ValueError):
     pass
+
+
+class JobResumeUnsupportedError(ValueError):
+    """This job cannot be resumed; maps to domain error ``resume_unavailable``.
+
+    Raised when the job's operation is not resumable, or when the job is in
+    any state other than INTERRUPTED. It is a permanent answer for that job in
+    that state, not a retry hint.
+    """
+
+
+class JobResumeConflictError(ValueError):
+    """A resume idempotency key was already bound elsewhere; maps to ``conflict``.
+
+    Same rule as public cancellation: a ``(principal, idempotency_key)`` pair
+    binds to exactly one job, and reusing it for another job is a conflict.
+    """
 
 
 # --- Shared bounded json_value validation -----------------------------------

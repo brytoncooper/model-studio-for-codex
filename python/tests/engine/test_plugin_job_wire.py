@@ -482,5 +482,90 @@ class PluginJobWireTests(unittest.TestCase):
         self.assertIsNone(stored.output)
 
 
+    # ------------------------------------------------------------------
+    # Checkpoint (the sixth wire method)
+    # ------------------------------------------------------------------
+
+    def _checkpoint(self, job_id, **overrides):
+        params = {
+            "job_id": job_id,
+            "checkpoint": {"index": 1},
+            "expected_revision": 0,
+        }
+        params.update(overrides)
+        return self.adapter(
+            self.identity.activation_id,
+            "plugin.v1.broker.jobs.checkpoint",
+            params,
+        )
+
+    def test_checkpoint_round_trips_through_the_frozen_schemas(self) -> None:
+        job_id = self._create()
+        self.assertEqual(self._checkpoint(job_id), {"revision": 1})
+        self.assertEqual(
+            self._checkpoint(job_id, checkpoint={"index": 2}, expected_revision=1),
+            {"revision": 2},
+        )
+        stored = self.repo.get(GetJobCommand(job_id=job_id))
+        self.assertEqual(stored.checkpoint_revision, 2)
+
+    def test_checkpoint_accepts_an_explicit_null_expected_revision(self) -> None:
+        """null is how the worker says "nothing saved yet"."""
+        job_id = self._create()
+        self.assertEqual(
+            self._checkpoint(job_id, expected_revision=None), {"revision": 1}
+        )
+
+    def test_checkpoint_rejects_params_the_schema_does_not_allow(self) -> None:
+        job_id = self._create()
+        for params in (
+            {"job_id": job_id, "checkpoint": {"a": 1}},  # expected_revision missing
+            {"job_id": job_id, "expected_revision": 0},  # checkpoint missing
+            {"checkpoint": {"a": 1}, "expected_revision": 0},  # job_id missing
+            {
+                "job_id": job_id,
+                "checkpoint": {"a": 1},
+                "expected_revision": 0,
+                "extra": True,
+            },
+            {"job_id": "not-a-uuid", "checkpoint": {"a": 1}, "expected_revision": 0},
+            {"job_id": job_id, "checkpoint": {"a": 1}, "expected_revision": -1},
+        ):
+            with self.assertRaises(PluginJobWireRequestError):
+                self.adapter(
+                    self.identity.activation_id,
+                    "plugin.v1.broker.jobs.checkpoint",
+                    params,
+                )
+        self.assertIsNone(self.repo.get(GetJobCommand(job_id=job_id)).checkpoint_json)
+
+    def test_checkpoint_stale_revision_is_a_conflict(self) -> None:
+        job_id = self._create()
+        self._checkpoint(job_id)
+        with self.assertRaises(BrokerJobConflictError):
+            self._checkpoint(job_id, checkpoint={"index": 99}, expected_revision=0)
+
+    def test_checkpoint_requires_the_bound_activation(self) -> None:
+        job_id = self._create()
+        with self.assertRaises(PluginJobWireActivationError):
+            self.adapter(
+                "act-other",
+                "plugin.v1.broker.jobs.checkpoint",
+                {"job_id": job_id, "checkpoint": {"a": 1}, "expected_revision": 0},
+            )
+        self.assertIsNone(self.repo.get(GetJobCommand(job_id=job_id)).checkpoint_json)
+
+    def test_checkpoint_after_revocation_is_denied(self) -> None:
+        job_id = self._create()
+        self._bump_activation()
+        with self.assertRaises(BrokerJobDeniedError):
+            self._checkpoint(job_id)
+        self.assertIsNone(self.repo.get(GetJobCommand(job_id=job_id)).checkpoint_json)
+
+    def test_checkpoint_on_an_unknown_job_is_not_found(self) -> None:
+        with self.assertRaises(BrokerJobNotFoundError):
+            self._checkpoint("00000000-0000-4000-8000-000000000000")
+
+
 if __name__ == "__main__":
     unittest.main()

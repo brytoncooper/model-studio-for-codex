@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -17,14 +18,19 @@ from model_deck.engine.jobs.ports import (
     GetJobCommand,
     JobCheckpointConflictError,
     JobCheckpointValidationError,
+    GetPublicCommand,
     JobNotFoundError,
+    JobOriginMismatchError,
     JobOwner,
     JobOwnershipMismatchError,
+    JobResumeConflictError,
+    JobResumeUnsupportedError,
     JobState,
     JobStateConflictError,
     JobTerminalConflictError,
     ReportProgressCommand,
     RequestCancelCommand,
+    ResumeJobCommand,
     SaveCheckpointCommand,
 )
 
@@ -508,3 +514,374 @@ def test_request_cancel_public_idempotent_active_false_terminal(tmp_path):
         )
         is False
     )
+
+
+# --- Explicit resume ---------------------------------------------------------
+# A job is resumable only because its manifest said so at create time, and only
+# an interrupted resumable job can be handed back to a worker. Everything here
+# goes through the real SQLite adapter, including across a reopened database.
+
+
+def interrupt(repo, record):
+    """Reach INTERRUPTED the only way production does: the worker is lost."""
+    repo.mark_worker_crashed(OWNER)
+    return repo.get(GetJobCommand(job_id=record.job_id))
+
+
+def resume(repo, record, *, key="resume-1", principal="origin", **overrides):
+    command = ResumeJobCommand(
+        job_id=overrides.get("job_id", record.job_id),
+        caller_principal_id=principal,
+        idempotency_key=key,
+        activation_id=overrides.get("activation_id"),
+        invocation_id=overrides.get("invocation_id"),
+    )
+    return repo.begin_resume(command)
+
+
+def test_create_persists_the_resumable_flag(tmp_path):
+    repo = make_repo(tmp_path / "j.sqlite")
+    assert create(repo).resumable is False
+    resumable = repo.create(
+        CreateJobCommand(
+            owner=OWNER,
+            invocation_id="inv-2",
+            operation_id="com.example.run",
+            origin_principal_id="origin",
+            resumable=True,
+        )
+    )
+    assert resumable.resumable is True
+    assert resumable.resume_count == 0
+    # It survives a reopen: the flag is durable, not an in-memory decision.
+    reopened = make_repo(tmp_path / "j.sqlite")
+    assert reopened.get(GetJobCommand(job_id=resumable.job_id)).resumable is True
+
+
+def test_read_checkpoint_returns_none_until_one_is_saved(tmp_path):
+    repo = make_repo(tmp_path / "j.sqlite")
+    record = create(repo, checkpoint_schema_id="ckpt.v1")
+    repo.claim(ClaimJobCommand(job_id=record.job_id, owner=OWNER))
+    assert repo.read_checkpoint(OWNER, record.job_id) is None
+    repo.save_checkpoint(
+        SaveCheckpointCommand(
+            job_id=record.job_id,
+            owner=OWNER,
+            checkpoint={"done": 2},
+            expected_revision=0,
+            schema_id="ckpt.v1",
+        )
+    )
+    revision, schema_id, encoded = repo.read_checkpoint(OWNER, record.job_id)
+    assert revision == 1
+    assert schema_id == "ckpt.v1"
+    # The third position is the stored encoding, not a decoded value.
+    assert json.loads(encoded) == {"done": 2}
+
+
+def test_read_checkpoint_refuses_unknown_job_and_other_owner(tmp_path):
+    repo = make_repo(tmp_path / "j.sqlite")
+    record = create(repo)
+    with pytest.raises(JobNotFoundError):
+        repo.read_checkpoint(OWNER, "00000000-0000-4000-8000-000000000000")
+    with pytest.raises(JobOwnershipMismatchError):
+        repo.read_checkpoint(OTHER, record.job_id)
+
+
+def make_interrupted_resumable(tmp_path, *, checkpoint=True, name="j.sqlite"):
+    repo = make_repo(tmp_path / name)
+    record = repo.create(
+        CreateJobCommand(
+            owner=OWNER,
+            invocation_id="inv-1",
+            operation_id="com.example.run",
+            origin_principal_id="origin",
+            checkpoint_schema_id="ckpt.v1",
+            resumable=True,
+        )
+    )
+    repo.claim(ClaimJobCommand(job_id=record.job_id, owner=OWNER))
+    repo.report_progress(
+        ReportProgressCommand(job_id=record.job_id, owner=OWNER, progress=0.5)
+    )
+    if checkpoint:
+        repo.save_checkpoint(
+            SaveCheckpointCommand(
+                job_id=record.job_id,
+                owner=OWNER,
+                checkpoint={"next_index": 7},
+                expected_revision=0,
+                schema_id="ckpt.v1",
+            )
+        )
+    return repo, interrupt(repo, record)
+
+
+def test_begin_resume_returns_to_running_and_rebinds_the_activation(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    assert record.state is JobState.INTERRUPTED
+
+    resumed = resume(repo, record, activation_id="act-9", invocation_id="inv-9")
+
+    assert resumed.state is JobState.RUNNING
+    assert resumed.resume_count == 1
+    # The owning plugin is preserved; only the dead activation is replaced.
+    assert resumed.plugin_id == OWNER.plugin_id
+    assert resumed.activation_id == "act-9"
+    assert resumed.invocation_id == "inv-9"
+    # Nothing is replayed: progress and checkpoint survive untouched.
+    assert resumed.progress == 0.5
+    assert resumed.checkpoint_revision == 1
+    assert json.loads(resumed.checkpoint_json) == {"next_index": 7}
+
+
+def test_begin_resume_keeps_the_recorded_activation_when_none_is_supplied(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    resumed = resume(repo, record)
+    assert resumed.activation_id == OWNER.activation_id
+    assert resumed.invocation_id == "inv-1"
+
+
+def test_begin_resume_refuses_a_job_that_never_declared_itself_resumable(tmp_path):
+    repo = make_repo(tmp_path / "j.sqlite")
+    record = create(repo)
+    repo.claim(ClaimJobCommand(job_id=record.job_id, owner=OWNER))
+    interrupted = interrupt(repo, record)
+    with pytest.raises(JobResumeUnsupportedError):
+        resume(repo, interrupted)
+
+
+def test_begin_resume_refuses_a_job_that_is_not_interrupted(tmp_path):
+    repo = make_repo(tmp_path / "j.sqlite")
+    record = repo.create(
+        CreateJobCommand(
+            owner=OWNER,
+            invocation_id="inv-1",
+            operation_id="com.example.run",
+            origin_principal_id="origin",
+            resumable=True,
+        )
+    )
+    repo.claim(ClaimJobCommand(job_id=record.job_id, owner=OWNER))
+    with pytest.raises(JobResumeUnsupportedError):
+        resume(repo, record)
+
+
+def test_begin_resume_requires_the_originating_principal(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    with pytest.raises(JobOriginMismatchError):
+        resume(repo, record, principal="mallory")
+    assert repo.get(GetJobCommand(job_id=record.job_id)).state is JobState.INTERRUPTED
+
+
+def test_begin_resume_replays_the_same_key_and_conflicts_on_another_job(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    first = resume(repo, record, key="resume-1")
+    assert first.resume_count == 1
+
+    replay = resume(repo, record, key="resume-1")
+    # The replay answers with the stored row; it does not resume twice.
+    assert replay.resume_count == 1
+
+    other = repo.create(
+        CreateJobCommand(
+            owner=OWNER,
+            invocation_id="inv-2",
+            operation_id="com.example.run",
+            origin_principal_id="origin",
+            resumable=True,
+        )
+    )
+    with pytest.raises(JobResumeConflictError):
+        resume(repo, other, key="resume-1")
+
+
+def test_begin_resume_conflicts_when_a_fresh_key_targets_a_resumed_job(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    resume(repo, record, key="resume-1")
+    with pytest.raises(JobResumeConflictError):
+        resume(repo, record, key="resume-2")
+
+
+def test_resume_receipt_records_the_revision_it_resumed_from(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    assert repo.read_resume_receipt("origin", "resume-1") is None
+    resume(repo, record, key="resume-1")
+    assert repo.read_resume_receipt("origin", "resume-1") == (record.job_id, 1)
+    # A key that belongs to someone else is not visible.
+    assert repo.read_resume_receipt("mallory", "resume-1") is None
+
+
+def test_resume_receipt_revision_is_none_without_a_checkpoint(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path, checkpoint=False)
+    resume(repo, record, key="resume-1")
+    assert repo.read_resume_receipt("origin", "resume-1") == (record.job_id, None)
+
+
+def test_resume_state_survives_reopening_the_database(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    resume(repo, record, key="resume-1", activation_id="act-9")
+    reopened = make_repo(tmp_path / "j.sqlite")
+    stored = reopened.get(GetJobCommand(job_id=record.job_id))
+    assert stored.state is JobState.RUNNING
+    assert stored.resume_count == 1
+    assert stored.activation_id == "act-9"
+    assert reopened.read_resume_receipt("origin", "resume-1") == (record.job_id, 1)
+
+
+def test_public_view_carries_resumable_and_resume_count(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    view = repo.get_public(
+        GetPublicCommand(job_id=record.job_id, caller_principal_id="origin")
+    )
+    assert view.resumable is True
+    assert view.resume_count == 0
+    resume(repo, record, key="resume-1")
+    after = repo.get_public(
+        GetPublicCommand(job_id=record.job_id, caller_principal_id="origin")
+    )
+    assert after.resume_count == 1
+
+
+def test_existing_database_without_resume_columns_migrates(tmp_path):
+    """A database written before explicit resume stays readable, non-resumable."""
+    db = tmp_path / "legacy.sqlite"
+    connection = sqlite3.connect(str(db))
+    connection.executescript(
+        """
+        CREATE TABLE plugin_jobs (
+            job_id TEXT PRIMARY KEY,
+            plugin_id TEXT NOT NULL,
+            activation_id TEXT NOT NULL,
+            invocation_id TEXT NOT NULL,
+            operation_id TEXT NOT NULL,
+            state TEXT NOT NULL,
+            progress REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            origin_principal_id TEXT NOT NULL DEFAULT '',
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            checkpoint_revision INTEGER NOT NULL DEFAULT 0,
+            checkpoint_schema_id TEXT,
+            checkpoint_json TEXT,
+            output_json TEXT,
+            failure_code TEXT
+        );
+        INSERT INTO plugin_jobs VALUES (
+            '11111111-1111-4111-8111-111111111111', 'com.example.jobs', 'act-1',
+            'inv-1', 'com.example.run', 'interrupted', 0.25, '2026-01-01T00:00:00Z',
+            'origin', 0, 0, NULL, NULL, NULL, NULL
+        );
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    repo = make_repo(db)
+    legacy = repo.get(GetJobCommand(job_id="11111111-1111-4111-8111-111111111111"))
+    assert legacy.resumable is False
+    assert legacy.resume_count == 0
+    with pytest.raises(JobResumeUnsupportedError):
+        repo.begin_resume(
+            ResumeJobCommand(
+                job_id=legacy.job_id,
+                caller_principal_id="origin",
+                idempotency_key="resume-legacy",
+            )
+        )
+
+
+# --- Taking a failed resume back ---------------------------------------------
+# begin_resume has to commit before the worker is touched, so an invocation that
+# never lands leaves a RUNNING row nobody is working on. No activation died, so
+# worker-loss recovery never fires. rollback_resume is the only thing that
+# undoes it.
+
+
+def test_rollback_resume_returns_the_job_to_interrupted_and_frees_the_key(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    resume(repo, record, key="resume-1", activation_id="act-9")
+
+    rolled = repo.rollback_resume(record.job_id, "origin", "resume-1")
+
+    assert rolled.state is JobState.INTERRUPTED
+    assert rolled.resume_count == 0
+    assert repo.read_resume_receipt("origin", "resume-1") is None
+    # Nothing about the work itself was touched.
+    assert rolled.progress == 0.5
+    assert rolled.checkpoint_revision == 1
+
+
+def test_a_rolled_back_job_can_be_resumed_again(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    resume(repo, record, key="resume-1")
+    repo.rollback_resume(record.job_id, "origin", "resume-1")
+
+    again = resume(repo, record, key="resume-2")
+    assert again.state is JobState.RUNNING
+    assert again.resume_count == 1
+
+
+def test_rollback_resume_leaves_a_job_that_already_settled_alone(tmp_path):
+    """The worker did get the invocation; its outcome outranks the error."""
+    repo, record = make_interrupted_resumable(tmp_path)
+    resume(repo, record, key="resume-1", activation_id="act-9")
+    repo.complete(
+        CompleteJobCommand(
+            job_id=record.job_id,
+            owner=JobOwner(plugin_id=OWNER.plugin_id, activation_id="act-9"),
+            output={"done": True},
+            output_present=True,
+        )
+    )
+
+    unchanged = repo.rollback_resume(record.job_id, "origin", "resume-1")
+
+    assert unchanged.state is JobState.COMPLETED
+    assert unchanged.resume_count == 1
+    assert repo.read_resume_receipt("origin", "resume-1") == (record.job_id, 1)
+
+
+def test_rollback_resume_without_a_resume_to_undo_changes_nothing(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    unchanged = repo.rollback_resume(record.job_id, "origin", "resume-1")
+    assert unchanged.state is JobState.INTERRUPTED
+    assert unchanged.resume_count == 0
+
+
+def test_rollback_resume_requires_the_originating_principal(tmp_path):
+    repo, record = make_interrupted_resumable(tmp_path)
+    resume(repo, record, key="resume-1")
+    with pytest.raises(JobOriginMismatchError):
+        repo.rollback_resume(record.job_id, "mallory", "resume-1")
+    assert repo.get(GetJobCommand(job_id=record.job_id)).state is JobState.RUNNING
+
+
+def test_rollback_resume_of_an_unknown_job_is_not_found(tmp_path):
+    repo, _ = make_interrupted_resumable(tmp_path)
+    with pytest.raises(JobNotFoundError):
+        repo.rollback_resume(
+            "00000000-0000-4000-8000-000000000000", "origin", "resume-1"
+        )
+
+
+def test_rollback_resume_keeps_another_key_receipt(tmp_path):
+    """Only the key that failed is freed; another job's receipt is untouched."""
+    repo, record = make_interrupted_resumable(tmp_path)
+    other = repo.create(
+        CreateJobCommand(
+            owner=OWNER,
+            invocation_id="inv-2",
+            operation_id="com.example.run",
+            origin_principal_id="origin",
+            resumable=True,
+        )
+    )
+    repo.claim(ClaimJobCommand(job_id=other.job_id, owner=OWNER))
+    repo.mark_worker_crashed(OWNER)
+    resume(repo, other, key="resume-other")
+    resume(repo, record, key="resume-1")
+
+    repo.rollback_resume(record.job_id, "origin", "resume-1")
+
+    assert repo.read_resume_receipt("origin", "resume-other") == (other.job_id, None)
+    assert repo.get(GetJobCommand(job_id=other.job_id)).state is JobState.RUNNING

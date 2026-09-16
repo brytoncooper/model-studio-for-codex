@@ -199,6 +199,7 @@ _JOBS = _feature(
     operations=(
         ("jobs.get", "read"),
         ("jobs.cancel", "write"),
+        ("jobs.resume", "write"),
     ),
     dependencies=(FEATURE_CORE,),
     required_capabilities=(CAPABILITY_JOBS,),

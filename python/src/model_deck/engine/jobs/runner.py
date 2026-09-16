@@ -17,6 +17,12 @@ Three properties matter and are enforced here rather than left to each caller:
 * **Nothing is replayed.** The runner dies with the process. Jobs left active
   are marked interrupted at the next startup by
   ``recover_first_party_jobs``; the runner never resumes them.
+
+First-party jobs are not explicitly resumable either in this wave: they are
+created without the resumable flag, so ``engine.v1.jobs.resume`` on one answers
+``resume_unavailable``. There is nothing to hand a checkpoint back to, because
+the work lived in this process; the way to run it again is to ask for a new
+refresh.
 """
 from __future__ import annotations
 

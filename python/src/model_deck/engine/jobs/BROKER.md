@@ -2,7 +2,7 @@
 
 Supervisor-side dispatch over settled `PluginAuthority` and the committed
 `PluginJobRepository`/SQLite adapter. Wire shapes mirror frozen
-`contracts/plugin.v1/broker/jobs.{create,progress,complete,fail,check_cancelled}.*.schema.json`.
+`contracts/plugin.v1/broker/jobs.{create,progress,checkpoint,complete,fail,check_cancelled}.*.schema.json`.
 Authenticated activations arrive via supervisor method arguments, never from
 request documents.
 
@@ -15,7 +15,8 @@ denied with no authority upgrade. The persisted job records the captured
 `invocation_id` and the exact `operation_id` plus the exact owner
 (`plugin_id`, `activation_id`).
 
-Follow-up calls (`report_progress`, `complete`, `fail`, `check_cancelled`)
+Follow-up calls (`report_progress`, `checkpoint`, `complete`, `fail`,
+`check_cancelled`)
 take only the authenticated activation plus the frozen params (`job_id` and
 the per-method payload). There is no live handle parameter on followups: the
 broker loads the trusted record from the repository by `job_id`, requires the
@@ -27,7 +28,12 @@ generation, effects, and grants. Worker-supplied context is never forwarded.
 
 The constructor requires a supervisor-owned `mutation_guard` context-manager
 factory plus the exact grant policy for
-`create/progress/complete/fail/check_cancelled`. Each operation holds one
+`create/progress/complete/fail/check_cancelled`, and optionally one for
+`checkpoint`, which otherwise inherits the `progress` grant. It also accepts
+`resumable_operations`, the lookup from a trusted `operation_id` to the
+manifest's `resumable` flag; without it no job is created resumable, and a
+lookup that is composed but raises fails the create rather than writing
+"not resumable" permanently into the row. Each operation holds one
 guard acquisition across reauthorization and the repository call. The broker
 exposes `revocation_barrier()` for the same guard; supervisors must apply
 revocation, expiry, and generation changes under it so revocation cannot
@@ -61,8 +67,16 @@ pending cancellation on an active job, it attempts the single terminal
 transition to `cancelled` before returning. A concurrent terminal writer can
 win; the durable job state remains authoritative, and public cancellation never
 promises termination. Terminal jobs stay terminal: second terminal writes
-conflict and no call claims, resumes, or restarts work. Errors are fixed safe
-codes with no raw repository or authority detail.
+conflict and no broker call claims, resumes, or restarts work.
+
+`checkpoint` saves resume state under compare-and-swap on
+`expected_revision` (null and 0 both mean "nothing saved yet"). A stale
+revision stores nothing and conflicts; the job must be active and owned by the
+caller. `schema_id` is optional: omitting it keeps the schema the job declared
+at create and the checkpoint is validated against it all the same, while
+naming a different schema — or any schema on a job that declared none — is
+rejected. The result is the revision now stored. Errors are fixed safe codes
+with no raw repository or authority detail.
 
 Error codes: `broker invalid request`, `broker job not found`,
 `broker job conflict`, `broker job terminal`, `broker authority denied`,
@@ -76,6 +90,11 @@ authorize the authenticated application principal against the origin captured
 at creation. `get` reports state/progress and an optional completed result;
 `cancel` durably binds its principal-scoped idempotency key and requests
 cancellation but never confirms termination. Exact replays return their stored
-acknowledgement; reuse of a key for another job conflicts. Explicit
-resume and the runner remain out of scope, so this slice does not claim full
-B19.
+acknowledgement; reuse of a key for another job conflicts.
+
+`engine.v1.jobs.resume` is also outside this broker: it is an application use
+case that rebinds an interrupted, resumable job to the plugin's live
+activation and invokes the sibling `"<op>.resume"` invocation. What the worker
+does afterwards comes back through this broker unchanged. The in-process
+runner for first-party jobs is separate again, and first-party jobs are not
+resumable.

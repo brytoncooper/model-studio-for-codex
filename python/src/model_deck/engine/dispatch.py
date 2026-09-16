@@ -85,8 +85,15 @@ from model_deck.engine.host_settings.ports import (
 from model_deck.engine.host_settings.service import HostSettingsService
 from model_deck.engine.hosts.ports import HostIntegrationPort
 from model_deck.engine.hosts.service import HostOperationsService
-from model_deck.engine.builtins import BUILTIN_FEATURE_IDS
-from model_deck.engine.kernel_composition import KernelComposition, KernelInputError, KernelInvocationError
+from model_deck.engine.builtins import BUILTIN_FEATURE_IDS, BuiltinDispatchBinding
+from model_deck.engine.kernel_composition import (
+    DispatchInvocationContext,
+    KernelComposition,
+    KernelDomainError,
+    KernelInputError,
+    KernelInvocationError,
+    KernelPassthroughError,
+)
 from model_deck.kernel import CompositionError, GrantDeniedError
 from model_deck.engine.extensions.ports import (
     ExtensionRecord,
@@ -98,9 +105,12 @@ from model_deck.engine.extensions.ports import (
     ReceiptOutcome,
 )
 from model_deck.engine.jobs.first_party import FirstPartyJobDirectory
+from model_deck.engine.jobs.ports import (
+    JobResumeConflictError, JobResumeUnsupportedError,
+)
 from model_deck.engine.jobs.use_cases import (
     JobsNotFoundError, JobsCallerMismatchError, JobsInvalidArgumentError,
-    JobsUnknownKeyError,
+    JobsPluginUnavailableError, JobsUnknownKeyError,
 )
 from model_deck.engine.usage.ports import (
     UsageConflictError, UsageEventMismatchError, UsageQueryValidationError, UsageResourceExhaustedError,
@@ -191,7 +201,41 @@ _HOST_OPERATIONS_METHODS = frozenset(
         "engine.v1.hosts.prepare",
     }
 )
-_JOB_METHODS = frozenset({"engine.v1.jobs.get", "engine.v1.jobs.cancel"})
+_JOB_METHODS = frozenset(
+    {"engine.v1.jobs.get", "engine.v1.jobs.cancel", "engine.v1.jobs.resume"}
+)
+
+# Which method each job directory serves. A directory that does not implement
+# one of these cannot answer for it; see _first_matching_job_directory.
+_JOB_DIRECTORY_ATTRIBUTES: dict[str, str] = {
+    "engine.v1.jobs.get": "job_get",
+    "engine.v1.jobs.cancel": "job_cancel",
+    "engine.v1.jobs.resume": "job_resume",
+}
+
+# The public sentence for each domain error code a composed feature may name by
+# raising KernelDomainError. The feature chooses the classification; the text is
+# the engine's, so no handler can interpolate a path, an identifier or a
+# provider response into what the caller reads. Built-in operations do not use
+# this table: their handlers are dispatch's own methods and carry their own
+# messages through KernelPassthroughError.
+_COMPOSED_DOMAIN_ERROR_MESSAGES: dict[str, str] = {
+    "invalid_argument": "invalid operation argument",
+    "unsupported_capability": "capability not supported",
+    "capability_denied": "capability denied",
+    "not_found": "not found",
+    "conflict": "operation conflict",
+    "version_mismatch": "version mismatch",
+    "provider_unavailable": "provider unavailable",
+    "plugin_unavailable": "plugin unavailable",
+    "rate_limited": "rate limited",
+    "deadline_exceeded": "deadline exceeded",
+    "interrupted": "operation interrupted",
+    "resume_unavailable": "operation cannot be resumed",
+    "resource_exhausted": "answer too large to serve; narrow the request",
+    "projection_pending": "projection pending",
+    "internal": "operation failed",
+}
 
 _RUN_TOPIC_PATTERN = re.compile(
     r"^run:([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$"
@@ -208,6 +252,12 @@ _OPERATION_CATALOG: tuple[dict[str, str], ...] = (
         "operation_id": "engine.v1.jobs.cancel",
         "input_schema_id": "contracts/engine.v1/methods/jobs.cancel.params.schema.json",
         "output_schema_id": "contracts/engine.v1/methods/jobs.cancel.result.schema.json",
+        "effect": "write",
+    },
+    {
+        "operation_id": "engine.v1.jobs.resume",
+        "input_schema_id": "contracts/engine.v1/methods/jobs.resume.params.schema.json",
+        "output_schema_id": "contracts/engine.v1/methods/jobs.resume.result.schema.json",
         "effect": "write",
     },
     {
@@ -483,6 +533,7 @@ class EngineDispatch:
         external_extension_host: ExtensionGateway | None = None,
         first_party_jobs: FirstPartyJobDirectory | None = None,
         projection_coordinator: "ProjectionCoordinator | None" = None,
+        builtin_binding: BuiltinDispatchBinding | None = None,
     ) -> None:
         self._list_models = list_models
         self._identity = identity
@@ -523,15 +574,20 @@ class EngineDispatch:
                 for operation_id, feature_id in owners.items()
                 if feature_id in _BUILTIN_FEATURE_IDS
             )
-            # Built-in descriptors own discovery for operations this class already
-            # serves; anything else must stay out of the reserved engine namespace.
-            self._kernel_routed_methods = self._kernel_methods - builtin_served
-            if self._kernel_routed_methods & {entry["operation_id"] for entry in _OPERATION_CATALOG}:
+            foreign_methods = self._kernel_methods - builtin_served
+            # A built-in descriptor may name a reserved engine operation, because
+            # its handler is the engine method that serves it. Anything else must
+            # stay out of the reserved engine namespace.
+            if foreign_methods & {entry["operation_id"] for entry in _OPERATION_CATALOG}:
                 raise CompositionError("kernel operation collides with a reserved engine operation")
             unimplemented = builtin_served - self._implemented_methods
             if unimplemented:
                 raise CompositionError("composed built-in operation has no engine implementation")
-            self._implemented_methods |= self._kernel_routed_methods
+            # Every composed operation now routes through the kernel, built-in
+            # and foreign alike; a built-in the kernel did not compose is served
+            # from the same binding without it.
+            self._kernel_routed_methods = self._kernel_methods
+            self._implemented_methods |= foreign_methods
             try:
                 validate_schema_ref("contracts/engine.v1/methods/operations.list.result.schema.json",
                                     {"operations": self._operation_catalog()})
@@ -543,6 +599,11 @@ class EngineDispatch:
         self._subscription_last_acked: dict[str, int] = {}
         self._notification_queues: dict[int, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
+        # Last, because the binding reads the methods above. A caller that
+        # composed the kernel passes the binding whose handlers that kernel
+        # already holds; anyone else gets one that only this dispatch reaches.
+        self._builtin_binding = builtin_binding or BuiltinDispatchBinding()
+        self._builtin_binding.bind(self)
 
     def _build_implemented_methods(self) -> frozenset[str]:
         methods = set(_BASE_IMPLEMENTED_METHODS)
@@ -701,65 +762,13 @@ class EngineDispatch:
         if not self._is_authenticated(connection_id):
             return self._domain_error(frame.get("id"), "capability_denied", "authentication required")
         if method in self._kernel_routed_methods:
-            return self._invoke_kernel(frame.get("id"), method, params)
-        if method == "engine.v1.health":
-            return self._success(frame.get("id"), {"status": "ok"})
-        if method == "engine.v1.operations.list":
-            return self._operations_list(frame.get("id"), params)
-        if method == "engine.v1.capabilities.get":
-            return self._success(frame.get("id"), {"features": SERVER_FEATURES})
-        if method == "engine.v1.models.list":
-            return self._models_list(frame.get("id"), params)
-        if method == "engine.v1.usage.query":
-            return self._query_usage(frame.get("id"), params)
-        if method == "engine.v1.models.register":
-            return self._models_register(frame.get("id"), params)
-        if method == "engine.v1.models.rename":
-            return self._models_rename(frame.get("id"), params)
-        if method == "engine.v1.models.remove":
-            return self._models_remove(frame.get("id"), params)
-        if method == "engine.v1.connections.list":
-            return self._connections_list(frame.get("id"), params)
-        if method == "engine.v1.connections.save":
-            return self._connections_save(frame.get("id"), params)
-        if method == "engine.v1.sessions.create":
-            return self._sessions_create(frame.get("id"), params)
-        if method == "engine.v1.sessions.get":
-            return self._sessions_get(frame.get("id"), params)
-        if method == "engine.v1.sessions.select_model":
-            return self._sessions_select_model(frame.get("id"), params)
-        if method == "engine.v1.runs.start":
-            return self._runs_start(frame.get("id"), params, connection_id)
-        if method == "engine.v1.runs.get":
-            return self._runs_get(frame.get("id"), params)
-        if method == "engine.v1.runs.cancel":
-            return self._runs_cancel(frame.get("id"), params)
-        if method == "engine.v1.runs.submit_tool_result":
-            return self._runs_submit_tool_result(frame.get("id"), params, connection_id)
-        if method == "engine.v1.events.subscribe":
-            return self._events_subscribe(frame.get("id"), params, connection_id)
-        if method == "engine.v1.events.ack":
-            return self._events_ack(frame.get("id"), params, connection_id)
-        if method == "engine.v1.events.unsubscribe":
-            return self._events_unsubscribe(frame.get("id"), params, connection_id)
-        if method == "engine.v1.hosts.settings.read":
-            return self._hosts_settings(frame.get("id"), params, connection_id, "read")
-        if method == "engine.v1.hosts.settings.validate":
-            return self._hosts_settings(frame.get("id"), params, connection_id, "validate")
-        if method == "engine.v1.hosts.settings.preview":
-            return self._hosts_settings(frame.get("id"), params, connection_id, "preview")
-        if method == "engine.v1.hosts.settings.save":
-            return self._hosts_settings(frame.get("id"), params, connection_id, "save")
-        if method == "engine.v1.hosts.projection_status":
-            return self._hosts_projection_status(frame.get("id"), params)
-        if method == "engine.v1.hosts.list":
-            return self._hosts_list(frame.get("id"), params)
-        if method == "engine.v1.hosts.prepare":
-            return self._hosts_prepare(frame.get("id"), params)
-        if method in _EXTERNAL_EXTENSION_METHODS:
-            return self._external_extension(frame.get("id"), method, params, connection_id)
-        if method in _JOB_METHODS:
-            return self._job_operation(frame.get("id"), method, params, connection_id)
+            return self._invoke_kernel(frame.get("id"), method, params, connection_id)
+        builtin = self._builtin_binding.dispatch_handler(method)
+        if builtin is not None:
+            # A built-in this engine's kernel did not compose: the escape hatch
+            # serves the caller's kernel, and a dispatch built without one has no
+            # kernel at all. Same registered handler, one fewer hop.
+            return builtin(params, self._invocation_context(frame.get("id"), connection_id))
         return self._domain_error(frame.get("id"), "internal", "unhandled method")
 
     def _hello(self, request_id: Any, params: Mapping[str, Any], connection_id: int) -> dict[str, Any]:
@@ -825,22 +834,63 @@ class EngineDispatch:
             return self._error(request_id, -32603, str(exc))
         return self._success(request_id, result)
 
-    def _invoke_kernel(self, request_id: Any, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    def _invocation_context(self, request_id: Any, connection_id: int) -> DispatchInvocationContext:
+        with self._lock:
+            principal_id = self._connection_principals.get(connection_id)
+        return DispatchInvocationContext(
+            connection_id=connection_id,
+            principal_id=principal_id,
+            request_id=request_id,
+        )
+
+    def _invoke_kernel(
+        self, request_id: Any, method: str, params: dict[str, Any], connection_id: int
+    ) -> dict[str, Any]:
+        # A built-in operation's handler is one of this class's own methods, so
+        # it answers with a whole response and keeps its own public error codes.
+        # A foreign feature's handler stays on the generic path, where a failure
+        # is redacted to one internal error.
+        dispatch_bound = method in self._kernel_composition.dispatch_bound_operations()
         try:
-            result = self._kernel_composition.invoke(method, params)
+            if dispatch_bound:
+                result = self._kernel_composition.invoke_dispatch_bound(
+                    method, params, self._invocation_context(request_id, connection_id)
+                )
+            else:
+                result = self._kernel_composition.invoke(method, params)
+        except KernelPassthroughError as passthrough:
+            return passthrough.envelope
         except KernelInputError:
             return self._error(request_id, -32602, "invalid operation params")
         except GrantDeniedError:
             return self._domain_error(request_id, "capability_denied", "operation grant denied")
+        except KernelDomainError as domain_error:
+            # Only the code travels. The sentence is this engine's, chosen by
+            # code, so a composed feature can classify its failure publicly
+            # without publishing any text of its own.
+            return self._domain_error(
+                request_id,
+                domain_error.code,
+                _COMPOSED_DOMAIN_ERROR_MESSAGES.get(domain_error.code, "operation failed"),
+            )
         except KernelInvocationError:
             return self._domain_error(request_id, "internal", "operation failed")
         response = self._success(request_id, result)
-        if self._response_preflight is not None:
+        if self._response_preflight is not None and not dispatch_bound:
+            # A bound handler already applied whatever preflight its own method
+            # applies, with that method's error code; running it again here would
+            # answer one oversized response with a different code than before.
             try:
                 self._response_preflight(response)
             except Exception:
                 return self._domain_error(request_id, "internal", "operation failed")
         return response
+
+    def _health(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        return self._success(request_id, {"status": "ok"})
+
+    def _capabilities_get(self, request_id: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+        return self._success(request_id, {"features": SERVER_FEATURES})
 
     def _operation_catalog(self) -> list[dict[str, Any]]:
         # A composed feature describes its own operations, so the static table is
@@ -1351,6 +1401,12 @@ class EngineDispatch:
             return self._domain_error(request_id, "capability_denied", "job ownership required")
         except (JobsInvalidArgumentError, JobsUnknownKeyError):
             return self._domain_error(request_id, "invalid_argument", "invalid job request")
+        except JobsPluginUnavailableError:
+            return self._domain_error(request_id, "plugin_unavailable", "job plugin unavailable")
+        except JobResumeUnsupportedError:
+            return self._domain_error(request_id, "resume_unavailable", "job cannot be resumed")
+        except JobResumeConflictError:
+            return self._domain_error(request_id, "conflict", "job resume conflict")
         except SchemaValidationError:
             return self._error(request_id, -32602, "invalid params")
         except ValueError:
@@ -1369,18 +1425,28 @@ class EngineDispatch:
         authorizes each job against the principal that originated it; the
         first-party directory owns engine jobs and accepts any authenticated
         caller, which is why the same principal is safe to pass to both.
+
+        A directory that does not implement this method is skipped rather than
+        allowed to end the search: a later directory may still own the job, and
+        a gateway may legitimately serve ``jobs.get`` without serving
+        ``jobs.resume``. Only when no directory could serve at all does the
+        method itself decide the answer — ``resume_unavailable`` for a resume
+        nothing can perform, and "not found" for a lookup or a cancellation,
+        neither of which has anything to do with resuming.
         """
-        last_missing: JobsNotFoundError | None = None
+        attribute = _JOB_DIRECTORY_ATTRIBUTES[method]
+        served_by_any = False
         for directory in directories:
-            operation = (
-                directory.job_get if method.endswith("get") else directory.job_cancel
-            )
+            operation = getattr(directory, attribute, None)
+            if operation is None:
+                continue
+            served_by_any = True
             try:
                 return operation(dict(params), principal=principal)
-            except JobsNotFoundError as missing:
-                last_missing = missing
-        if last_missing is not None:
-            raise last_missing
+            except JobsNotFoundError:
+                continue
+        if not served_by_any and method == "engine.v1.jobs.resume":
+            raise JobResumeUnsupportedError("no job directory can resume")
         raise JobsNotFoundError("job not found")
 
     def _external_extension(
