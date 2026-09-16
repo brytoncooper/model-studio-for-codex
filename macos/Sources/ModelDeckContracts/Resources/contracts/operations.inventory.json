@@ -304,6 +304,12 @@
       "idempotent": true
     },
     {
+      "method": "engine.v1.jobs.resume",
+      "group": "features_jobs",
+      "mutates": true,
+      "idempotent": true
+    },
+    {
       "method": "engine.v1.hosts.settings.read",
       "group": "hosts",
       "mutates": false,
@@ -377,6 +383,9 @@
     },
     {
       "method": "plugin.v1.broker.jobs.progress"
+    },
+    {
+      "method": "plugin.v1.broker.jobs.checkpoint"
     },
     {
       "method": "plugin.v1.broker.jobs.complete"

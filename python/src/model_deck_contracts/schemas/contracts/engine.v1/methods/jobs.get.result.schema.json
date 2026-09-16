@@ -26,6 +26,15 @@
     },
     "output": {
       "$ref": "../../common/types.schema.json#/definitions/json_value"
+    },
+    "resumable": {
+      "type": "boolean",
+      "description": "The job's operation declared itself resumable, so an interrupted run may be restarted with engine.v1.jobs.resume from its last checkpoint. Absent when the engine cannot state this."
+    },
+    "resume_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many times engine.v1.jobs.resume has moved this job back to running. Absent when the engine cannot state this."
     }
   },
   "required": [

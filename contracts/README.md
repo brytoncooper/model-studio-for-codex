@@ -129,6 +129,24 @@ Secret material must never appear in identity or reference-typed fields (`princi
 
 Schemas under `ports/` describe adapter contracts injected at composition time: `ApplicationPaths`, `InstanceLock`, `LocalTransport`, `OwnedProcessSupervisor`, `CredentialStore`, `AtomicFileWriter`, optional `WindowAttachment`. They are not JSON-RPC methods.
 
+## Job checkpoint and resume (contracts frozen, engine not implemented)
+
+The vocabulary for resuming an interrupted job is now authoritative. **Nothing behind it is implemented**: no engine dispatch, no broker handler, no storage. These schemas exist so the implementing units share one shape.
+
+| Method | Direction | Shape |
+|--------|-----------|-------|
+| `plugin.v1.broker.jobs.checkpoint` | Worker → supervisor | `{job_id, checkpoint, expected_revision, schema_id?}` → `{revision}` |
+| `engine.v1.jobs.resume` | Client → engine | `{job_id, idempotency_key}` → `{accepted, job_id, resumed_from_revision}` |
+
+- `checkpoint` is a `json_value`. The 1 MiB serialized cap and the depth/node bounds live in the engine, not in the schema; oversized or non-strict values are `invalid_argument`.
+- `expected_revision` is **required and nullable**: `null` asserts that no checkpoint exists yet (revision 0). A mismatch is `conflict` and stores nothing. This is the same explicit-CAS rule as the model library writes above.
+- `resumed_from_revision` is likewise required and nullable, so "resumed from no checkpoint" is stated rather than omitted.
+- Refusal to resume uses the existing domain error `resume_unavailable`; it is not a new error code.
+
+`engine.v1.jobs.get.result` gained two optional fields, `resumable` (boolean) and `resume_count` (integer ≥ 0). That object is closed (`additionalProperties: false`), so this is a change to a frozen schema, accepted as additive: both fields are optional, and a client that ignores them decodes exactly as before.
+
+`manifest.schema.json` gained an optional `resumable` boolean on `operation_contribution`, meaning the operation's job supports explicit `jobs.resume` from its last checkpoint. It is **unrelated** to the `resume` value in the provider contribution `features` enum, which is about provider-run resumption.
+
 ## Extensions
 
 New public `engine.v1.*` methods or broker methods require lead approval and inventory update in `operations.inventory.json` before implementation.

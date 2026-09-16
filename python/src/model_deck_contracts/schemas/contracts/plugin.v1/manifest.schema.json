@@ -127,6 +127,10 @@
             "read",
             "write"
           ]
+        },
+        "resumable": {
+          "type": "boolean",
+          "description": "The operation's job supports explicit jobs.resume from its last checkpoint. Absent means not resumable; it is unrelated to the provider-run `resume` capability feature."
         }
       }
     },

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/jobs.checkpoint.result.schema.json",
+  "title": "Worker checkpoint save result",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "revision": {
+      "$ref": "../../common/types.schema.json#/definitions/revision",
+      "description": "Revision now stored. The worker passes this back as expected_revision on its next checkpoint."
+    }
+  },
+  "required": [
+    "revision"
+  ]
+}

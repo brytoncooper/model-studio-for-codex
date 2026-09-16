@@ -21,3 +21,12 @@ class InventoryCoverageTests(unittest.TestCase):
         ):
             with self.subTest(method=method):
                 self.assertIn(method, methods)
+
+    def test_checkpoint_and_resume_methods_are_enumerated(self) -> None:
+        methods = set(iter_inventory_methods())
+        for method in (
+            "plugin.v1.broker.jobs.checkpoint",
+            "engine.v1.jobs.resume",
+        ):
+            with self.subTest(method=method):
+                self.assertIn(method, methods)

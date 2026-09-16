@@ -187,6 +187,18 @@
     {
       "file": "usage_summary_result_unknown_total.json",
       "schema": "contracts/engine.v1/methods/usage.summary.result.schema.json"
+    },
+    {
+      "file": "jobs_checkpoint_params_first_revision.json",
+      "schema": "contracts/plugin.v1/broker/jobs.checkpoint.params.schema.json"
+    },
+    {
+      "file": "jobs_resume_result_without_checkpoint.json",
+      "schema": "contracts/engine.v1/methods/jobs.resume.result.schema.json"
+    },
+    {
+      "file": "jobs_get_result_resumable_interrupted.json",
+      "schema": "contracts/engine.v1/methods/jobs.get.result.schema.json"
     }
   ],
   "invalid": [
@@ -377,6 +389,18 @@
     {
       "file": "usage_summary_total_missing_currency.json",
       "schema": "contracts/engine.v1/methods/usage.summary.result.schema.json"
+    },
+    {
+      "file": "jobs_checkpoint_params_missing_expected_revision.json",
+      "schema": "contracts/plugin.v1/broker/jobs.checkpoint.params.schema.json"
+    },
+    {
+      "file": "jobs_resume_result_missing_resumed_from_revision.json",
+      "schema": "contracts/engine.v1/methods/jobs.resume.result.schema.json"
+    },
+    {
+      "file": "jobs_get_result_negative_resume_count.json",
+      "schema": "contracts/engine.v1/methods/jobs.get.result.schema.json"
     }
   ]
 }

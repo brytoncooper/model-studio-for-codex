@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/plugin.v1/broker/jobs.checkpoint.params.schema.json",
+  "title": "Worker checkpoint save (compare-and-swap)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "job_id": {
+      "$ref": "../../common/types.schema.json#/definitions/uuid"
+    },
+    "checkpoint": {
+      "$ref": "../../common/types.schema.json#/definitions/json_value",
+      "description": "Strict JSON resume state. The engine additionally enforces the 1 MiB serialized cap and the depth/node bounds that JSON Schema cannot express; oversized or non-strict values are rejected with invalid_argument."
+    },
+    "expected_revision": {
+      "description": "Revision the worker believes is currently stored. null asserts that no checkpoint has been saved yet (equivalent to revision 0). A mismatch is rejected with conflict and stores nothing.",
+      "oneOf": [
+        {
+          "$ref": "../../common/types.schema.json#/definitions/revision"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_id": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Optional checkpoint schema identifier. When omitted the engine keeps the schema declared when the job was created; when present it must match that declaration."
+    }
+  },
+  "required": [
+    "job_id",
+    "checkpoint",
+    "expected_revision"
+  ]
+}

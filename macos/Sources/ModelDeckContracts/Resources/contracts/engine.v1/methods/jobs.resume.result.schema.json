@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/engine.v1/methods/jobs.resume.result.schema.json",
+  "title": "Explicit public job resume result",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "type": "boolean",
+      "description": "The engine recorded the resume and moved the job back to running. It does not claim the worker has made progress."
+    },
+    "job_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "resumed_from_revision": {
+      "description": "Checkpoint revision the resumed job starts from, or null when the job was interrupted before it saved any checkpoint.",
+      "oneOf": [
+        {
+          "$ref": "../../common/types.schema.json#/definitions/revision"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "accepted",
+    "job_id",
+    "resumed_from_revision"
+  ]
+}

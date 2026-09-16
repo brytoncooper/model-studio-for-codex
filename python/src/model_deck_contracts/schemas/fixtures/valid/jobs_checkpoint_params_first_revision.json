@@ -1,0 +1,9 @@
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440099",
+  "checkpoint": {
+    "cursor": "page-3",
+    "processed": 128
+  },
+  "expected_revision": null,
+  "schema_id": "com.example.notebook.update.checkpoint/v1"
+}

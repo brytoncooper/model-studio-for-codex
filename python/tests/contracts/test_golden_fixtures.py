@@ -164,6 +164,64 @@ class GoldenFixturesTests(unittest.TestCase):
         self.assertEqual(started["job_kind"], "com.modeldeck.engine.prices.refresh")
         self.assertTrue(started["explicit_network"])
 
+    def test_checkpoint_save_always_states_its_compare_and_swap_expectation(
+        self,
+    ) -> None:
+        ref = "contracts/plugin.v1/broker/jobs.checkpoint.params.schema.json"
+        first = _load("jobs_checkpoint_params_first_revision.json", valid=True)
+        self.assertIsNone(first["expected_revision"])
+        validate_schema_ref(ref, first)
+        omitted = _load(
+            "jobs_checkpoint_params_missing_expected_revision.json", valid=False
+        )
+        self.assertNotIn("expected_revision", omitted)
+        with self.assertRaises(SchemaValidationError):
+            validate_schema_ref(ref, omitted)
+
+    def test_resume_result_reports_origin_revision_as_explicit_null(self) -> None:
+        ref = "contracts/engine.v1/methods/jobs.resume.result.schema.json"
+        accepted = _load("jobs_resume_result_without_checkpoint.json", valid=True)
+        self.assertTrue(accepted["accepted"])
+        self.assertIsNone(accepted["resumed_from_revision"])
+        validate_schema_ref(ref, accepted)
+        omitted = _load(
+            "jobs_resume_result_missing_resumed_from_revision.json", valid=False
+        )
+        self.assertNotIn("resumed_from_revision", omitted)
+        with self.assertRaises(SchemaValidationError):
+            validate_schema_ref(ref, omitted)
+
+    def test_jobs_get_resume_fields_are_optional_and_never_negative(self) -> None:
+        ref = "contracts/engine.v1/methods/jobs.get.result.schema.json"
+        resumable = _load("jobs_get_result_resumable_interrupted.json", valid=True)
+        self.assertTrue(resumable["resumable"])
+        self.assertEqual(resumable["resume_count"], 2)
+        validate_schema_ref(ref, resumable)
+        validate_schema_ref(
+            ref,
+            {
+                "job_id": resumable["job_id"],
+                "state": "interrupted",
+            },
+        )
+        negative = _load("jobs_get_result_negative_resume_count.json", valid=False)
+        self.assertEqual(negative["resume_count"], -1)
+        with self.assertRaises(SchemaValidationError):
+            validate_schema_ref(ref, negative)
+
+    def test_operation_contribution_may_declare_itself_resumable(self) -> None:
+        ref = "contracts/plugin.v1/manifest.schema.json#/definitions/operation_contribution"
+        contribution = {
+            "id": "com.example.notebook.update",
+            "input_schema": "schemas/update.input.json",
+            "output_schema": "schemas/update.output.json",
+            "effect": "write",
+        }
+        validate_schema_ref(ref, contribution)
+        validate_schema_ref(ref, {**contribution, "resumable": True})
+        with self.assertRaises(SchemaValidationError):
+            validate_schema_ref(ref, {**contribution, "resumable": "yes"})
+
     def test_wire_types_roundtrip_preserves_json(self) -> None:
         cases = [
             ("jsonrpc_request.json", JsonRpcRequest.parse),

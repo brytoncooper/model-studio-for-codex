@@ -302,6 +302,12 @@
       "mutates": true
     },
     {
+      "group": "features_jobs",
+      "idempotent": true,
+      "method": "engine.v1.jobs.resume",
+      "mutates": true
+    },
+    {
       "group": "hosts",
       "method": "engine.v1.hosts.settings.read",
       "mutates": false,
@@ -347,6 +353,9 @@
     },
     {
       "method": "plugin.v1.broker.jobs.progress"
+    },
+    {
+      "method": "plugin.v1.broker.jobs.checkpoint"
     },
     {
       "method": "plugin.v1.broker.jobs.complete"
