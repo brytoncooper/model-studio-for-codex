@@ -15,6 +15,12 @@ from model_deck.engine.extensions.ports import (
     LifecycleReceipt,
     LifecycleRequest,
 )
+from model_deck.engine.jobs.ports import (
+    CreateJobCommand,
+    JobOwner,
+    JobResumeConflictError,
+)
+from model_deck.engine.plugin_authority import AuthorityDeniedError
 from model_deck.plugins.artifact_store import stage_archive
 from model_deck.adapters.platform.macos.extension_lease import ExtensionEngineLease
 from model_deck.adapters.platform.macos.instance_lock import FileInstanceLock
@@ -28,6 +34,9 @@ from model_deck.plugins.external_host import (
     HostNotServingError,
     HostDependencies,
 )
+from model_deck.plugins.external_host.host import CHILD_REAPED, SHUTDOWN_QUIESCED
+from model_deck.plugins.activation_lifecycle.restart import SUPERVISION_HEALTHY
+from model_deck.plugins.process_runtime.health import WorkerHealthState
 
 def _host(root: Path, **kwargs):
     return ExternalExtensionHost(root, dependencies=HostDependencies(
@@ -242,3 +251,126 @@ def test_packed_notebook_lifecycle_persistence_and_disable(tmp_path: Path) -> No
             idempotency_key="get-final-disabled",
         )
     restarted.close()
+
+
+def test_close_reports_every_extension_and_is_idempotent(tmp_path: Path) -> None:
+    project = Path(__file__).parents[3] / "examples" / "session-notebook"
+    archive = tmp_path / "notebook.zip"
+    pack_project_archive(project.resolve(), output_path=archive)
+    host = _host(tmp_path / "host")
+    installed = host.install(archive, principal=PRINCIPAL, idempotency_key="install")
+    host.enable(
+        "org.example.notebook",
+        principal=PRINCIPAL,
+        idempotency_key="enable",
+        expected_revision=installed.record.revision,
+    )
+
+    report = host.close()
+
+    entry = report.entry("org.example.notebook")
+    assert entry is not None
+    assert entry.outcome == SHUTDOWN_QUIESCED
+    assert entry.failure_code is None
+    assert entry.child == CHILD_REAPED
+    assert report.failed_extension_ids == ()
+    # A second close changes nothing and must not touch the released lock.
+    assert host.close() is report
+    assert host.last_shutdown_report is report
+
+
+def test_supervision_report_is_healthy_for_a_freshly_enabled_extension(
+    tmp_path: Path,
+) -> None:
+    project = Path(__file__).parents[3] / "examples" / "session-notebook"
+    archive = tmp_path / "notebook.zip"
+    pack_project_archive(project.resolve(), output_path=archive)
+    host = _host(tmp_path / "host")
+    try:
+        installed = host.install(archive, principal=PRINCIPAL, idempotency_key="install")
+        host.enable(
+            "org.example.notebook",
+            principal=PRINCIPAL,
+            idempotency_key="enable",
+            expected_revision=installed.record.revision,
+        )
+
+        report = host.supervision_report("org.example.notebook")
+
+        assert report.extension_id == "org.example.notebook"
+        assert report.supervision_status == SUPERVISION_HEALTHY
+        assert report.worker_state is WorkerHealthState.HEALTHY
+        assert report.restart_attempts == 0
+        assert report.last_failure_code is None
+        assert report.gave_up is False
+        assert report.next_attempt_in_s is None
+        assert [item.extension_id for item in host.supervision_reports()] == [
+            "org.example.notebook",
+        ]
+    finally:
+        host.close()
+
+
+def test_resume_that_fails_after_prepare_gives_back_the_authority(tmp_path: Path) -> None:
+    """A resume that dies between `prepare` and `invoke` leaves nothing live.
+
+    `prepare` issues a real invocation authority for `"<op>.resume"` before the
+    durable row moves, so the window between it and `begin_resume` is the one
+    place a handle can outlive the resume that asked for it. Losing the
+    idempotency race is the ordinary way into that window.
+    """
+
+    project = Path(__file__).parents[3] / "examples" / "session-notebook"
+    archive = tmp_path / "notebook.zip"
+    pack_project_archive(project.resolve(), output_path=archive)
+    host = _host(tmp_path / "host")
+    try:
+        installed = host.install(archive, principal=PRINCIPAL, idempotency_key="install")
+        host.enable(
+            "org.example.notebook",
+            principal=PRINCIPAL,
+            idempotency_key="enable",
+            expected_revision=installed.record.revision,
+        )
+        serving = host._activation.serving("org.example.notebook")
+        owner = JobOwner(
+            plugin_id="org.example.notebook",
+            activation_id=serving.identity.activation_id,
+        )
+        created = host._jobs.create(CreateJobCommand(
+            owner=owner,
+            invocation_id=str(uuid.uuid4()),
+            operation_id="org.example.notebook.export.start",
+            origin_principal_id=PRINCIPAL,
+            resumable=True,
+        ))
+        host._jobs.mark_worker_crashed(owner)
+
+        issued: list[str] = []
+        real_issue = host._plugin_authority.issue
+
+        def _remember_issued(*args, **kwargs):
+            handle = real_issue(*args, **kwargs)
+            issued.append(handle)
+            return handle
+
+        def _lose_the_idempotency_race(_command):
+            raise JobResumeConflictError("idempotency key already used for another job")
+
+        host._plugin_authority.issue = _remember_issued
+        host._jobs.begin_resume = _lose_the_idempotency_race
+
+        with pytest.raises(JobResumeConflictError):
+            host.job_resume(
+                {"job_id": created.job_id, "idempotency_key": "resume-1"},
+                principal=PRINCIPAL,
+            )
+
+        # The failure happened after prepare, not before it.
+        assert len(issued) == 1
+        assert host._resume_invoker.pending_job_ids() == ()
+        assert "org.example.notebook.export.start.resume" not in host._operations
+        with pytest.raises(AuthorityDeniedError):
+            host._plugin_authority.capture(issued[0], serving.identity)
+    finally:
+        host.close()

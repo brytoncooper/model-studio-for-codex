@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
 import unittest
 import uuid
 from dataclasses import replace
@@ -22,6 +23,7 @@ from model_deck.plugins.activation_lifecycle import (
     ResolvedArtifactLaunch,
 )
 from model_deck.plugins.process_runtime import ProcessRuntimeConfig, ProcessRuntimeError
+from model_deck.plugins.process_runtime.health import WorkerHealthState, WorkerLossCode
 
 
 PLUGIN_ID = "org.example.lifecycle"
@@ -36,13 +38,27 @@ def _artifact(version: str, digest: str) -> ExecutableArtifact:
     return ExecutableArtifact(digest * 64, PLUGIN_ID, version, ("data.read",))
 
 
-def _child(version: str, activation_id: str, *, drained: bool) -> str:
+def _child(
+    version: str,
+    activation_id: str,
+    *,
+    drained: bool,
+    exit_after_s: float | None = None,
+) -> str:
+    """Fixture worker source. `exit_after_s` makes it die without warning."""
+
+    sudden_death = "" if exit_after_s is None else f"""
+import os
+import threading
+threading.Timer({exit_after_s!r}, lambda: os._exit(9)).start()
+"""
     return f"""
 import importlib.util
 import json
 import sys
 if not sys.flags.isolated or importlib.util.find_spec("model_deck") is not None:
     raise RuntimeError("fixture must not import engine internals")
+{sudden_death}
 for line in sys.stdin:
     request = json.loads(line)
     method = request.get("method", "")
@@ -66,6 +82,7 @@ class _Resolver:
     def __init__(self, directory: Path, *, drained: bool = False) -> None:
         self.directory = directory
         self.drained = drained
+        self.exit_after_s: float | None = None
 
     def resolve(self, executable):
         activation_id = str(uuid.uuid4())
@@ -74,6 +91,7 @@ class _Resolver:
             ProcessRuntimeConfig(
                 argv=(sys.executable, "-I", "-c", _child(
                     executable.version, activation_id, drained=self.drained,
+                    exit_after_s=self.exit_after_s,
                 )),
                 package_dir=str(self.directory),
                 timeout_s=1,
@@ -121,7 +139,9 @@ class _BrokerFactory:
         return handle
 
 
-class ProcessExtensionActivationLifecycleTests(unittest.TestCase):
+class _ActivationLifecycleFixture(unittest.TestCase):
+    """Shared real-process, real-SQLite fixture. Holds no tests of its own."""
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="model-deck-activation-")
         self.addCleanup(temporary.cleanup)
@@ -147,7 +167,7 @@ class ProcessExtensionActivationLifecycleTests(unittest.TestCase):
         self.adapter = self._adapter()
 
     def _adapter(self):
-        return ProcessExtensionActivationLifecycle(
+        adapter = ProcessExtensionActivationLifecycle(
             engine_instance_id="engine-test", audience="plugin-test",
             api_major=1, api_minor=0, data_store=self.store,
             job_repository=self.jobs, launch_resolver=self.resolver,
@@ -155,6 +175,9 @@ class ProcessExtensionActivationLifecycleTests(unittest.TestCase):
             token_factory=lambda: "private-activation-token",
             nonce_factory=lambda: "fixture-nonce",
         )
+        # Every adapter owns a supervision thread; stop it with the fixture.
+        self.addCleanup(adapter.close)
+        return adapter
 
     def _enable(self):
         self.adapter.quiesce(ENABLE, self.installed_record, deadline_ms=1000)
@@ -165,6 +188,8 @@ class ProcessExtensionActivationLifecycleTests(unittest.TestCase):
         record = ExtensionRecord(PLUGIN_ID, 2, ExtensionStatus.ENABLED, selected)
         return selected, validated, record
 
+
+class ProcessExtensionActivationLifecycleTests(_ActivationLifecycleFixture):
     def test_validate_is_non_serving_then_admit_publishes_exact_binding(self) -> None:
         selected, validated, record = self._enable()
         identity, binding = self.brokers.bindings[-1]
@@ -448,6 +473,104 @@ class ProcessExtensionActivationLifecycleTests(unittest.TestCase):
             restored_repository.put(PLUGIN_ID, "restored-write", True).revision,
             1,
         )
+
+
+class _RecordingLossObserver:
+    def __init__(self) -> None:
+        self.notices: list = []
+        self.arrived = threading.Event()
+
+    def on_worker_loss_settled(self, notice) -> None:
+        self.notices.append(notice)
+        self.arrived.set()
+
+
+class UnexpectedWorkerLossTests(_ActivationLifecycleFixture):
+    """Losses nobody asked for: settled like a quiesce, reported exactly once."""
+
+    def _lost_activation(self, observer):
+        self.resolver.exit_after_s = 0.3
+        self.adapter.set_worker_loss_observer(observer)
+        selected, validated, record = self._enable()
+        self.adapter.admit(ENABLE, record, validated, expected_data_revision=0)
+        identity = self.brokers.bindings[-1][0]
+        job = self.jobs.create(CreateJobCommand(
+            JobOwner(PLUGIN_ID, identity.activation_id),
+            "invocation-lost",
+            "org.example.export",
+            PRINCIPAL,
+        ))
+        self.assertTrue(observer.arrived.wait(15.0), "no worker loss was reported")
+        return identity, job, record
+
+    def test_unexpected_death_settles_jobs_and_reports_one_notice(self) -> None:
+        observer = _RecordingLossObserver()
+        identity, job, _ = self._lost_activation(observer)
+
+        self.assertEqual(len(observer.notices), 1)
+        notice = observer.notices[0]
+        self.assertEqual(notice.extension_id, PLUGIN_ID)
+        self.assertEqual(notice.activation_id, identity.activation_id)
+        self.assertEqual(notice.jobs_interrupted, 1)
+        self.assertTrue(notice.settled_cleanly)
+        self.assertIn(notice.failure_code, tuple(WorkerLossCode))
+
+        self.assertIsNone(self.adapter.serving(PLUGIN_ID))
+        self.assertEqual(self.authority.states[identity.activation_id], "revoked")
+        self.assertEqual(
+            self.jobs.get(GetJobCommand(job.job_id)).state, JobState.INTERRUPTED,
+        )
+        supervision = self.adapter.worker_supervision(PLUGIN_ID)
+        self.assertEqual(supervision.health_state, WorkerHealthState.DEAD)
+        self.assertIs(supervision.last_loss, notice)
+        self.assertEqual(self.adapter.last_interrupted_job_count(PLUGIN_ID), 1)
+
+    def test_quiesce_after_an_unexpected_death_is_a_no_op(self) -> None:
+        observer = _RecordingLossObserver()
+        _, job, record = self._lost_activation(observer)
+
+        self.adapter.quiesce(DISABLE, record, deadline_ms=1000)
+
+        self.assertEqual(len(observer.notices), 1)
+        self.assertIsNone(self.adapter.serving(PLUGIN_ID))
+        self.assertEqual(
+            self.jobs.get(GetJobCommand(job.job_id)).state, JobState.INTERRUPTED,
+        )
+
+    def test_settle_orphaned_jobs_interrupts_a_prior_activation(self) -> None:
+        selected, validated, record = self._enable()
+        self.adapter.admit(ENABLE, record, validated, expected_data_revision=0)
+        identity = self.brokers.bindings[-1][0]
+        job = self.jobs.create(CreateJobCommand(
+            JobOwner(PLUGIN_ID, identity.activation_id),
+            "invocation-orphan",
+            "org.example.export",
+            PRINCIPAL,
+        ))
+
+        # A published activation is quiesced, never swept out from under.
+        self.assertEqual(self.adapter.settle_orphaned_jobs(record), 0)
+        self.assertEqual(
+            self.jobs.get(GetJobCommand(job.job_id)).state, JobState.QUEUED,
+        )
+
+        self.adapter.quiesce(DISABLE, record, deadline_ms=1000)
+        self.assertEqual(
+            self.jobs.get(GetJobCommand(job.job_id)).state, JobState.INTERRUPTED,
+        )
+        # Sweeping again is harmless: there is nothing left to interrupt.
+        self.assertEqual(self.adapter.settle_orphaned_jobs(record), 0)
+
+    def test_a_loss_before_activation_is_left_to_validation(self) -> None:
+        observer = _RecordingLossObserver()
+        self.adapter.set_worker_loss_observer(observer)
+        self.resolver.exit_after_s = 0.0
+
+        with self.assertRaises(ProcessRuntimeError):
+            self.adapter.validate(ENABLE, replace(self.installed, activation_generation=1))
+
+        self.assertFalse(observer.arrived.wait(0.5))
+        self.assertIsNone(self.adapter.serving(PLUGIN_ID))
 
 
 if __name__ == "__main__":

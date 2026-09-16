@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
+import queue
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Callable, Protocol, runtime_checkable
@@ -29,10 +32,37 @@ from model_deck.plugins.process_runtime import (
     ProcessRuntimeConfig,
     ProviderChannel,
 )
+from model_deck.plugins.process_runtime.health import (
+    WorkerHealthState,
+    WorkerLossCode,
+    WorkerLossEvent,
+)
 from model_deck.plugins.process_runtime.invocation_channel import (
     BrokerRequestHandler,
     InvocationChannel,
 )
+
+DEFAULT_LIVENESS_POLL_S = 0.1
+"""How often the supervision thread re-checks each serving child.
+
+`ProcessRuntime` reports an unexpected child death through
+`worker_loss_listener` the moment its reader thread notices. That report is the
+fast path. This poll is the slow, independent one: it asks each serving runtime
+for its invocation channel, which fails as soon as the runtime has stopped, and
+turns that failure into the same `WorkerLossEvent`. Keeping both means an
+activation is still settled when the runtime cannot name a listener — for
+example while `worker_loss_listener` is not yet accepted by the installed
+`ProcessRuntime`.
+"""
+
+_RUNTIME_ACCEPTS_LOSS_LISTENER = (
+    "worker_loss_listener" in inspect.signature(ProcessRuntime).parameters
+)
+"""Whether the installed `ProcessRuntime` takes a loss listener at construction.
+
+Checked once, from the real signature, rather than by catching `TypeError`
+around every construction, so an unrelated argument mistake still raises.
+"""
 
 
 class ActivationLifecycleConfigurationError(ValueError):
@@ -73,6 +103,140 @@ class ResolvedArtifactLaunch:
 @runtime_checkable
 class ArtifactLaunchResolver(Protocol):
     def resolve(self, executable: ExecutableArtifact) -> ResolvedArtifactLaunch: ...
+
+
+@runtime_checkable
+class ActivationJobSettlement(Protocol):
+    """The only job-repository capability this adapter needs.
+
+    The adapter settles work owned by an activation it is tearing down; it
+    never creates, claims, resumes, or reads a job. Gating construction on this
+    narrow shape instead of the whole `PluginJobRepository` protocol keeps the
+    configuration check honest about the dependency and keeps the adapter from
+    rejecting a real repository because that protocol grew a method the
+    adapter does not call.
+    """
+
+    def list_active_for_activation(self, owner: JobOwner) -> list: ...
+
+    def mark_worker_crashed(self, owner: JobOwner): ...
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerLossNotice:
+    """One settled unexpected worker loss, reported after cleanup finished.
+
+    `jobs_interrupted` counts the durable jobs this settlement moved out of
+    QUEUED/RUNNING. They are never replayed. `settled_cleanly` is False when
+    revoking authority, deactivating the session, or closing the runtime
+    raised; the activation is unpublished either way.
+    """
+
+    extension_id: str
+    activation_id: str
+    failure_code: WorkerLossCode
+    at_monotonic: float
+    exit_code: int | None
+    jobs_interrupted: int
+    settled_cleanly: bool
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerSupervisionState:
+    """What this adapter knows about one extension's worker right now."""
+
+    extension_id: str
+    health_state: WorkerHealthState
+    last_loss: WorkerLossNotice | None
+    jobs_interrupted_at_last_settlement: int
+
+
+@runtime_checkable
+class WorkerLossObserver(Protocol):
+    """Receives each settled loss once, after the adapter finished cleanup.
+
+    The call happens on the adapter's supervision thread with no adapter lock
+    held, so an observer may start a replacement activation. It must not raise.
+    """
+
+    def on_worker_loss_settled(self, notice: WorkerLossNotice) -> None: ...
+
+
+class _WorkerLossGuard:
+    """One activation's loss latch, created before the runtime it watches.
+
+    It is the `WorkerLossListener` handed to `ProcessRuntime`, and it is also
+    what the supervision poll reports through, so both detectors converge on
+    one queued settlement. `finish()` is how an operator teardown claims the
+    activation: a loss reported after that is ignored, which is what makes
+    quiesce, disable, and an unexpected death mutually no-op.
+    """
+
+    def __init__(self, enqueue: Callable[["_WorkerLossGuard"], None]) -> None:
+        self._lock = threading.Lock()
+        self._enqueue = enqueue
+        self._extension_id: str | None = None
+        self._activation_ref: str | None = None
+        self._event: WorkerLossEvent | None = None
+        self._finished = False
+        self._reported = False
+
+    @property
+    def extension_id(self) -> str | None:
+        with self._lock:
+            return self._extension_id
+
+    @property
+    def activation_ref(self) -> str | None:
+        with self._lock:
+            return self._activation_ref
+
+    @property
+    def event(self) -> WorkerLossEvent | None:
+        with self._lock:
+            return self._event
+
+    def bind(self, extension_id: str, activation_ref: str) -> None:
+        """Name the activation this guard belongs to, once validation made one.
+
+        A worker that dies before this runs is handled by validation's own
+        failure path, so an unbound guard reports nothing.
+        """
+
+        with self._lock:
+            self._extension_id = extension_id
+            self._activation_ref = activation_ref
+
+    def finish(self) -> None:
+        """Claim the activation for an operator teardown; ignore later losses."""
+
+        with self._lock:
+            self._finished = True
+
+    def is_finished(self) -> bool:
+        with self._lock:
+            return self._finished
+
+    def claim_settlement(self) -> bool:
+        """True for the one caller that may settle this loss."""
+
+        with self._lock:
+            if self._finished:
+                return False
+            self._finished = True
+            return True
+
+    def on_worker_lost(self, event: WorkerLossEvent) -> None:
+        """Record one loss and hand it to the supervision thread. Never blocks."""
+
+        with self._lock:
+            if self._finished or self._reported or self._activation_ref is None:
+                return
+            if not isinstance(event, WorkerLossEvent):
+                return
+            self._reported = True
+            self._event = event
+        self._enqueue(self)
 
 
 @runtime_checkable
@@ -153,6 +317,7 @@ class _OwnedActivation:
     runtime: ProcessRuntime
     session: LifecycleSession
     serving_view: ServingActivation
+    loss_guard: _WorkerLossGuard
 
 
 class ProcessExtensionActivationLifecycle(ExtensionActivationLifecycle):
@@ -173,6 +338,8 @@ class ProcessExtensionActivationLifecycle(ExtensionActivationLifecycle):
         token_factory: Callable[[], str],
         nonce_factory: Callable[[], str],
         activation_ref_factory: Callable[[], str] = lambda: f"ref:activation.{uuid.uuid4()}",
+        worker_loss_observer: WorkerLossObserver | None = None,
+        liveness_poll_s: float = DEFAULT_LIVENESS_POLL_S,
     ) -> None:
         if (
             type(engine_instance_id) is not str
@@ -184,13 +351,19 @@ class ProcessExtensionActivationLifecycle(ExtensionActivationLifecycle):
             or type(api_minor) is not int
             or api_minor < 0
             or not isinstance(data_store, VersionedPluginDataStore)
-            or not isinstance(job_repository, PluginJobRepository)
+            or not isinstance(job_repository, ActivationJobSettlement)
             or not isinstance(launch_resolver, ArtifactLaunchResolver)
             or not isinstance(authority_controller, ActivationAuthorityController)
             or not isinstance(broker_factory, ActivationBrokerFactory)
             or not callable(token_factory)
             or not callable(nonce_factory)
             or not callable(activation_ref_factory)
+            or (
+                worker_loss_observer is not None
+                and not isinstance(worker_loss_observer, WorkerLossObserver)
+            )
+            or type(liveness_poll_s) not in (int, float)
+            or liveness_poll_s < 0
         ):
             raise ActivationLifecycleConfigurationError()
         self._engine_instance_id = engine_instance_id
@@ -211,6 +384,93 @@ class ProcessExtensionActivationLifecycle(ExtensionActivationLifecycle):
         self._operation_ref: dict[str, str] = {}
         self._serving: dict[str, _OwnedActivation] = {}
         self._quiesced: dict[str, ExtensionRecord] = {}
+        self._loss_observer = worker_loss_observer
+        self._liveness_poll_s = float(liveness_poll_s)
+        self._losses: dict[str, WorkerLossNotice] = {}
+        self._interrupted_counts: dict[str, int] = {}
+        self._loss_queue: queue.SimpleQueue[_WorkerLossGuard] = queue.SimpleQueue()
+        self._watch_stop = threading.Event()
+        self._watch_thread: threading.Thread | None = None
+        self._closed = False
+
+    def set_worker_loss_observer(self, observer: WorkerLossObserver | None) -> None:
+        """Install the restart supervisor after both objects exist.
+
+        Composition is circular by nature — the supervisor replaces activations
+        through this lifecycle, and this lifecycle hands it each settled loss —
+        so the edge is closed here rather than in either constructor.
+        """
+
+        if observer is not None and not isinstance(observer, WorkerLossObserver):
+            raise ActivationLifecycleConfigurationError()
+        with self._lock:
+            self._loss_observer = observer
+
+    def worker_supervision(self, extension_id: str) -> WorkerSupervisionState:
+        """Report this extension's worker health as the adapter sees it.
+
+        HEALTHY means an activation is published right now. DEAD means the last
+        thing that happened to this extension's worker was an unexpected loss.
+        STARTING covers everything else: never activated, or deliberately
+        quiesced by an operator.
+        """
+
+        if type(extension_id) is not str or not extension_id:
+            raise ActivationLifecycleConflictError()
+        with self._lock:
+            serving = self._serving.get(extension_id)
+            loss = self._losses.get(extension_id)
+            interrupted = self._interrupted_counts.get(extension_id, 0)
+        if serving is not None:
+            state = WorkerHealthState.HEALTHY
+        elif loss is not None:
+            state = WorkerHealthState.DEAD
+        else:
+            state = WorkerHealthState.STARTING
+        return WorkerSupervisionState(extension_id, state, loss, interrupted)
+
+    def settle_orphaned_jobs(self, record: ExtensionRecord) -> int:
+        """Interrupt jobs owned by a prior activation nothing is serving.
+
+        Used at startup, so a plugin job can never survive an engine restart as
+        RUNNING, and at shutdown for a record whose worker already died. It is
+        a no-op while an activation is published: that one is quiesced instead.
+        Returns how many jobs it moved to INTERRUPTED; they are never replayed.
+        """
+
+        if type(record) is not ExtensionRecord:
+            raise ActivationLifecycleConflictError()
+        with self._effects:
+            with self._lock:
+                if self._serving.get(record.extension_id) is not None:
+                    return 0
+            identity = self._authority.identity_for(record.selected)
+            if identity is None:
+                return 0
+            owner = JobOwner(identity.plugin_id, identity.activation_id)
+            interrupted = len(self._jobs.mark_worker_crashed(owner).interrupted_job_ids)
+            with self._lock:
+                self._interrupted_counts[record.extension_id] = interrupted
+            return interrupted
+
+    def last_interrupted_job_count(self, extension_id: str) -> int:
+        """Jobs interrupted by this extension's most recent settlement."""
+
+        with self._lock:
+            return self._interrupted_counts.get(extension_id, 0)
+
+    def close(self) -> None:
+        """Stop supervising. Owned activations are left to the caller's teardown."""
+
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            thread = self._watch_thread
+            self._watch_thread = None
+        self._watch_stop.set()
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5.0)
 
     def serving(self, extension_id: str) -> ServingActivation | None:
         if type(extension_id) is not str or not extension_id:
@@ -288,11 +548,14 @@ class ProcessExtensionActivationLifecycle(ExtensionActivationLifecycle):
             ):
                 raise ActivationLifecycleConflictError()
             gate = _BrokerGate()
-            runtime = ProcessRuntime(
-                launch.runtime_config,
-                allowed_broker_methods=launch.allowed_broker_methods,
-                broker_request_handler=gate,
-            )
+            guard = _WorkerLossGuard(self._loss_queue.put)
+            runtime_arguments = {
+                "allowed_broker_methods": launch.allowed_broker_methods,
+                "broker_request_handler": gate,
+            }
+            if _RUNTIME_ACCEPTS_LOSS_LISTENER:
+                runtime_arguments["worker_loss_listener"] = guard
+            runtime = ProcessRuntime(launch.runtime_config, **runtime_arguments)
             session: LifecycleSession | None = None
             identity: ActivationIdentity | None = None
             registered = False
@@ -391,12 +654,15 @@ class ProcessExtensionActivationLifecycle(ExtensionActivationLifecycle):
                     runtime,
                     session,
                     serving_view,
+                    guard,
                 )
                 with self._lock:
                     if validated.activation_ref in self._by_ref:
                         raise ActivationLifecycleConflictError()
                     self._by_ref[validated.activation_ref] = owned
                     self._operation_ref[operation_id] = validated.activation_ref
+                guard.bind(identity.plugin_id, validated.activation_ref)
+                self._start_supervision()
                 return validated
             except Exception:
                 errors: list[Exception] = []
@@ -571,10 +837,15 @@ class ProcessExtensionActivationLifecycle(ExtensionActivationLifecycle):
         identity: ActivationIdentity,
         owned: _OwnedActivation | None,
         errors: list[Exception],
-    ) -> None:
+    ) -> int:
         owner = JobOwner(identity.plugin_id, identity.activation_id)
+        interrupted = 0
+        if owned is not None:
+            # Claim the activation before closing its runtime, so the loss the
+            # close itself provokes is recognised as this teardown's own.
+            owned.loss_guard.finish()
         try:
-            self._jobs.mark_worker_crashed(owner)
+            interrupted = len(self._jobs.mark_worker_crashed(owner).interrupted_job_ids)
         except Exception as error:
             errors.append(error)
         if owned is not None:
@@ -592,6 +863,108 @@ class ProcessExtensionActivationLifecycle(ExtensionActivationLifecycle):
                 errors.append(ActivationLifecycleOperationError())
         except Exception as error:
             errors.append(error)
+        with self._lock:
+            self._interrupted_counts[identity.plugin_id] = interrupted
+        return interrupted
+
+    def _start_supervision(self) -> None:
+        with self._lock:
+            if self._closed or self._watch_thread is not None:
+                return
+            thread = threading.Thread(
+                target=self._supervise,
+                name="model-deck-activation-supervision",
+                daemon=True,
+            )
+            self._watch_thread = thread
+        thread.start()
+
+    def _supervise(self) -> None:
+        """Settle reported losses promptly; re-check serving children between."""
+
+        poll_s = self._liveness_poll_s if self._liveness_poll_s > 0 else 0.5
+        while not self._watch_stop.is_set():
+            try:
+                guard = self._loss_queue.get(timeout=poll_s)
+            except queue.Empty:
+                if self._liveness_poll_s > 0:
+                    self._poll_serving_liveness()
+                continue
+            try:
+                self._settle_worker_loss(guard)
+            except Exception:
+                # A settlement that cannot finish must not take the supervision
+                # thread down; the activation stays unpublished either way.
+                continue
+
+    def _poll_serving_liveness(self) -> None:
+        with self._lock:
+            serving = tuple(self._serving.values())
+        for owned in serving:
+            if owned.loss_guard.is_finished():
+                continue
+            try:
+                owned.runtime.invocation_channel()
+            except Exception:
+                owned.loss_guard.on_worker_lost(
+                    WorkerLossEvent(
+                        owned.identity.activation_id,
+                        WorkerLossCode.EXITED,
+                        time.monotonic(),
+                    )
+                )
+
+    def _settle_worker_loss(self, guard: _WorkerLossGuard) -> None:
+        """Tear down one activation whose worker died, then report it once.
+
+        This is quiesce without the drain: there is no child left to ask. The
+        `_effects` lock is what makes it exclusive with an operator quiesce or
+        disable — whichever arrives first settles the activation, and the other
+        finds it gone and does nothing.
+        """
+
+        activation_ref = guard.activation_ref
+        event = guard.event
+        extension_id = guard.extension_id
+        if activation_ref is None or event is None or extension_id is None:
+            return
+        notice: WorkerLossNotice | None = None
+        observer: WorkerLossObserver | None = None
+        with self._effects:
+            with self._lock:
+                owned = self._by_ref.get(activation_ref)
+            if owned is None or owned.loss_guard is not guard:
+                guard.finish()
+                return
+            if not guard.claim_settlement():
+                return
+            errors: list[Exception] = []
+            try:
+                with self._data_store.mutation_barrier():
+                    self._authority.revoke(owned.identity)
+            except Exception as error:
+                errors.append(error)
+            with self._lock:
+                self._unpublish(owned)
+            interrupted = self._finish_owned_work(owned.identity, owned, errors)
+            with self._lock:
+                self._remove(owned)
+            notice = WorkerLossNotice(
+                extension_id,
+                owned.identity.activation_id,
+                event.failure_code,
+                event.at_monotonic,
+                event.exit_code,
+                interrupted,
+                not errors,
+            )
+            with self._lock:
+                self._losses[extension_id] = notice
+                observer = self._loss_observer
+        if observer is not None:
+            # Outside `_effects`: the observer may start a replacement, and a
+            # replacement runs validate and admit, which need that lock.
+            observer.on_worker_loss_settled(notice)
 
     def _remove(self, owned: _OwnedActivation) -> None:
         self._by_ref.pop(owned.validated.activation_ref, None)
@@ -696,11 +1069,16 @@ class ProcessExtensionActivationLifecycle(ExtensionActivationLifecycle):
 __all__ = [
     "ActivationAuthorityController",
     "ActivationBrokerFactory",
+    "ActivationJobSettlement",
     "ActivationLifecycleConfigurationError",
     "ActivationLifecycleConflictError",
     "ActivationLifecycleOperationError",
     "ArtifactLaunchResolver",
+    "DEFAULT_LIVENESS_POLL_S",
     "ProcessExtensionActivationLifecycle",
     "ResolvedArtifactLaunch",
     "ServingActivation",
+    "WorkerLossNotice",
+    "WorkerLossObserver",
+    "WorkerSupervisionState",
 ]

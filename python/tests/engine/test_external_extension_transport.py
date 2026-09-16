@@ -16,6 +16,7 @@ from model_deck.adapters.storage.sqlite_versioned_plugin_data import SQLiteVersi
 from model_deck.bootstrap import build_engine_server
 from model_deck.engine.server import EngineServer
 from model_deck.engine.jobs import GetJobCommand, JobState
+from model_deck.engine.jobs.ports import ClaimJobCommand, CreateJobCommand, JobOwner
 from model_deck.plugins.authoring import pack_project_archive
 from model_deck.plugins.external_host import ExternalExtensionHost, HostDependencies
 from model_deck_contracts.paths import repo_root
@@ -327,6 +328,106 @@ class ExternalExtensionTransportTests(unittest.TestCase):
         self.assertEqual(
             persisted_jobs.get(GetJobCommand(interrupted_job_id)).state,
             JobState.INTERRUPTED,
+        )
+
+    def test_reopened_engine_interrupts_plugin_jobs_left_running_by_the_last_process(
+        self,
+    ) -> None:
+        """A plugin job can never still read as running after an engine restart.
+
+        The first engine leaves a job behind in RUNNING, owned by the activation
+        that was serving at the time — exactly the state an engine killed
+        mid-export leaves on disk. The second engine's startup sweep has to
+        settle it before it re-admits the extension, and the answer has to be
+        visible over the socket, not only in the database.
+        """
+
+        state = self._directory()
+        artifacts = self._directory()
+        legacy = self._directory()
+        extension_state = self._directory()
+        extension_artifacts = self._directory()
+        archive = self._directory() / "notebook.zip"
+        project_root = Path(__file__).resolve().parents[3]
+        pack_project_archive(
+            project_root / "examples" / "session-notebook", output_path=archive
+        )
+
+        def engine():
+            return build_engine_server(
+                state_root=state,
+                artifact_root=artifacts,
+                socket_root=self._directory(),
+                legacy_agents_dir=legacy,
+                default_connection_id=str(uuid4()),
+                source_root=repo_root(),
+                enable_application_state=True,
+                enable_external_extensions=True,
+                extension_state_root=extension_state,
+                extension_artifact_root=extension_artifacts,
+            )
+
+        self._runtime = engine()
+        self._runtime.server.start()
+        session = self._authenticated_session()
+        installed = self._call(session, 2, "engine.v1.extensions.install", {
+            "archive_path": str(archive), "idempotency_key": "install",
+            "expected_revision": 0,
+        })["result"]
+        self.assertEqual(installed["extension_id"], "org.example.notebook")
+        record = self._call(session, 3, "engine.v1.extensions.get", {
+            "extension_id": "org.example.notebook",
+        })["result"]
+        self._call(session, 4, "engine.v1.extensions.enable", {
+            "extension_id": "org.example.notebook",
+            "expected_revision": record["revision"], "idempotency_key": "enable",
+        })
+        started = self._call(session, 5, "engine.v1.operations.invoke", {
+            "operation": "org.example.notebook.export.start",
+            "input": {},
+            "idempotency_key": "export-before-restart",
+        })["result"]
+        settled_job_id = started["job_id"]
+
+        jobs = SQLitePluginJobRepository(
+            extension_state / "host.sqlite3",
+            checkpoint_validator=lambda _schema, _value: None,
+        )
+        settled = jobs.get(GetJobCommand(settled_job_id))
+        owner = JobOwner("org.example.notebook", settled.activation_id)
+        self._runtime.server.stop()
+        self._runtime = None
+
+        # The job the dead process never got to settle. Same owner and same
+        # originating principal as the real one, so the socket can read it back.
+        stranded = jobs.create(CreateJobCommand(
+            owner,
+            str(uuid4()),
+            "org.example.notebook.export.start",
+            settled.origin_principal_id,
+        ))
+        jobs.claim(ClaimJobCommand(stranded.job_id, owner))
+        self.assertEqual(
+            jobs.get(GetJobCommand(stranded.job_id)).state, JobState.RUNNING,
+        )
+
+        self._runtime = engine()
+        self._runtime.server.start()
+        reopened = self._authenticated_session()
+
+        self.assertEqual(
+            self._call(reopened, 6, "engine.v1.jobs.get", {
+                "job_id": stranded.job_id,
+            })["result"]["state"],
+            "interrupted",
+        )
+        # The job the first engine did settle keeps whatever it settled as; the
+        # sweep only touches work that was still open.
+        self.assertIn(
+            self._call(reopened, 7, "engine.v1.jobs.get", {
+                "job_id": settled_job_id,
+            })["result"]["state"],
+            {"completed", "failed", "cancelled", "interrupted"},
         )
 
     def _wait_for_job_terminal(
