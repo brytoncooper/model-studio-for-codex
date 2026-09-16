@@ -13,6 +13,10 @@ public final class UnixSocketEngineTransport: EngineTransport {
     private var closeDrainFD: Int32 = -1
     internal var testingOnInFlightIOEntered: (() -> Void)?
     internal var testingOnWaitingForCloseDrain: (() -> Void)?
+    /// Invoked by `close()` once the drain has been marked as in progress and the lock
+    /// released, but before the socket is shut down. Tests park here to hold the drain
+    /// open long enough to observe a concurrent `open()` waiting on it.
+    internal var testingOnCloseDrainStarted: (() -> Void)?
 
     public init(socketPath: String) {
         self.socketPath = socketPath
@@ -185,7 +189,10 @@ public final class UnixSocketEngineTransport: EngineTransport {
         readBuffer.removeAll(keepingCapacity: false)
         closeDrainFD = fdToDrain
         isDrainingClose = true
+        let drainStartedHook = testingOnCloseDrainStarted
         lifecycle.unlock()
+
+        drainStartedHook?()
 
         _ = Darwin.shutdown(fdToDrain, Int32(SHUT_RDWR))
 

@@ -65,10 +65,18 @@ final class UnixSocketEngineTransportTests: XCTestCase {
         XCTAssertTrue(fixture.waitForClientConnection(timeout: 1))
 
         let ioEntered = DispatchSemaphore(value: 0)
+        let drainStarted = DispatchSemaphore(value: 0)
+        let releaseDrain = DispatchSemaphore(value: 0)
         let openWaitingForDrain = DispatchSemaphore(value: 0)
         transport.testingOnInFlightIOEntered = { ioEntered.signal() }
         transport.testingOnWaitingForCloseDrain = { openWaitingForDrain.signal() }
+        transport.testingOnCloseDrainStarted = {
+            drainStarted.signal()
+            _ = releaseDrain.wait(timeout: .now() + 5)
+        }
 
+        // A reader blocked inside the transport keeps the close drain from finishing
+        // on its own, so the drain window is controlled by this test instead of timing.
         DispatchQueue.global(qos: .userInitiated).async {
             do { _ = try transport.receiveFrame() } catch { }
         }
@@ -81,6 +89,11 @@ final class UnixSocketEngineTransportTests: XCTestCase {
             closeFinished.signal()
         }
 
+        // close() is parked inside the drain, so the drain is provably in progress
+        // before open() starts. Without this the open below can run either before
+        // close() marks the drain or after the drain has already finished.
+        XCTAssertEqual(drainStarted.wait(timeout: .now() + 1), .success)
+
         let openFinished = DispatchSemaphore(value: 0)
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -92,10 +105,17 @@ final class UnixSocketEngineTransportTests: XCTestCase {
         }
 
         XCTAssertEqual(openWaitingForDrain.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(transport.socketFileDescriptorForTesting(), -1)
+
+        releaseDrain.signal()
         XCTAssertEqual(closeFinished.wait(timeout: .now() + 1), .success)
         XCTAssertTrue(fixture.acceptNextClient(timeout: 1))
         XCTAssertEqual(openFinished.wait(timeout: .now() + 1), .success)
         XCTAssertGreaterThanOrEqual(transport.socketFileDescriptorForTesting(), 0)
+
+        transport.testingOnInFlightIOEntered = nil
+        transport.testingOnWaitingForCloseDrain = nil
+        transport.testingOnCloseDrainStarted = nil
         transport.close()
     }
 
