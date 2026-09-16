@@ -23,6 +23,13 @@ from model_deck_contracts.validator import SchemaValidationError, validate_schem
 
 from .channel import ProviderChannel, ProviderMethod
 from .errors import ProcessRuntimeError, ProcessRuntimeErrorCode
+from .health import (
+    WorkerHealth,
+    WorkerHealthState,
+    WorkerLossCode,
+    WorkerLossEvent,
+    WorkerLossListener,
+)
 from .invocation_channel import BrokerRequestHandler, InvocationChannel
 
 _METHODS = {
@@ -31,6 +38,8 @@ _METHODS = {
     "drain": "plugin.v1.lifecycle.drain",
 }
 _INVOKE_METHOD = "plugin.v1.invoke"
+_HEARTBEAT_METHOD = "plugin.v1.heartbeat"
+_HEARTBEAT_PARAMS_REF = "contracts/plugin.v1/lifecycle/heartbeat.params.schema.json"
 _BROKER_METHOD_PREFIX = "plugin.v1.broker."
 _INVENTORY_BROKER_METHODS = frozenset(
     method for method in iter_inventory_methods() if method.startswith(_BROKER_METHOD_PREFIX)
@@ -41,6 +50,24 @@ _MAX_TIMEOUT_S = 60.0
 _MAX_FRAMES = 1024
 _BROKER_WORKER_COUNT = 2
 _BROKER_ERROR_CODE = -32000
+_MAX_MISSED_HEARTBEATS = 1024
+_MAX_LATE_HEARTBEAT_IDS = 64
+
+# How a runtime failure code reads as a worker-loss code. A loss the runtime
+# decided for itself (the heartbeat verdict, the broker deadline owner) passes
+# its own code to ``_stop`` instead of going through this table.
+_LOSS_CODE_BY_ERROR_CODE = {
+    ProcessRuntimeErrorCode.MALFORMED_EOF: WorkerLossCode.EXITED,
+    ProcessRuntimeErrorCode.TIMEOUT: WorkerLossCode.TIMEOUT,
+}
+
+
+class _WorkerRejectedRequest(Exception):
+    """The child answered a request with a JSON-RPC error instead of a result.
+
+    Only the heartbeat tolerates this; every other exchange treats an error
+    reply as a protocol failure that closes the runtime.
+    """
 
 
 @dataclass(frozen=True)
@@ -53,6 +80,12 @@ class ProcessRuntimeConfig:
         timeout_s: Per-exchange deadline in seconds.
         max_frames: Max frames accepted per single exchange.
         max_stderr_bytes: Cap on stderr bytes retained for bounded drain.
+        heartbeat_interval_s: Seconds between liveness beats once the
+            activation is active. ``0.0`` disables heartbeats entirely.
+        heartbeat_timeout_s: Deadline for one beat. A beat that does not
+            answer inside it is missed, not a failure.
+        heartbeat_max_missed: Consecutive missed beats that make a still-running
+            child unresponsive.
     """
 
     argv: tuple[str, ...]
@@ -61,6 +94,9 @@ class ProcessRuntimeConfig:
     max_frames: int = 16
     max_stderr_bytes: int = 65536
     max_pending_requests: int = 16
+    heartbeat_interval_s: float = 5.0
+    heartbeat_timeout_s: float = 2.0
+    heartbeat_max_missed: int = 3
 
     def __post_init__(self) -> None:
         if not isinstance(self.argv, (tuple, list)) or not self.argv:
@@ -114,6 +150,46 @@ class ProcessRuntimeConfig:
                 code=ProcessRuntimeErrorCode.SPAWN_FAILED,
                 detail="max_stderr_bytes must be a non-negative integer",
             )
+        self._validate_heartbeat_fields()
+
+    def _validate_heartbeat_fields(self) -> None:
+        interval = self.heartbeat_interval_s
+        if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+            raise ProcessRuntimeError(
+                code=ProcessRuntimeErrorCode.SPAWN_FAILED,
+                detail="heartbeat_interval_s must be a number of seconds",
+            )
+        if not math.isfinite(float(interval)) or not 0 <= float(interval) <= _MAX_TIMEOUT_S:
+            raise ProcessRuntimeError(
+                code=ProcessRuntimeErrorCode.SPAWN_FAILED,
+                detail="heartbeat_interval_s must be a number of seconds",
+            )
+        beat_timeout = self.heartbeat_timeout_s
+        if isinstance(beat_timeout, bool) or not isinstance(beat_timeout, (int, float)):
+            raise ProcessRuntimeError(
+                code=ProcessRuntimeErrorCode.SPAWN_FAILED,
+                detail="heartbeat_timeout_s must be a positive number of seconds",
+            )
+        if (
+            not math.isfinite(float(beat_timeout))
+            or not 0 < float(beat_timeout) <= _MAX_TIMEOUT_S
+        ):
+            raise ProcessRuntimeError(
+                code=ProcessRuntimeErrorCode.SPAWN_FAILED,
+                detail="heartbeat_timeout_s must be a positive number of seconds",
+            )
+        if isinstance(self.heartbeat_max_missed, bool) or not isinstance(
+            self.heartbeat_max_missed, int
+        ):
+            raise ProcessRuntimeError(
+                code=ProcessRuntimeErrorCode.SPAWN_FAILED,
+                detail="heartbeat_max_missed must be a positive integer",
+            )
+        if not 1 <= self.heartbeat_max_missed <= _MAX_MISSED_HEARTBEATS:
+            raise ProcessRuntimeError(
+                code=ProcessRuntimeErrorCode.SPAWN_FAILED,
+                detail="heartbeat_max_missed must be a positive integer",
+            )
 
 
 @dataclass
@@ -121,6 +197,8 @@ class _PendingRequest:
     method: str
     result: dict[str, Any] | None = None
     frames_seen: int = 0
+    deadline: float = 0.0
+    rejected: bool = False
 
 
 @dataclass(frozen=True)
@@ -139,6 +217,9 @@ class ProcessRuntime:
     config: ProcessRuntimeConfig
     allowed_broker_methods: InitVar[tuple[str, ...]] = field(default=(), kw_only=True)
     broker_request_handler: InitVar[BrokerRequestHandler | None] = field(
+        default=None, kw_only=True
+    )
+    worker_loss_listener: InitVar[WorkerLossListener | None] = field(
         default=None, kw_only=True
     )
     _proc: subprocess.Popen | None = field(default=None, init=False, repr=False)
@@ -181,11 +262,34 @@ class ProcessRuntime:
     _broker_deadline_thread: threading.Thread | None = field(
         default=None, init=False, repr=False
     )
+    _worker_loss_listener: WorkerLossListener | None = field(
+        default=None, init=False, repr=False
+    )
+    _loss_notified: bool = field(default=False, init=False, repr=False)
+    _listener_failure: ProcessRuntimeError | None = field(
+        default=None, init=False, repr=False
+    )
+    _heartbeat_thread: threading.Thread | None = field(
+        default=None, init=False, repr=False
+    )
+    _heartbeat_enabled: bool = field(default=False, init=False, repr=False)
+    _heartbeat_supported: bool = field(default=True, init=False, repr=False)
+    _health_state: WorkerHealthState = field(
+        default=WorkerHealthState.STARTING, init=False, repr=False
+    )
+    _last_heartbeat_monotonic: float | None = field(
+        default=None, init=False, repr=False
+    )
+    _consecutive_missed_heartbeats: int = field(default=0, init=False, repr=False)
+    _late_heartbeat_ids: set[int] = field(
+        default_factory=set, init=False, repr=False
+    )
 
     def __post_init__(
         self,
         allowed_broker_methods: tuple[str, ...],
         broker_request_handler: BrokerRequestHandler | None,
+        worker_loss_listener: WorkerLossListener | None,
     ) -> None:
         if type(allowed_broker_methods) is not tuple:
             raise ProcessRuntimeError("protocol", "allowed broker methods must be a tuple")
@@ -198,8 +302,15 @@ class ProcessRuntime:
             raise ProcessRuntimeError("protocol", "allowed broker methods contain duplicates")
         if broker_request_handler is not None and not callable(broker_request_handler):
             raise ProcessRuntimeError("protocol", "broker request handler must be callable")
+        if worker_loss_listener is not None and not callable(
+            getattr(worker_loss_listener, "on_worker_lost", None)
+        ):
+            raise ProcessRuntimeError(
+                "protocol", "worker loss listener must implement on_worker_lost"
+            )
         self._allowed_broker_methods = frozenset(allowed_broker_methods)
         self._broker_request_handler = broker_request_handler
+        self._worker_loss_listener = worker_loss_listener
         self._broker_requests = queue.Queue(maxsize=self.config.max_pending_requests)
 
     def __repr__(self) -> str:
@@ -212,6 +323,44 @@ class ProcessRuntime:
             if self._stderr_chunks is not None:
                 return sum(len(c) for c in self._stderr_chunks)
             return len(self._stderr_tail)
+
+    @property
+    def last_failure(self) -> ProcessRuntimeError | None:
+        """The failure that ended this runtime, or None while it is running."""
+        with self._condition:
+            return self._failure
+
+    @property
+    def last_listener_failure(self) -> ProcessRuntimeError | None:
+        """Recorded when the worker-loss listener raised; never re-raised."""
+        with self._condition:
+            return self._listener_failure
+
+    @property
+    def heartbeat_supported(self) -> bool:
+        """False once the child answered a heartbeat with a JSON-RPC error.
+
+        A child that rejects the method is alive and stays healthy; the runtime
+        simply stops beating at it. ``WorkerHealth`` has no field for this, so
+        it is reported here.
+        """
+        with self._condition:
+            return self._heartbeat_supported
+
+    def health(self) -> WorkerHealth:
+        """This worker's heartbeat standing right now.
+
+        ``starting`` until the first beat is answered, ``healthy`` while beats
+        are answered (including by a child that rejects the method),
+        ``unresponsive`` once beats are being missed by a still-running child,
+        and ``dead`` once the child is gone for any other reason.
+        """
+        with self._condition:
+            return WorkerHealth(
+                state=self._health_state,
+                last_heartbeat_monotonic=self._last_heartbeat_monotonic,
+                consecutive_missed=self._consecutive_missed_heartbeats,
+            )
 
     def spawn(self) -> None:
         """Launch the injected child; no shell, no discovery."""
@@ -325,6 +474,8 @@ class ProcessRuntime:
                     self._activation_id = session.activation_id
                 else:
                     session.accept_drain_result(result)
+            if operation == "activate":
+                self._start_heartbeat_monitor()
             return result
         except SessionError:
             self.close()
@@ -518,21 +669,36 @@ class ProcessRuntime:
             raise ProcessRuntimeError("transport", "runtime is not running")
 
     def close(self) -> None:
-        self._stop(ProcessRuntimeError("transport", "runtime closed"))
+        self._stop(
+            ProcessRuntimeError("transport", "runtime closed"), owner_initiated=True
+        )
         if threading.current_thread() not in (self._reader_thread, self._stderr_thread):
             self._cleanup_done.wait(min(float(self.config.timeout_s), 5.0) + 7.0)
 
-    def _stop(self, failure):
+    def _stop(self, failure, *, loss_code=None, owner_initiated=False):
+        """End this runtime once, reap its child, and report the loss.
+
+        Only the first caller does any of this; everyone after it returns
+        immediately, so a worker is reported lost exactly once. An
+        owner-initiated close is not a loss and reports nothing.
+        """
         with self._condition:
             if self._closed:
                 return
             self._closed = True
             self._failure = failure
+            self._heartbeat_enabled = False
+            self._health_state = (
+                WorkerHealthState.UNRESPONSIVE
+                if loss_code is WorkerLossCode.UNRESPONSIVE
+                else WorkerHealthState.DEAD
+            )
             proc, self._proc = self._proc, None
             self._events.clear()
             self._event_bytes = 0
             self._broker_request_ids.clear()
             self._broker_request_deadlines.clear()
+            self._late_heartbeat_ids.clear()
             self._condition.notify_all()
         while True:
             try:
@@ -553,6 +719,7 @@ class ProcessRuntime:
                 self._reader_thread,
                 self._stderr_thread,
                 self._broker_deadline_thread,
+                self._heartbeat_thread,
                 *self._broker_threads,
             )
             for thread in threads:
@@ -561,6 +728,40 @@ class ProcessRuntime:
             self._snapshot_stderr_tail()
         finally:
             self._cleanup_done.set()
+            # No lock is held here: a listener must never run inside the write
+            # lock or the runtime condition, and must never fail the stop path.
+            self._notify_worker_lost(
+                failure,
+                loss_code,
+                owner_initiated=owner_initiated,
+                exit_code=None if proc is None else proc.returncode,
+            )
+
+    def _notify_worker_lost(
+        self, failure, loss_code, *, owner_initiated: bool, exit_code: int | None
+    ) -> None:
+        listener = self._worker_loss_listener
+        if listener is None or owner_initiated or self._loss_notified:
+            return
+        self._loss_notified = True
+        if loss_code is None:
+            loss_code = _LOSS_CODE_BY_ERROR_CODE.get(failure.code, WorkerLossCode.KILLED)
+        try:
+            listener.on_worker_lost(
+                WorkerLossEvent(
+                    activation_id=self._activation_id,
+                    failure_code=loss_code,
+                    at_monotonic=time.monotonic(),
+                    exit_code=exit_code,
+                )
+            )
+        except Exception:
+            # A listener is a notification sink, not part of cleanup. Its
+            # failure is recorded and goes no further.
+            with self._condition:
+                self._listener_failure = ProcessRuntimeError(
+                    ProcessRuntimeErrorCode.TRANSPORT, "worker loss listener failed"
+                )
 
     def _timeout(self, timeout_s, *, allow_zero=False):
         value = self.config.timeout_s if timeout_s is None else timeout_s
@@ -583,7 +784,7 @@ class ProcessRuntime:
             self._cleanup_done.wait(min(float(self.config.timeout_s), 5.0) + 7.0)
             raise failure from None
 
-    def _exchange(self, method, params, timeout_s=None):
+    def _exchange(self, method, params, timeout_s=None, *, tolerate_late_reply=False):
         deadline = time.monotonic() + self._timeout(timeout_s)
         with self._condition:
             self._raise_if_closed()
@@ -591,7 +792,7 @@ class ProcessRuntime:
                 raise ProcessRuntimeError("frame_limit", "pending request limit exceeded")
             self._request_id += 1
             request_id = self._request_id
-            pending = _PendingRequest(method)
+            pending = _PendingRequest(method, deadline=deadline)
             self._pending[request_id] = pending
             proc = self._proc
         try:
@@ -609,6 +810,8 @@ class ProcessRuntime:
             with self._condition:
                 while True:
                     self._raise_if_closed()
+                    if pending.rejected:
+                        raise _WorkerRejectedRequest()
                     if pending.result is not None:
                         return pending.result
                     remaining = deadline - time.monotonic()
@@ -618,6 +821,147 @@ class ProcessRuntime:
         finally:
             with self._condition:
                 self._pending.pop(request_id, None)
+                if (
+                    tolerate_late_reply
+                    and pending.result is None
+                    and not pending.rejected
+                ):
+                    self._remember_late_reply(request_id)
+
+    def _remember_late_reply(self, request_id: int) -> None:
+        """Record one abandoned heartbeat id so a late answer can be dropped."""
+        if len(self._late_heartbeat_ids) >= _MAX_LATE_HEARTBEAT_IDS:
+            # A child this far behind will not be tracked forever; the oldest
+            # ids are the ones whose answers are least likely to still arrive.
+            self._late_heartbeat_ids.pop()
+        self._late_heartbeat_ids.add(request_id)
+
+    def _start_heartbeat_monitor(self) -> None:
+        """Begin beating at the child now that an activation is bound."""
+        with self._condition:
+            if self._closed or self._heartbeat_thread is not None:
+                return
+            if float(self.config.heartbeat_interval_s) <= 0:
+                self._heartbeat_enabled = False
+                return
+            activation_id = self._activation_id
+            if activation_id is None:
+                return
+            try:
+                validate_schema_ref(
+                    _HEARTBEAT_PARAMS_REF, {"activation_id": activation_id}
+                )
+            except (SchemaValidationError, ValueError, TypeError, RecursionError):
+                # An activation id the heartbeat contract cannot carry is not a
+                # reason to fail a working child; it just cannot be beaten at.
+                self._heartbeat_enabled = False
+                self._heartbeat_supported = False
+                return
+            self._heartbeat_enabled = True
+            thread = threading.Thread(
+                target=self._monitor_worker_heartbeats,
+                name="model-deck-heartbeat",
+                daemon=True,
+            )
+            self._heartbeat_thread = thread
+        thread.start()
+
+    def _monitor_worker_heartbeats(self) -> None:
+        interval = float(self.config.heartbeat_interval_s)
+        next_beat = time.monotonic() + interval
+        while True:
+            with self._condition:
+                while True:
+                    if self._closed or not self._heartbeat_enabled:
+                        return
+                    remaining = next_beat - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._condition.wait(remaining)
+            next_beat = time.monotonic() + interval
+            self._send_one_heartbeat()
+
+    def _send_one_heartbeat(self) -> None:
+        with self._condition:
+            if self._closed or not self._heartbeat_enabled:
+                return
+            activation_id = self._activation_id
+            session = self._session
+            if activation_id is None or session is None or session.state != "active":
+                return
+            if any(
+                pending.deadline > time.monotonic()
+                for pending in self._pending.values()
+            ):
+                # Work already in flight and still inside its own deadline is
+                # evidence of life. Skip this beat rather than queue behind it.
+                return
+        try:
+            self._exchange(
+                _HEARTBEAT_METHOD,
+                {"activation_id": activation_id},
+                self.config.heartbeat_timeout_s,
+                tolerate_late_reply=True,
+            )
+        except _WorkerRejectedRequest:
+            self._record_heartbeat_unsupported()
+            return
+        except ProcessRuntimeError as failure:
+            if failure.code == ProcessRuntimeErrorCode.TIMEOUT:
+                self._record_missed_heartbeat()
+            elif failure.code == ProcessRuntimeErrorCode.MALFORMED_EOF:
+                self._stop(failure)
+            # Any other code means the runtime is already failing or is
+            # momentarily saturated; the beat is simply skipped.
+            return
+        except (OSError, ValueError, CodecError):
+            return
+        self._record_heartbeat_answer()
+
+    def _record_heartbeat_answer(self) -> None:
+        """Any answer at all proves the child's read/write loop is alive."""
+        with self._condition:
+            if self._closed:
+                return
+            self._last_heartbeat_monotonic = time.monotonic()
+            self._consecutive_missed_heartbeats = 0
+            self._health_state = WorkerHealthState.HEALTHY
+
+    def _record_heartbeat_unsupported(self) -> None:
+        with self._condition:
+            if self._closed:
+                return
+            self._heartbeat_enabled = False
+            self._heartbeat_supported = False
+            self._last_heartbeat_monotonic = time.monotonic()
+            self._consecutive_missed_heartbeats = 0
+            self._health_state = WorkerHealthState.HEALTHY
+            self._condition.notify_all()
+
+    def _record_missed_heartbeat(self) -> None:
+        with self._condition:
+            if self._closed:
+                return
+            self._consecutive_missed_heartbeats += 1
+            missed = self._consecutive_missed_heartbeats
+            self._health_state = WorkerHealthState.UNRESPONSIVE
+            proc = self._proc
+            if missed < self.config.heartbeat_max_missed:
+                return
+        if proc is not None and proc.poll() is not None:
+            self._stop(
+                ProcessRuntimeError(
+                    ProcessRuntimeErrorCode.MALFORMED_EOF, "child exited"
+                ),
+                loss_code=WorkerLossCode.EXITED,
+            )
+            return
+        self._stop(
+            ProcessRuntimeError(
+                ProcessRuntimeErrorCode.TIMEOUT, "worker missed its heartbeats"
+            ),
+            loss_code=WorkerLossCode.UNRESPONSIVE,
+        )
 
     def _read_stdout(self, proc):
         try:
@@ -639,6 +983,7 @@ class ProcessRuntime:
                     # Commit the batch only after every frame validates. A valid
                     # hello bundled with an unknown reply must never succeed.
                     responses, events, broker_requests = [], [], []
+                    rejections = []
                     batch_ids = set()
                     batch_broker_ids = set()
                     byte_count = self._event_bytes
@@ -720,9 +1065,23 @@ class ProcessRuntime:
                         if set(frame) not in ({"jsonrpc", "id", "result"}, {"jsonrpc", "id", "error"}):
                             raise ProcessRuntimeError("protocol", "invalid response envelope")
                         pending = self._pending.get(request_id)
+                        if pending is None and request_id in self._late_heartbeat_ids:
+                            # A heartbeat answered after its own deadline. The
+                            # beat was already counted as missed; a slow child
+                            # is not a protocol violation, so drop the frame.
+                            self._late_heartbeat_ids.discard(request_id)
+                            continue
                         if pending is None or pending.result is not None or request_id in batch_ids:
                             raise ProcessRuntimeError("id_mismatch", "unknown or duplicate response id")
-                        if "error" in frame or not isinstance(frame.get("result"), dict):
+                        if "error" in frame:
+                            if pending.method != _HEARTBEAT_METHOD:
+                                raise ProcessRuntimeError("protocol", "worker request failed")
+                            # A child may simply not implement the heartbeat.
+                            # Answering at all proves it is alive.
+                            batch_ids.add(request_id)
+                            rejections.append(pending)
+                            continue
+                        if not isinstance(frame.get("result"), dict):
                             raise ProcessRuntimeError("protocol", "worker request failed")
                         if pending.method.startswith("plugin.v1.provider."):
                             self._validate_provider(pending.method, "result", frame["result"])
@@ -743,6 +1102,8 @@ class ProcessRuntime:
                             ) from None
                     for pending, result in responses:
                         pending.result = result
+                    for pending in rejections:
+                        pending.rejected = True
                     self._events.extend(events)
                     self._event_bytes = byte_count
                     self._condition.notify_all()
@@ -764,7 +1125,10 @@ class ProcessRuntime:
                 if remaining > 0:
                     self._condition.wait(remaining)
                     continue
-            self._stop(ProcessRuntimeError("timeout", "broker request timed out"))
+            self._stop(
+                ProcessRuntimeError("timeout", "broker request timed out"),
+                loss_code=WorkerLossCode.KILLED,
+            )
             return
 
     def _service_broker_requests(self) -> None:

@@ -10,12 +10,20 @@ selection.
 ## Public API
 
 - `ProcessRuntimeConfig(argv, package_dir, timeout_s=5.0, max_frames=16,
-  max_stderr_bytes=65536, max_pending_requests=16)` specifies the executable,
-  working directory, and limits. No shell, downloads, or discovery.
+  max_stderr_bytes=65536, max_pending_requests=16, heartbeat_interval_s=5.0,
+  heartbeat_timeout_s=2.0, heartbeat_max_missed=3)` specifies the executable,
+  working directory, and limits. No shell, downloads, or discovery. The three
+  heartbeat fields are validated like the rest; `heartbeat_interval_s=0.0`
+  turns heartbeats off entirely.
 - `ProcessRuntime(config, *, allowed_broker_methods=(),
-  broker_request_handler=None).spawn()` starts exactly one child. A runtime
-  cannot respawn after closing. Trusted composition supplies the broker
-  allowlist and handler; the worker cannot widen either one.
+  broker_request_handler=None, worker_loss_listener=None).spawn()` starts
+  exactly one child. A runtime cannot respawn after closing. Trusted
+  composition supplies the broker allowlist and handler; the worker cannot
+  widen either one.
+- `health()` returns a `WorkerHealth`, and `heartbeat_supported` reports
+  whether the child answers the heartbeat method at all. `last_failure` is the
+  error that ended the runtime; `last_listener_failure` is set only when a
+  worker-loss listener raised.
 - `run_hello(session, nonce)`, `run_activation(session)`, and
   `run_drain(session, deadline_ms)` preserve the synchronous lifecycle API.
   Hello and activation must succeed on this runtime with the same session object.
@@ -51,8 +59,10 @@ One stdout reader starts at spawn and owns the persistent decoder throughout
 hello, activation, invocation, provider traffic, and drain. It validates each
 complete batch before releasing results. Unknown or duplicate response IDs,
 duplicate in-flight worker request IDs, invalid envelopes, broker methods absent
-from the inventory, and unrecognized notifications fail closed. Complete and
-partial trailing frames are not dropped. Provider events and broker requests are
+from the inventory, and unrecognized notifications fail closed. The only two
+exceptions are the heartbeat's, described under **Worker liveness**: a response
+id the runtime itself abandoned when a beat missed its deadline, and an error
+reply to a beat. Complete and partial trailing frames are not dropped. Provider events and broker requests are
 forbidden before activation acceptance.
 
 Worker broker requests use their own correlation-id direction and never enter
@@ -97,6 +107,62 @@ alive in its daemon thread until it returns, but it cannot block the stdout
 reader or subprocess cleanup. This is not operating-system containment of
 handler code.
 
+## Worker liveness
+
+A runtime reports a lost worker exactly once, to the optional
+`worker_loss_listener` passed to the constructor. The call happens at the tail
+of the stop path, after the child is terminated and reaped, holding neither the
+write lock nor the runtime condition. A listener that raises has its exception
+swallowed and recorded on `last_listener_failure`; nothing else changes. With
+no listener the runtime behaves exactly as it did before.
+
+An owner-initiated `close()` is not a loss and reports nothing. Neither does a
+lifecycle result that the session rejects: the supervisor is tearing down a
+worker that is still alive, which is not a reason to restart anything. Every
+other stop reports, with these `WorkerLossCode` values:
+
+- `exited` — stdout reached EOF, or a write found the child already gone. The
+  event carries the reaped `exit_code`, including the negative signal number of
+  a child that was killed.
+- `timeout` — a per-exchange deadline elapsed.
+- `unresponsive` — the heartbeat verdict below.
+- `killed` — the broker-deadline owner terminated the child, or the runtime
+  failed the worker for a protocol, framing, id, or transport reason.
+
+Once an activation is active, a daemon thread beats at the child every
+`heartbeat_interval_s` with the canonical inventory method
+`plugin.v1.heartbeat` and params `{"activation_id": ...}`, using the same
+exchange path as every other request and its own `heartbeat_timeout_s`
+deadline. The monitor skips a beat rather than queueing behind other work: any
+exchange still inside its own deadline is itself evidence of life, and so is a
+draining or not-yet-active session. Any answer at all marks the worker
+`healthy` — the runtime does not police the heartbeat result body, because a
+child that answers has proven its read/write loop is alive. A reply that
+arrives after its beat's deadline is dropped instead of failing the runtime on
+an unknown response id, and it does not clear the missed count: only a beat
+answered inside its own deadline does.
+
+A beat that times out counts as missed and moves health to `unresponsive`. At
+`heartbeat_max_missed` consecutive misses the runtime checks the process: a
+child that has exited is reported `exited`, and a child still running is
+terminated, reaped, and reported `unresponsive`. `health()` returns the
+`WorkerHealth` record — `starting` before the first answer, `healthy`,
+`unresponsive` while beats are being missed and after an unresponsive verdict,
+and `dead` once the child is gone for any other reason, including after an
+ordinary `close()`.
+
+A child that answers a heartbeat with a JSON-RPC error is alive but does not
+implement the method. That is not a loss: the worker stays `healthy`, beats
+stop for the life of that runtime, and `heartbeat_supported` becomes False.
+`WorkerHealth` has no field for that distinction, so it is reported on the
+runtime instead. The heartbeat is also disabled, before any beat is sent, when
+the worker's own activation id cannot satisfy the frozen heartbeat params
+schema; a working child is never failed over that.
+
+Liveness does not restart anything. A runtime still cannot respawn after
+closing, and a replacement activation is a new runtime owned by the activation
+lifecycle.
+
 ## Extension boundary and limitations
 
 The invocation authority owner validates broker context plugin and invocation
@@ -122,12 +188,60 @@ operations inventory names those methods `plugin.v1.*`; reconciling that legacy
 mismatch requires separate qualification. New invocation uses the canonical
 inventory name `plugin.v1.invoke`.
 
+## Worker health records (`health.py`)
+
+`health.py` is a stdlib-only module of frozen records. It imports nothing from
+the rest of the codebase, performs no I/O, reads no clock, and touches no
+process; every timestamp is a `time.monotonic()` reading passed in by the
+caller, and every ledger method returns a new value.
+
+- `WorkerHealthState` — `starting`, `healthy`, `unresponsive`, `dead`.
+- `WorkerHealth(state, last_heartbeat_monotonic, consecutive_missed)`, where the
+  heartbeat is None until the worker first answers.
+- `WorkerLossCode` — `malformed_eof`, `timeout`, `unresponsive`, `exited`,
+  `killed`. This is a runtime distinction, not the domain error vocabulary.
+- `WorkerLossEvent(activation_id, failure_code, at_monotonic, exit_code=None)`,
+  with `activation_id` None for a worker lost before activation binding.
+- `WorkerLossListener`, a protocol with `on_worker_lost(event) -> None`.
+- `RestartPolicy(max_attempts, initial_backoff_s, multiplier, max_backoff_s,
+  reset_after_healthy_s)`, validated at construction, plus
+  `backoff_for_attempt(policy, attempt)`.
+- `RestartLedger(attempts, next_allowed_at_monotonic, last_failure_code,
+  gave_up)` with the pure methods `record_failure(policy, now,
+  failure_code=None)`, `record_healthy(policy, now)`, and `can_attempt(now)`.
+
+`WorkerHealthState`, `WorkerHealth`, `WorkerLossCode`, `WorkerLossEvent`, and
+`WorkerLossListener` are live: see **Worker liveness** above for exactly which
+code the runtime emits for which loss. `WorkerHealth` carries no
+heartbeat-unsupported field, so the runtime reports that separately as
+`heartbeat_supported`.
+
+**`RestartPolicy`, `backoff_for_attempt`, and `RestartLedger` are still not
+called by anything.** They belong to the activation lifecycle (U13), not to
+this package: a runtime never restarts itself and still cannot respawn after
+closing. Nothing in this package constructs a policy or a ledger, and no
+composition path passes a `worker_loss_listener` yet, so in the assembled
+system a lost worker is reported to nobody until a supervisor subscribes.
+
 ## Tests
 
 From `python/`, run the isolated modules:
 
 ```sh
 PYTHONPATH=src python -B -m unittest tests.plugins.test_process_runtime tests.plugins.test_process_provider_channel tests.plugins.test_process_invocation_channel
+```
+
+The health records have their own module, which launches no child at all:
+
+```sh
+PYTHONPATH=src python -B -m unittest tests.plugins.test_worker_health_records
+```
+
+Liveness has its own module, whose children really do exit, get killed, answer
+beats, reject the heartbeat method, and answer too late:
+
+```sh
+PYTHONPATH=src python -B -m unittest tests.plugins.test_worker_heartbeat
 ```
 
 Tests launch only owned synthetic Python fixture children with outer watchdogs.
