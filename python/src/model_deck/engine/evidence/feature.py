@@ -20,7 +20,12 @@ from model_deck.kernel import FeatureDescriptor, KernelApiVersion, OperationDesc
 from model_deck.kernel.registry import Handler
 
 from model_deck.engine.builtins.capabilities import BuiltinWiringError
-from model_deck.engine.evidence.ports import BENCHMARKS_KIND, PRICES_KIND
+from model_deck.engine.evidence.ports import (
+    BENCHMARKS_KIND,
+    PRICES_KIND,
+    EvidenceResourceExhaustedError,
+)
+from model_deck.engine.kernel_composition import KernelDomainError
 from model_deck.engine.jobs.first_party import (
     JOB_KIND_BENCHMARKS_REFRESH,
     JOB_KIND_PRICES_REFRESH,
@@ -146,15 +151,25 @@ def evidence_read_handlers(
 
     def prices_query(params: Any, grants: frozenset[str]) -> dict[str, Any]:
         params = dict(params or {})
-        return query_prices.query(
-            registration_id=params.get("registration_id"),
-            provider_model_id=params.get("provider_model_id"),
-            include_stale=params.get("include_stale", True),
-        ).to_wire()
+        # An answer too large to serve is the caller's to narrow, so it is
+        # classified in the public vocabulary instead of being redacted to an
+        # internal error the caller can do nothing about. Only the code travels;
+        # dispatch writes the sentence, so nothing from here is published.
+        try:
+            return query_prices.query(
+                registration_id=params.get("registration_id"),
+                provider_model_id=params.get("provider_model_id"),
+                include_stale=params.get("include_stale", True),
+            ).to_wire()
+        except EvidenceResourceExhaustedError:
+            raise KernelDomainError("resource_exhausted") from None
 
     def benchmarks_query(params: Any, grants: frozenset[str]) -> dict[str, Any]:
         params = dict(params or {})
-        return query_benchmarks.query(model_id=params.get("model_id")).to_wire()
+        try:
+            return query_benchmarks.query(model_id=params.get("model_id")).to_wire()
+        except EvidenceResourceExhaustedError:
+            raise KernelDomainError("resource_exhausted") from None
 
     return {
         f"{_OPERATION_PREFIX}prices.query": prices_query,

@@ -75,6 +75,15 @@ separate features: a composed cache with no source still answers
 `prices.query` and `benchmarks.query` — with an empty, self-described snapshot
 — while the refresh operations simply do not appear in discovery.
 
+These are composed features, not engine built-ins, so they travel the kernel's
+generic invocation path, where a handler failure is redacted to one `internal`
+error. A query that matches more records than one answer may carry is the
+caller's to narrow, so the read handlers translate
+`EvidenceResourceExhaustedError` into `KernelDomainError("resource_exhausted")`.
+Only the code crosses that boundary — dispatch writes the sentence the caller
+reads from its own table, so nothing these handlers hold can be published with
+it. Every other failure stays redacted.
+
 A refresh never fetches inline. `refresh_jobs.py` turns one into a first-party
 job (see `engine/jobs/README.md`), returns its `job_id`, and runs
 `RefreshEvidenceUseCase` on the engine's in-process runner. Repeating an

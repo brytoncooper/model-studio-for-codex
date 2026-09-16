@@ -54,19 +54,21 @@ from model_deck.engine.builtins.handlers import (
 from model_deck.engine.builtins.dispatch_adapters import (
     COLLABORATOR_PROVIDER_EXECUTION,
     COLLABORATOR_PROVIDER_ROUTES,
-    DispatchRoutedOperationError,
-    builtin_handler_registry,
-    dispatch_routed_handlers,
     provider_feature_handlers,
+)
+from model_deck.engine.builtins.dispatch_binding import (
+    BuiltinDispatchBinding,
+    BuiltinDispatchError,
+    builtin_handler_registry,
 )
 
 __all__ = [
     "BUILTIN_API",
     "COLLABORATOR_PROVIDER_EXECUTION",
     "COLLABORATOR_PROVIDER_ROUTES",
-    "DispatchRoutedOperationError",
+    "BuiltinDispatchBinding",
+    "BuiltinDispatchError",
     "builtin_handler_registry",
-    "dispatch_routed_handlers",
     "provider_feature_handlers",
     "BUILTIN_CAPABILITY_IDS",
     "BUILTIN_FEATURE_IDS",

@@ -53,10 +53,63 @@ record and `build_capability_map`; `descriptors.py` declares one descriptor per
 feature group plus `select_available_builtins`, which drops groups whose
 required capabilities are unsupported along with the groups that depend on them;
 `handlers.py` defines `BuiltinHandlerAdapter` and the explicit
-`BuiltinHandlerRegistry` that binds a feature's operations to collaborators.
+`BuiltinHandlerRegistry` that binds a feature's operations to collaborators;
+`dispatch_binding.py` defines `BuiltinDispatchBinding`, which binds every
+built-in operation to the `EngineDispatch` method that serves it.
 A new built-in adds its capability to the vocabulary and availability record,
-declares a `modeldeck.builtin.*` descriptor, and has its handler adapter
-registered where the concrete ports are known, which is bootstrap.
+declares a `modeldeck.builtin.*` descriptor, names its dispatch method in
+`BuiltinDispatchBinding`, and has its handler adapter registered where the
+concrete ports are known, which is bootstrap.
+
+## Routing the built-ins
+
+Routing has migrated. Every composed operation — built-in and foreign alike —
+now leaves `EngineDispatch.handle` through one kernel route; the per-operation
+`if method == ...` chain is gone. Only `hello` (which runs before the
+authentication gate) and that gate precede it.
+
+A built-in's registered handler is the dispatch method that always served it, so
+its behaviour is not re-implemented: the same use cases, the same projection
+reconcile triggers, the same events. Two seams keep the public answers identical:
+
+* `KernelComposition.invoke_dispatch_bound(operation_id, params, context)`
+  carries a `DispatchInvocationContext` (connection, principal, request id) to
+  the handler and skips the composition's own input/output validation, because
+  the dispatch method validates against the same schema references.
+  `dispatch_bound_features` (bootstrap passes `BUILTIN_FEATURE_IDS`) says which
+  operations take that path; every other feature keeps the generic `invoke`.
+* A bound handler raises `KernelPassthroughError` with the whole JSON-RPC error
+  response its method produced, which dispatch returns verbatim. Domain codes
+  and `-32602` params errors therefore survive; a foreign feature's failure is
+  still redacted to one `internal` error.
+
+A composed feature that is not a built-in may still name a public code by raising
+`KernelDomainError(code)`, which `invoke` re-raises and dispatch turns into that
+domain error. Only the code crosses that boundary: the sentence the caller reads
+comes from `_COMPOSED_DOMAIN_ERROR_MESSAGES` in `engine/dispatch.py`, keyed by
+code, so a feature chooses the classification but never publishes text of its
+own — a handler cannot interpolate a path, an identifier or a provider response
+into the answer. The evidence read operations use it for `resource_exhausted`.
+Everything else stays redacted to one `internal` error.
+
+`jobs.get` and `jobs.cancel` execute through the kernel as of this change; until
+now they were composed for discovery but still ran through the dispatch chain,
+as did every other built-in.
+
+The job methods fan out over the job directories (the first-party directory and
+the extension gateway) in order. A directory that does not implement the method
+is skipped — `ExtensionGateway` requires `job_get` and `job_cancel` but not
+`job_resume`, so a gateway may legitimately serve lookups and not resumes — and
+a directory answering "not found" moves on to the next. Only when no directory
+could serve at all does dispatch decide: `resume_unavailable` for `jobs.resume`,
+and `not_found` for `jobs.get` and `jobs.cancel`. Not done: `ExtensionGateway`
+still declares no `job_resume`, so that requirement is only stated here and in
+`engine/dispatch.py`, not in the protocol implementers read.
+
+The binding is also dispatch's own handler table: when no composed kernel holds
+a built-in — the legacy `kernel_composition` escape hatch, or an `EngineDispatch`
+constructed directly — dispatch calls the same registered handler without the
+kernel hop, so there is one table rather than two routes.
 
 ## Tests
 
@@ -111,10 +164,17 @@ capabilities do not remove independent operations. All runtime state is temporar
 ## Limits
 
 No external process supervision, grant persistence, provider ports, process
-lifecycle or service locator in the kernel. Events remain metadata only; existing
-static features have not all been re-expressed as descriptors. External schema
-installation and external-principal authentication are not implemented by this
-integration. No global registry singleton.
+lifecycle or service locator in the kernel. Events remain metadata only.
+External schema installation and external-principal authentication are not
+implemented by this integration. No global registry singleton.
+
+Every built-in engine method is now a descriptor with a registered handler, and
+routing goes through it. What is still not done: the handler bodies remain
+private `EngineDispatch` methods rather than use cases the kernel could call
+without dispatch, so a built-in cannot yet be composed into a kernel that has no
+dispatch behind it. Built-in handlers also answer with JSON-RPC envelopes rather
+than plain results, which is why the passthrough seam exists; a later slice that
+moves those bodies out of dispatch would remove it.
 
 A specialized provider port is therefore not a kernel port. It is represented in
 the engine composition layer as a feature descriptor that declares the capability

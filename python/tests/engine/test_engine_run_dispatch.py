@@ -38,6 +38,7 @@ _APPLICATION_STATE_OPERATION_IDS = {
     "engine.v1.benchmarks.refresh",
     "engine.v1.jobs.get",
     "engine.v1.jobs.cancel",
+    "engine.v1.jobs.resume",
 }
 
 _B12_OPERATION_IDS = {

@@ -17,6 +17,7 @@ from tempfile import TemporaryDirectory
 from model_deck.adapters.transport.rendezvous import load_rendezvous_file
 from model_deck.adapters.transport.unix_client import UnixSocketEngineClient
 from model_deck.bootstrap import build_engine_server
+from model_deck.engine.evidence.ports import MAX_PRICE_RECORDS
 from model_deck.engine.jobs.first_party import (
     JOB_KIND_BENCHMARKS_REFRESH,
     JOB_KIND_PRICES_REFRESH,
@@ -269,6 +270,47 @@ class EvidenceRefreshJobTests(unittest.TestCase):
             self.assertNotEqual(third["job_id"], first["job_id"])
             self.await_terminal(session, third["job_id"])
             self.assertEqual(len(self.transport.calls), 2)
+
+    def test_an_oversized_price_query_reports_resource_exhausted(self) -> None:
+        """A match set too large for one answer is refused by name.
+
+        The evidence operations are composed features, so a failure in one of
+        their handlers is redacted to ``internal`` unless the handler names a
+        public code. Exhaustion is the caller's to fix by narrowing the query,
+        so it says so rather than looking like an engine fault.
+        """
+        oversized = {
+            "data": [
+                {
+                    "id": f"fixture/model-{index}",
+                    "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+                }
+                for index in range(MAX_PRICE_RECORDS + 1)
+            ]
+        }
+        self.transport = lambda url: json.dumps(oversized).encode("utf-8")
+        runtime = self.build()
+        connection, descriptor, credential = self.session(runtime)
+        with connection as session:
+            self.authenticate(session, descriptor, credential)
+            started = self.result(
+                session, "engine.v1.prices.refresh", {"idempotency_key": "oversized"}
+            )
+            terminal = self.await_terminal(session, started["job_id"], timeout=30.0)
+            self.assertEqual(terminal["state"], "completed")
+
+            refused = self.call(session, "engine.v1.prices.query")
+            self.assertEqual(refused["error"]["code"], -32000)
+            self.assertEqual(refused["error"]["data"]["code"], "resource_exhausted")
+
+            # And narrowing, which is what that code asks for, works: one model
+            # still reads.
+            narrowed = self.result(
+                session,
+                "engine.v1.prices.query",
+                {"provider_model_id": "fixture/model-0"},
+            )
+            self.assertEqual(len(narrowed["records"]), 1)
 
     # --- benchmarks --------------------------------------------------------
 
